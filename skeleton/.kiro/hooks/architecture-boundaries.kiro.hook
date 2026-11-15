@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "name": "Check architecture boundaries",
+  "description": "Layering, domain independence, public API stability, no dynamic code execution",
+  "version": "1",
+  "when": {"type": "fileEdited", "patterns": ["packages/trialforge-core/src/**/*.py", "examples/**/*.py"]},
+  "then": {"type": "askAgent", "prompt": "Run `python -m pytest tests/test_architecture.py -q` from the repository root and fix any violation by changing the code, not the rules."}
+}

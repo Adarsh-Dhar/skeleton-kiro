@@ -1,0 +1,24 @@
+[project]
+name = "trialforge-workspace"
+version = "0.2.0"
+description = "TRIALFORGE workspace: core SDK, examples, docs and architecture tests"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["."]
+testpaths = ["packages/trialforge-core/tests", "tests"]
+filterwarnings = ["ignore::DeprecationWarning:optuna"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+src = ["packages/trialforge-core/src", "examples"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["E501", "E731", "E741"]
+"packages/trialforge-core/tests/**" = ["E501", "E731", "E741"]

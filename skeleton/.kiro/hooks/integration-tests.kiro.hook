@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "name": "Run integration and contract tests",
+  "description": "Full lifecycle, persistence/recovery and adapter contract tests when execution, persistence or adapters change",
+  "version": "1",
+  "when": {"type": "fileEdited", "patterns": ["packages/trialforge-core/src/trialforge/execution/**", "packages/trialforge-core/src/trialforge/persistence/**", "packages/trialforge-core/src/trialforge/adapters/**", "examples/**/adapter.py"]},
+  "then": {"type": "askAgent", "prompt": "Run `python -m pytest packages/trialforge-core/tests/integration packages/trialforge-core/tests/contracts -q` from the repository root and report the counts."}
+}

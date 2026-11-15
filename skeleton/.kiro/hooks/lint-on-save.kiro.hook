@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "name": "Lint and format check",
+  "description": "Run ruff lint + format check when Python sources change",
+  "version": "1",
+  "when": {"type": "fileEdited", "patterns": ["packages/**/*.py", "examples/**/*.py", "tests/**/*.py", "scripts/**/*.py"]},
+  "then": {"type": "askAgent", "prompt": "Run `./scripts/lint.sh` from the repository root. If it fails, fix the reported problems without changing behaviour and run it again."}
+}
