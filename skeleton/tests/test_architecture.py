@@ -195,7 +195,7 @@ def test_public_api_is_backward_compatible_and_complete():
         assert hasattr(trialforge, n), n
     snapshot = (ROOT / "tests" / "public_api_snapshot.txt").read_text().split()
     assert not set(snapshot) - names, f"public names removed since snapshot: {set(snapshot) - names}"
-    assert trialforge.API_VERSION == "1" and trialforge.__version__ == "0.2.0"
+    assert trialforge.API_VERSION == "1" and trialforge.__version__ == "0.2.1"
 
 
 def test_legacy_deep_import_paths_still_resolve():

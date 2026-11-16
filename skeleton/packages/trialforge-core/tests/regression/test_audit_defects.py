@@ -101,3 +101,16 @@ def test_defect_example_modules_and_documented_paths_exist():
         "examples.third_domain_adapter.adapter",
     ):
         importlib.import_module(mod)
+
+
+def test_defect_found_by_application_integration_failed_design_must_not_leave_an_orphan_experiment():
+    """0.2.0 saved the spec before designing, so a rejected design (e.g. budget too small) left a plan-less experiment behind."""
+    from trialforge import DesignError, ExperimentSpec
+
+    s = ExperimentService(ScriptedAdapter("a"))
+    spec = basic_spec(5, run_budget=2)
+    with pytest.raises(DesignError, match="exceeds budget"):
+        s.design(spec)
+    assert s.repository.list_ids() == [] and not s.repository.has_experiment(spec.experiment_id)
+    ok = basic_spec(2, run_budget=5).model_copy(update={"experiment_id": spec.experiment_id})
+    assert isinstance(ok, ExperimentSpec) and len(s.design(ok).runs) == 2        # the same id can be used once the spec is valid

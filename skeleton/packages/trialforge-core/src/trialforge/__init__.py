@@ -73,7 +73,7 @@ from trialforge.reporting.engine import ReportEngine
 # Short alias used in the developer guide.
 Analyzer = AnalysisEngine
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 API_VERSION = "1"
 
 __all__ = [

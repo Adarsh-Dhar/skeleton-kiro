@@ -175,10 +175,10 @@ class ExperimentService:
                     f"experiment {spec.experiment_id} is already designed with '{stored.method}'; "
                     "create a new experiment to use a different method"
                 )
+        plan = self.designer.design(spec, method)  # may raise DesignError: nothing is persisted until the design exists
         self.repository.save_experiment(spec, ExperimentStatus.CREATED)
         self._spec_overrides[spec.experiment_id] = spec
         self._advance_experiment(spec.experiment_id, ExperimentStatus.VALIDATED, "specification validated")
-        plan = self.designer.design(spec, method)
         for run in plan.runs:
             run.idempotency_key = f"{spec.experiment_id}:{run.run_id}"
         self.repository.save_plan(plan)
