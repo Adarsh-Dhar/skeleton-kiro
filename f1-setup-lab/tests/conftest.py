@@ -8,9 +8,8 @@ import time
 
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
-
 from f1lab.api.app import create_app
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
@@ -40,8 +39,10 @@ FAST = {"simulator": {"latency_seconds": 0.0}}
 
 @pytest.fixture
 def make_experiment(client):
+    counter = iter(range(1, 1000))
+
     def _make(**kw):
-        body = {"name": "test experiment", **kw}
+        body = {"name": "test experiment", "experiment_id": f"test-exp-{next(counter)}", **kw}
         body.setdefault("simulator", {"latency_seconds": 0.0})
         r = client.post("/api/experiments", json=body)
         assert r.status_code == 201, r.text

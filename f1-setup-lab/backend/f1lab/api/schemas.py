@@ -39,6 +39,11 @@ class SimulatorSettings(BaseModel):
 
 
 class ExperimentRequest(BaseModel):
+    experiment_id: str | None = Field(
+        None,
+        pattern=r"^[a-z0-9][a-z0-9-]{2,40}$",
+        description="Optional id. Simulated data are seeded from the run ids, so a fixed id reproduces results exactly.",
+    )
     name: str = Field(min_length=1, max_length=80)
     hypothesis: str = Field("", max_length=1000)
     factors: dict[str, FactorSetting] = Field(default_factory=default_factors)

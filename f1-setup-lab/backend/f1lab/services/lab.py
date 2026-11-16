@@ -73,8 +73,12 @@ class LabService:
         if spec.adapter_name and spec.adapter_name not in self.registry:
             cfg = spec.metadata.get("lab", {})
             self.registry.register(
-                F1SimulatorAdapter(spec.adapter_name, latency_seconds=cfg.get("latency_seconds", 0.0), fault_rate=cfg.get("fault_rate", 0.0),
-                                   stint_laps=cfg.get("stint_laps", 5))  # fmt: skip
+                F1SimulatorAdapter(
+                    spec.adapter_name,
+                    latency_seconds=cfg.get("latency_seconds", 0.0),
+                    fault_rate=cfg.get("fault_rate", 0.0),
+                    stint_laps=cfg.get("stint_laps", 5),
+                )  # fmt: skip
             )
 
     async def shutdown(self) -> None:
@@ -119,7 +123,9 @@ class LabService:
 
     def create(self, req: ExperimentRequest) -> dict:
         """Validate, register the experiment's simulator, generate the design. Raises SDK ValidationError/DesignError."""
-        exp_id = "f1-" + uuid.uuid4().hex[:8]
+        exp_id = req.experiment_id or "f1-" + uuid.uuid4().hex[:8]
+        if self.repo.has_experiment(exp_id):
+            raise Conflict(f"an experiment with id '{exp_id}' already exists")
         spec = self.build_spec(req, exp_id)
         self._register_adapter(spec)
         try:
@@ -169,7 +175,12 @@ class LabService:
         }  # fmt: skip
 
     def list(self) -> list[dict]:
-        out = [self._summary(self._result(i)) for i in self.repo.list_ids()]
+        out = []
+        for i in self.repo.list_ids():
+            try:
+                out.append(self._summary(self._result(i)))
+            except NotFound:  # an experiment without a design (e.g. interrupted creation) is not listed
+                continue
         return sorted(out, key=lambda s: s["created_at"], reverse=True)
 
     def detail(self, exp_id: str) -> dict:
@@ -239,7 +250,9 @@ class LabService:
                 lap["flags"][m.metric] = notable
         laps = [by_lap[k] for k in sorted(by_lap)]
         for lap in laps:
-            lap["outlier"] = "outlier" in " ".join(lap["flags"].get("lap_time", []))  # lap flagged by its lap time; sector flags stay as tags
+            lap["outlier"] = "outlier" in " ".join(
+                lap["flags"].get("lap_time", [])
+            )  # lap flagged by its lap time; sector flags stay as tags
         times = [lap["lap_time"] for lap in laps if "lap_time" in lap]
         out.update(laps=laps, warnings=warnings, summary={
             "laps": len(laps), "best_lap": min(times), "mean_lap": sum(times) / len(times),
@@ -276,7 +289,9 @@ class LabService:
                     lap["flags"][m.metric] = notable
             rows = [laps[k] for k in sorted(laps)]
             for lap in rows:
-                lap["outlier"] = "outlier" in " ".join(lap["flags"].get("lap_time", []))  # lap flagged by its lap time; sector flags stay as tags
+                lap["outlier"] = "outlier" in " ".join(
+                    lap["flags"].get("lap_time", [])
+                )  # lap flagged by its lap time; sector flags stay as tags
             out.append({"run_id": r.run_id, "order": r.order, "status": r.status.value, "configuration": r.configuration,
                         "source": r.measurements[0].source, "synthetic": not any(m.metadata.get("imported") for m in r.measurements),
                         "laps": rows})  # fmt: skip
@@ -343,7 +358,12 @@ class LabService:
         analysis = await asyncio.to_thread(self.svc.analyse, res)
         report = await asyncio.to_thread(self.svc.report, res, analysis)
         rec = narrative.recommendation(res, analysis)
-        return {"report": report.model_dump(mode="json"), "recommendation": rec, "effects": rec["effects"], "synthetic_notice": SYNTHETIC_NOTICE}
+        return {
+            "report": report.model_dump(mode="json"),
+            "recommendation": rec,
+            "effects": rec["effects"],
+            "synthetic_notice": SYNTHETIC_NOTICE,
+        }
 
     async def report_html(self, exp_id: str) -> str:
         data = await self.report(exp_id)

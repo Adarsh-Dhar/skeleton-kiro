@@ -25,7 +25,10 @@ def page(live):
         pg = ctx.new_page()
         pg.errors = []
         # the browser logs every 4xx response as a console error; those are intentional in the validation tests
-        pg.on("console", lambda m: pg.errors.append(m.text) if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+        pg.on(
+            "console",
+            lambda m: pg.errors.append(m.text) if m.type == "error" and not m.text.startswith("Failed to load resource") else None,
+        )
         pg.on("pageerror", lambda e: pg.errors.append(str(e)))
         pg.base = live.url
         yield pg
@@ -71,7 +74,9 @@ def test_full_workflow(page):
     page.wait_for_selector("text=Run monitor")
     page.wait_for_selector(".kpi:has-text('completed') >> text=/^[1-9]/", timeout=20000)
     shot(page, "04a-run-monitor-in-progress", full=False)
-    page.wait_for_function("document.querySelector('.kpis .kpi b') && document.querySelector('.kpis .kpi b').textContent.trim()==='20'", timeout=60000)
+    page.wait_for_function(
+        "document.querySelector('.kpis .kpi b') && document.querySelector('.kpis .kpi b').textContent.trim()==='20'", timeout=60000
+    )
     assert page.locator("tbody tr").count() == 20
     assert page.locator(".chip.completed").count() >= 20
     shot(page, "04-run-monitor")
@@ -87,7 +92,7 @@ def test_full_workflow(page):
     page.click(".tabs >> text=Analysis")
     page.wait_for_selector(".reco")
     assert "recommended setup" in page.inner_text(".reco").lower()
-    assert page.locator("h2:has-text(\"ANOVA (Type II)\")").count() == 1
+    assert page.locator('h2:has-text("ANOVA (Type II)")').count() == 1
     assert page.locator("svg.chart").count() >= 3
     assert "never recommended" in page.inner_text(".reco").lower()
     shot(page, "06-analysis")
@@ -101,14 +106,17 @@ def test_full_workflow(page):
     shot(page, "07-optimisation-preview")
     page.click("#oapply")
     page.wait_for_selector("text=Optimiser runs")
-    page.wait_for_function("[...document.querySelectorAll('#opt-root tbody tr')].length>=2 && document.querySelectorAll('#opt-root .chip.completed').length>=2", timeout=60000)
+    page.wait_for_function(
+        "[...document.querySelectorAll('#opt-root tbody tr')].length>=2 && document.querySelectorAll('#opt-root .chip.completed').length>=2",
+        timeout=60000,
+    )
     shot(page, "08-optimisation-result")
 
     # ---- report ---------------------------------------------------------------------------------
     page.click(".tabs >> text=Report")
     page.wait_for_selector("text=Printable report")
     assert "reproducibility" in page.inner_text("main").lower()
-    href = page.get_attribute("a:has-text(\"Printable report\")", "href")
+    href = page.get_attribute('a:has-text("Printable report")', "href")
     html = page.request.get(page.base + href).text()
     assert "SYNTHETIC DATA" in html and "Recommendation" in html and "ANOVA" in html
     csv = page.request.get(page.base + href.replace("report.html", "export/runs.csv")).text()
@@ -159,7 +167,9 @@ def test_failed_runs_are_visible_and_can_be_retried(page):
     assert "injected fault" in page.inner_text("main").lower()
     shot(page, "12-failed-runs")
     page.click("#retry")
-    page.wait_for_function("document.querySelectorAll('.chip.failed').length===0 && document.querySelectorAll('.chip.completed').length>=3", timeout=30000)
+    page.wait_for_function(
+        "document.querySelectorAll('.chip.failed').length===0 && document.querySelectorAll('.chip.completed').length>=3", timeout=30000
+    )
     assert page.errors == []
 
 

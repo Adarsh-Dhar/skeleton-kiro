@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from trialforge import (
@@ -20,7 +20,7 @@ from trialforge import (
 from f1lab.adapters.vehicle_model import FACTORS, METRIC_UNITS, rng_for, run_level, stint
 
 SOURCE = "f1lab-synthetic-simulator v1"
-T0 = datetime(2026, 5, 1, 13, 0, tzinfo=timezone.utc)  # fixed reference clock => reproducible timestamps
+T0 = datetime(2026, 5, 1, 13, 0, tzinfo=UTC)  # fixed reference clock => reproducible timestamps
 
 
 class F1SimulatorAdapter:

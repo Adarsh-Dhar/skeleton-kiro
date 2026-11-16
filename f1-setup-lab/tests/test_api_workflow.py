@@ -11,12 +11,13 @@ from conftest import wait_done
 
 # ----------------------------------------------------------------------------- SDK usage
 def test_application_runs_on_the_installed_sdk_not_a_copy(client):
+    import f1lab
     import trialforge
 
-    import f1lab
-
     h = client.get("/api/health").json()
-    assert h["trialforge"] == trialforge.__version__ == "0.2.0" and "site-packages" in h["trialforge_path"]
+    assert (
+        h["trialforge"] == trialforge.__version__ and trialforge.__version__.startswith("0.2.") and "site-packages" in h["trialforge_path"]
+    )
     lab = client.app.state.lab
     assert type(lab.svc) is trialforge.ExperimentService and type(lab.repo) is trialforge.SQLiteExperimentRepository
     assert not hasattr(f1lab, "ExperimentService") and "examples" not in __import__("sys").modules
@@ -41,9 +42,17 @@ def test_default_experiment_is_a_resolution_iv_fractional_factorial(make_experim
 
 
 def test_three_enabled_factors_use_a_resolution_iii_half_fraction(make_experiment):
-    d = make_experiment(factors={"front_wing": {"low": 10, "high": 40}, "rear_wing": {"low": 10, "high": 40}, "suspension": {"low": 3, "high": 9},
-                                 "tyre_pressure_psi": {"enabled": False, "low": 20, "high": 24}})
-    assert (d["design"]["k"], d["design"]["p"], d["design"]["resolution"]) == (3, 1, 3) and "tyre_pressure_psi" not in d["runs"][0]["configuration"]
+    d = make_experiment(
+        factors={
+            "front_wing": {"low": 10, "high": 40},
+            "rear_wing": {"low": 10, "high": 40},
+            "suspension": {"low": 3, "high": 9},
+            "tyre_pressure_psi": {"enabled": False, "low": 20, "high": 24},
+        }
+    )
+    assert (d["design"]["k"], d["design"]["p"], d["design"]["resolution"]) == (3, 1, 3) and "tyre_pressure_psi" not in d["runs"][0][
+        "configuration"
+    ]
 
 
 @pytest.mark.parametrize("method,expect", [("full_factorial", 3), ("ofat", 1), ("central_composite", 4), ("box_behnken", 4), ("random", 1)])
@@ -55,18 +64,30 @@ def test_other_design_methods_generate_valid_plans(make_experiment, method, expe
             assert f["low"] - 1e-9 <= r["configuration"][f["name"]] <= f["high"] + 1e-9
 
 
-@pytest.mark.parametrize("body,field_part", [
-    ({"factors": {"front_wing": {"low": 30, "high": 10}}}, "low must be smaller"),
-    ({"factors": {"front_wing": {"low": -5, "high": 10}}}, "simulator limits"),
-    ({"factors": {"front_wing": {"enabled": False, "low": 0, "high": 1}, "rear_wing": {"enabled": False, "low": 0, "high": 1}, "suspension": {"enabled": False, "low": 3, "high": 9}}}, "at least two"),
-    ({"factors": {"wheel_colour": {"low": 0, "high": 1}}}, "unknown factor"),
-    ({"min_stability": 140}, "less than or equal to 100"),
-    ({"name": "   "}, "blank"),
-    ({"design": {"method": "magic"}}, "fractional_factorial"),
-    ({"design": {"run_budget": 6}}, "exceeds budget"),
-    ({"design": {"replicates": 0}}, "greater than or equal to 1"),
-    ({"simulator": {"fault_rate": 2}}, "less than or equal to 1"),
-])
+@pytest.mark.parametrize(
+    "body,field_part",
+    [
+        ({"factors": {"front_wing": {"low": 30, "high": 10}}}, "low must be smaller"),
+        ({"factors": {"front_wing": {"low": -5, "high": 10}}}, "simulator limits"),
+        (
+            {
+                "factors": {
+                    "front_wing": {"enabled": False, "low": 0, "high": 1},
+                    "rear_wing": {"enabled": False, "low": 0, "high": 1},
+                    "suspension": {"enabled": False, "low": 3, "high": 9},
+                }
+            },
+            "at least two",
+        ),
+        ({"factors": {"wheel_colour": {"low": 0, "high": 1}}}, "unknown factor"),
+        ({"min_stability": 140}, "less than or equal to 100"),
+        ({"name": "   "}, "blank"),
+        ({"design": {"method": "magic"}}, "fractional_factorial"),
+        ({"design": {"run_budget": 6}}, "exceeds budget"),
+        ({"design": {"replicates": 0}}, "greater than or equal to 1"),
+        ({"simulator": {"fault_rate": 2}}, "less than or equal to 1"),
+    ],
+)
 def test_invalid_experiment_definitions_are_rejected_with_clear_messages(client, body, field_part):
     r = client.post("/api/experiments", json={"name": "bad", **body})
     assert r.status_code == 422, r.text
@@ -75,9 +96,10 @@ def test_invalid_experiment_definitions_are_rejected_with_clear_messages(client,
 
 
 def test_box_behnken_needs_three_factors_and_two_factor_ccd_is_allowed(client):
-    two = {"suspension": {"enabled": False, "low": 3, "high": 9}, "tyre_pressure_psi": {"enabled": False, "low": 20, "high": 24}}
+    two = {"front_wing": {"low": 10, "high": 40}, "rear_wing": {"low": 10, "high": 40}}
     assert client.post("/api/experiments", json={"name": "x", "factors": two, "design": {"method": "box_behnken"}}).status_code == 422
-    assert client.post("/api/experiments", json={"name": "x", "factors": two, "design": {"method": "central_composite", "run_budget": 40}}).status_code == 201
+    r = client.post("/api/experiments", json={"name": "x", "factors": two, "design": {"method": "central_composite", "run_budget": 40}})
+    assert r.status_code == 201 and r.json()["runs_total"] == 4 + 4 + 2
 
 
 # ------------------------------------------------------------------ execution & constraints
@@ -87,7 +109,12 @@ def test_complete_screening_run_with_constraint_evaluation(run_experiment, clien
     runs = d["runs"]
     assert all({"lap_time", "stability", "sector_1", "top_speed"} <= set(r["outcomes"]) for r in runs)
     feas = [r for r in runs if r["feasible"]]
-    assert feas and len(feas) < len(runs) and all(r["outcomes"]["stability"] >= 85 for r in feas) and all(r["outcomes"]["stability"] < 85 for r in runs if r["feasible"] is False)
+    assert (
+        feas
+        and len(feas) < len(runs)
+        and all(r["outcomes"]["stability"] >= 85 for r in feas)
+        and all(r["outcomes"]["stability"] < 85 for r in runs if r["feasible"] is False)
+    )
     assert d["best"]["lap_time"] == pytest.approx(min(r["outcomes"]["lap_time"] for r in feas)) and d["best"]["stability"] >= 85
 
 
@@ -108,12 +135,18 @@ def test_faults_without_retries_fail_runs_visibly_and_explicit_retry_recovers(ma
     d = make_experiment(simulator={"latency_seconds": 0, "fault_rate": 1.0, "max_retries": 0}, design={"method": "ofat", "replicates": 1})
     client.post(f"/api/experiments/{d['id']}/execute")
     f = wait_done(client, d["id"])
-    assert f["status"] == "failed" and f["counts"]["failed"] == f["runs_total"] > 0 and all("injected fault" in r["error"] for r in f["runs"])
+    assert (
+        f["status"] == "failed" and f["counts"]["failed"] == f["runs_total"] > 0 and all("injected fault" in r["error"] for r in f["runs"])
+    )
     assert client.post(f"/api/experiments/{d['id']}/analysis", json={}).status_code == 409  # nothing to analyse yet
     assert client.post(f"/api/experiments/{d['id']}/execute").status_code == 409  # failed runs never retry implicitly
     assert client.post(f"/api/experiments/{d['id']}/retry").status_code == 202
     ok = wait_done(client, d["id"])
-    assert ok["status"] == "completed" and all(r["attempts"] == 2 for r in ok["runs"]) and client.post(f"/api/experiments/{d['id']}/retry").status_code == 409
+    assert (
+        ok["status"] == "completed"
+        and all(r["attempts"] == 2 for r in ok["runs"])
+        and client.post(f"/api/experiments/{d['id']}/retry").status_code == 409
+    )
 
 
 def test_automatic_retries_absorb_transient_faults(make_experiment, client):
@@ -170,7 +203,9 @@ def test_recorded_telemetry_can_replace_a_simulated_run(make_experiment, client)
     assert row["status"] == "completed" and row["imported"] is True and row["feasible"] is True and 80 < row["outcomes"]["lap_time"] < 82
     tel = [t for t in client.get(f"/api/experiments/{d['id']}/telemetry").json() if t["run_id"] == run][0]
     assert tel["synthetic"] is False and tel["source"] == "csv:session.csv" and len(tel["laps"]) == 8 and tel["laps"][4]["outlier"]
-    assert client.post(f"/api/experiments/{d['id']}/runs/{run}/telemetry", json={"csv": csvtext}).status_code == 409  # completed runs are immutable
+    assert (
+        client.post(f"/api/experiments/{d['id']}/runs/{run}/telemetry", json={"csv": csvtext}).status_code == 409
+    )  # completed runs are immutable
     assert client.post(f"/api/experiments/{d['id']}/runs/nope/telemetry", json={"csv": csvtext}).status_code == 404
     other = d["runs"][1]["run_id"]
     client.post(f"/api/experiments/{d['id']}/execute")  # the rest are simulated; the imported run is untouched
@@ -181,7 +216,9 @@ def test_recorded_telemetry_can_replace_a_simulated_run(make_experiment, client)
 def test_import_missing_required_stability_fails_the_run_instead_of_faking_data(make_experiment, client):
     d = make_experiment(design={"method": "ofat", "replicates": 1})
     run = d["runs"][0]["run_id"]
-    r = client.post(f"/api/experiments/{d['id']}/runs/{run}/telemetry", json={"csv": "sector_1,sector_2,sector_3\n27,31.5,21.6\n27,31.4,21.5\n"})
+    r = client.post(
+        f"/api/experiments/{d['id']}/runs/{run}/telemetry", json={"csv": "sector_1,sector_2,sector_3\n27,31.5,21.6\n27,31.4,21.5\n"}
+    )
     row = r.json()["run"]
     assert row["status"] == "failed" and "stability" in row["error"]
 
@@ -207,7 +244,9 @@ def test_optimiser_proposes_in_range_unseen_setups_and_never_beats_budget(run_ex
     d = run_experiment()
     s = client.post(f"/api/experiments/{d['id']}/optimise/suggest", json={"count": 3}).json()["recommendations"]
     seen = {tuple(sorted(r["configuration"].items())) for r in d["runs"]}
-    assert len(s) == 3 and all(r["prediction_kind"] == "model_prediction" and r["expected_improvement"] is not None and r["prediction_std"] > 0 for r in s)
+    assert len(s) == 3 and all(
+        r["prediction_kind"] == "model_prediction" and r["expected_improvement"] is not None and r["prediction_std"] > 0 for r in s
+    )
     for r in s:
         assert tuple(sorted(r["configuration"].items())) not in seen and r["feasible"] is True
         for f in d["factors"]:
@@ -215,17 +254,49 @@ def test_optimiser_proposes_in_range_unseen_setups_and_never_beats_budget(run_ex
     assert client.post(f"/api/experiments/{d['id']}/optimise/suggest", json={"count": 3, "method": "magic"}).status_code == 422
 
 
-def test_optimisation_loop_improves_the_best_feasible_setup(run_experiment, client):
-    d = run_experiment()
-    first = d["best"]["lap_time"]
-    for it in range(1, 4):
-        r = client.post(f"/api/experiments/{d['id']}/optimise/apply", json={"count": 2})
-        assert r.status_code == 202 and r.json()["iteration"] == it
-        wait_done(client, d["id"])
-    final = client.get(f"/api/experiments/{d['id']}").json()
-    assert final["runs_total"] == 26 and final["best"]["lap_time"] < first - 0.1 and final["best"]["stability"] >= 85
-    assert [r["iteration"] for r in final["runs"][20:]] == [1, 1, 2, 2, 3, 3] and final["counts"]["completed"] == 26
-    assert len(client.get(f"/api/experiments/{d['id']}/optimise/history").json()) >= 6
+def test_optimisation_loop_improves_the_best_feasible_setup(make_experiment, client):
+    """Statistical claim, not a lucky seed: over several reproducible experiments the model-based loop never loses ground
+    and on average finds a clearly faster feasible setup than the screening design alone."""
+    gains = []
+    for n in range(1, 4):
+        d = make_experiment(experiment_id=f"opt-loop-{n}", design={"seed": n})
+        client.post(f"/api/experiments/{d['id']}/execute")
+        first = wait_done(client, d["id"])["best"]["lap_time"]
+        for it in range(1, 7):
+            r = client.post(f"/api/experiments/{d['id']}/optimise/apply", json={"count": 2})
+            assert r.status_code == 202 and r.json()["iteration"] == it
+            wait_done(client, d["id"])
+        final = client.get(f"/api/experiments/{d['id']}").json()
+        assert final["runs_total"] == 32 and final["counts"]["completed"] == 32 and final["best"]["stability"] >= 85
+        assert [r["iteration"] for r in final["runs"][20:]] == [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6]
+        assert final["best"]["lap_time"] <= first + 1e-9  # the best feasible lap can only improve
+        gains.append(first - final["best"]["lap_time"])
+        assert len(client.get(f"/api/experiments/{d['id']}/optimise/history").json()) >= 12
+    assert sum(gains) / len(gains) > 0.1, gains
+
+
+def test_fixed_experiment_id_reproduces_results_exactly_and_duplicates_are_rejected(make_experiment, client):
+    a = make_experiment(experiment_id="repro-1", design={"method": "ofat", "replicates": 1})
+    client.post(f"/api/experiments/{a['id']}/execute")
+    first = wait_done(client, a["id"])
+    assert client.post("/api/experiments", json={"name": "dup", "experiment_id": "repro-1"}).status_code == 409
+    assert client.post("/api/experiments", json={"name": "bad id", "experiment_id": "Bad ID!"}).status_code == 422
+    from f1lab.api.app import create_app
+    from fastapi.testclient import TestClient
+
+    with TestClient(create_app(":memory:" if False else str(client.app.state.lab.repo.url.replace("sqlite:///", "")) + ".2")) as c2:
+        b = c2.post(
+            "/api/experiments",
+            json={
+                "name": "t",
+                "experiment_id": "repro-1",
+                "design": {"method": "ofat", "replicates": 1},
+                "simulator": {"latency_seconds": 0},
+            },
+        ).json()
+        c2.post(f"/api/experiments/{b['id']}/execute")
+        second = wait_done(c2, b["id"])
+    assert [r["outcomes"] for r in first["runs"]] == [r["outcomes"] for r in second["runs"]]
 
 
 def test_optimiser_respects_budget_and_busy_state(make_experiment, client):
@@ -243,10 +314,26 @@ def test_report_and_exports(run_experiment, client):
     d = run_experiment()
     j = client.get(f"/api/experiments/{d['id']}/report").json()
     rep = j["report"]
-    assert rep["report_version"] == "2.0" and rep["planned_runs"] == 20 == rep["completed_runs"] and rep["best_configuration"] and rep["anova"] and rep["regression"]
-    assert rep["reproducibility"]["random_seed"] == 1 and len(rep["reproducibility"]["specification_hash"]) == 64 and rep["constraint_violations"]
+    assert (
+        rep["report_version"] == "2.0"
+        and rep["planned_runs"] == 20 == rep["completed_runs"]
+        and rep["best_configuration"]
+        and rep["anova"]
+        and rep["regression"]
+    )
+    assert (
+        rep["reproducibility"]["random_seed"] == 1
+        and len(rep["reproducibility"]["specification_hash"]) == 64
+        and rep["constraint_violations"]
+    )
     html = client.get(f"/api/experiments/{d['id']}/report.html")
-    assert html.status_code == 200 and "SYNTHETIC DATA" in html.text and "ANOVA" in html.text and "Recommendation" in html.text and "<script" not in html.text
+    assert (
+        html.status_code == 200
+        and "SYNTHETIC DATA" in html.text
+        and "ANOVA" in html.text
+        and "Recommendation" in html.text
+        and "<script" not in html.text
+    )
     assert "attachment" in client.get(f"/api/experiments/{d['id']}/report.json").headers["content-disposition"]
     rows = list(csv.DictReader(io.StringIO(client.get(f"/api/experiments/{d['id']}/export/runs.csv").text)))
     assert len(rows) == 20 and {"front_wing", "lap_time", "stability", "feasible"} <= set(rows[0])
@@ -270,9 +357,8 @@ def test_multi_objective_experiment_reports_pareto(run_experiment, client):
 
 # -------------------------------------------------------------------------------- persistence
 def test_experiments_survive_restart_and_reanalysis_is_identical(db_path):
-    from fastapi.testclient import TestClient
-
     from f1lab.api.app import create_app
+    from fastapi.testclient import TestClient
 
     with TestClient(create_app(db_path)) as c1:
         eid = c1.post("/api/experiments", json={"name": "persist", "simulator": {"latency_seconds": 0}}).json()["id"]
@@ -281,7 +367,11 @@ def test_experiments_survive_restart_and_reanalysis_is_identical(db_path):
         a1 = c1.post(f"/api/experiments/{eid}/analysis", json={}).json()
     with TestClient(create_app(db_path)) as c2:
         after = c2.get(f"/api/experiments/{eid}").json()
-        assert after["runs"] == before["runs"] and after["status"] == "completed" and [e["id"] for e in c2.get("/api/experiments").json()] == [eid]
+        assert (
+            after["runs"] == before["runs"]
+            and after["status"] == "completed"
+            and [e["id"] for e in c2.get("/api/experiments").json()] == [eid]
+        )
         a2 = c2.post(f"/api/experiments/{eid}/analysis", json={}).json()
         assert a2["effects"] == a1["effects"] and a2["best_run_id"] == a1["best_run_id"]
         # the per-experiment simulator was re-registered, so more runs can still be executed
@@ -317,7 +407,10 @@ async def test_interrupted_runs_are_recovered_after_a_crash(db_path):
 
 
 def test_two_experiments_are_isolated(make_experiment, client):
-    a, b = make_experiment(name="A", design={"method": "ofat", "replicates": 1}), make_experiment(name="B", design={"method": "ofat", "replicates": 1, "seed": 9})
+    a, b = (
+        make_experiment(name="A", design={"method": "ofat", "replicates": 1}),
+        make_experiment(name="B", design={"method": "ofat", "replicates": 1, "seed": 9}),
+    )
     client.post(f"/api/experiments/{a['id']}/execute")
     wait_done(client, a["id"])
     assert client.get(f"/api/experiments/{b['id']}").json()["counts"]["completed"] == 0

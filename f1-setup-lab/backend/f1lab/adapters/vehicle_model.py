@@ -1,6 +1,6 @@
 """Synthetic vehicle-performance model (invented; not real aerodynamics or tyre physics).
 
-Design intent: lap time has an interior optimum in wing level and balance, so a screening design finds the important
+Design intent: lap time has an interior optimum (softer suspension, ~21 psi, moderate wing and balance) away from the baseline setup, so a screening design finds the important
 factors and a model-based optimiser can refine; stability *rises* with downforce, so a minimum-stability constraint
 forces a genuine lap-time trade-off.
 """
@@ -35,9 +35,9 @@ def vehicle_model(setup: dict[str, float]) -> dict[str, float]:
     fw, rw, sus, tp = s["front_wing"], s["rear_wing"], s["suspension"], s["tyre_pressure_psi"]
     wing = fw + rw
     bal = (rw - fw) - 4.0  # ideal: rear 4 deg more than front
-    s1 = 26.0 + 0.020 * wing + 0.004 * (sus - 6) ** 2
-    s2 = 34.0 - 0.120 * wing + 0.0015 * wing**2 + 0.004 * bal**2 + 0.060 * (sus - 6) ** 2 + 0.050 * (tp - 22) ** 2
-    s3 = 21.0 + 0.012 * wing + 0.020 * (tp - 22) ** 2 + 0.020 * (sus - 6) ** 2
+    s1 = 26.0 + 0.020 * wing + 0.004 * (sus - 4.5) ** 2
+    s2 = 34.0 - 0.120 * wing + 0.0015 * wing**2 + 0.004 * bal**2 + 0.060 * (sus - 4.5) ** 2 + 0.050 * (tp - 21) ** 2
+    s3 = 21.0 + 0.012 * wing + 0.020 * (tp - 21) ** 2 + 0.020 * (sus - 4.5) ** 2
     stability = 70.0 + 0.35 * wing - 0.03 * bal**2 - 0.5 * (sus - 6) ** 2 - 0.8 * abs(tp - 22)
     return {
         "sector_1": s1, "sector_2": s2, "sector_3": s3, "lap_time": s1 + s2 + s3,

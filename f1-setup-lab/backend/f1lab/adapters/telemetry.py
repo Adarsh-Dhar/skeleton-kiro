@@ -6,7 +6,7 @@ import csv
 import io
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from trialforge import Measurement
 
@@ -85,7 +85,7 @@ def parse_telemetry_csv(text: str, time_unit: str = "s") -> ParsedTelemetry:
 
 def to_measurements(run_id: str, parsed: ParsedTelemetry, source: str) -> list[Measurement]:
     """Build SDK measurements. Times carry the file's unit; the SDK converts ms -> s keeping the raw value."""
-    t0 = datetime(2026, 5, 1, 13, 0, tzinfo=timezone.utc)
+    t0 = datetime(2026, 5, 1, 13, 0, tzinfo=UTC)
     ms: list[Measurement] = []
     unit = "ms" if parsed.time_unit == "ms" else "seconds"
     for rec in parsed.laps:
