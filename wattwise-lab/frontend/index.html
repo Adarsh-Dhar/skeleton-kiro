@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WATTWISE LAB</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <a class="brand" href="#/"><span class="mark" aria-hidden="true"><i></i><i></i><i></i></span><span class="brand-text"><b>Wattwise Lab</b><small>household electricity experiments</small></span></a>
+    <nav id="nav" aria-label="Screens">
+      <a href="#/" data-nav="dash">Energy dashboard</a>
+      <a href="#/household" data-nav="household">Household setup</a>
+      <a href="#/new" data-nav="new">Experiment designer</a>
+      <a href="#/simulator" data-nav="simulator">Schedule simulator</a>
+      <a href="#/analysis" data-nav="analysis">Analysis</a>
+      <a href="#/optimise" data-nav="optimise">Optimisation</a>
+      <a href="#/reports" data-nav="reports">Reports</a>
+      <a href="#/meter" data-nav="meter">Meter import</a>
+    </nav>
+    <div class="api" id="api-status" title="backend status"><i class="led"></i><span>connecting</span></div>
+  </aside>
+  <div class="stage">
+    <div class="simulated" role="note">Simulated household. Readings, charging and costs come from a simple model, not a real meter or tariff feed, unless you import your own CSV.</div>
+    <main id="view" aria-live="polite"></main>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+<script src="charts.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

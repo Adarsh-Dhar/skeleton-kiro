@@ -20,7 +20,9 @@ Three example adapters live in [`examples/`](examples/) and are built *only* on 
 | [`third_domain_adapter`](examples/third_domain_adapter/adapter.py) | coffee roasting (unrelated domain) | **synthetic** deterministic roaster |
 
 > None of the example data is real. There is no connection to any Formula 1 team, live telemetry or physical meter.
-> This repository contains the **core SDK and adapters only**; the two complete frontend applications are future work.
+> The two applications that prove the skeleton live beside it: [`../f1-setup-lab`](../f1-setup-lab) (vehicle setup) and
+> [`../wattwise-lab`](../wattwise-lab) (household electricity). Each installs the `trialforge-core` wheel from `dist/` as an ordinary
+> package, imports only its public top-level API, and runs on its own port with its own database. Neither adds domain code to the SDK.
 
 ## Install
 

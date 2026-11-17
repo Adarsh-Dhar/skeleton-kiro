@@ -1,0 +1,157 @@
+"""End-to-end browser test (Chromium via Playwright): a new user completes the whole WATTWISE workflow with the mouse only.
+
+Screenshots of every screen are written to docs/screenshots/ (used by the README). Run ``playwright install chromium`` once first.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+pw = pytest.importorskip("playwright.sync_api")
+SHOTS = Path(__file__).resolve().parents[1] / "docs" / "screenshots"
+
+
+@pytest.fixture(scope="module")
+def page(live):
+    from playwright.sync_api import sync_playwright
+
+    SHOTS.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        ctx = browser.new_context(viewport={"width": 1440, "height": 900})
+        pg = ctx.new_page()
+        pg.errors = []
+        # the browser logs every 4xx response as a console error; those are intentional in the validation tests
+        pg.on("console", lambda m: pg.errors.append(m.text) if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+        pg.on("pageerror", lambda e: pg.errors.append(str(e)))
+        pg.base = live.url
+        yield pg
+        browser.close()
+
+
+def fresh(page, hash_):
+    """Hash-only navigation to the current hash does not re-render; force a clean page."""
+    page.goto(page.base + "/")
+    page.evaluate(f"location.hash = '{hash_}'")
+    page.reload()
+
+
+def shot(page, name):
+    page.screenshot(path=str(SHOTS / f"{name}.png"), full_page=True)
+
+
+def test_whole_workflow_without_touching_the_terminal(page):
+    # 1. dashboard: empty state offers a demo experiment
+    page.goto(page.base + "/")
+    page.wait_for_selector("#kpis .kpi")
+    page.wait_for_selector("#day svg.chart")
+    assert "No experiments yet" in page.inner_text("#dash")
+    shot(page, "1-dashboard")
+
+    # 2. household setup: an invalid tariff is explained as you type, a valid change saves
+    page.click("#nav a[data-nav=household]")
+    page.wait_for_selector("#periods tr")
+    page.fill("#periods tr:first-child [data-f=end]", "6")
+    page.wait_for_selector("#tvalid .errors")
+    assert "gaps" in page.inner_text("#tvalid")
+    page.fill("#periods tr:first-child [data-f=end]", "7")
+    page.wait_for_selector("#tvalid .note")
+    shot(page, "2-household")
+    page.click("#hsave")
+    page.wait_for_selector("#toast.ok")
+
+    # 3. schedule simulator: moving a slider re-prices the day
+    page.click("#nav a[data-nav=simulator]")
+    page.wait_for_selector("#out svg.chart")
+    before = page.inner_text("#out .kpi >> nth=0")
+    page.fill("#s-charge_start", "24")
+    page.dispatch_event("#s-charge_start", "input")
+    page.wait_for_function("(b) => document.querySelector('#out .kpi b').textContent !== b", arg=before.split("\n")[0])
+    assert float(page.inner_text("#out .kpi >> nth=0").split("\n")[0]) < float(before.split("\n")[0])
+    shot(page, "3-simulator")
+
+    # 4. experiment designer: invalid input is rejected with a readable message, then a valid design is generated
+    page.click("#nav a[data-nav=new]")
+    page.wait_for_selector("#f")
+    page.fill("[data-lo=charge_start]", "29")
+    page.fill("[data-hi=charge_start]", "20")
+    page.click("#f button[type=submit]")
+    page.wait_for_selector("#err .errors")
+    assert "low must be smaller" in page.inner_text("#err")
+    shot(page, "4-designer-error")
+    page.fill("[data-lo=charge_start]", "19")
+    page.fill("[data-hi=charge_start]", "29")
+    page.select_option("#method", "full_factorial")
+    page.fill("#lat", "0")
+    page.click("#f button[type=submit]")
+    page.wait_for_selector("text=Combinations to measure")
+    shot(page, "5-design")
+
+    # 5. run it and watch progress
+    page.click("#go")
+    page.wait_for_selector("#runs-root table")
+    page.wait_for_function("document.querySelectorAll('.chip.completed').length >= 27", timeout=60000)
+    assert page.query_selector(".chip.failed") is None
+    shot(page, "6-runs")
+    page.click("[data-prof] >> nth=0")
+    page.wait_for_selector(".modal svg.chart")
+    page.keyboard.press("Escape")
+
+    # 6. analysis
+    page.click("#nav a[data-nav=analysis]")
+    page.click("text=Open analysis")
+    page.wait_for_selector(".reco h3")
+    assert "Cheapest feasible schedule" in page.inner_text(".reco h3")
+    page.wait_for_selector("text=What moves the cost")
+    shot(page, "7-analysis")
+
+    # 7. optimisation: suggest, then run the suggestion
+    page.click("#nav a[data-nav=optimise]")
+    page.click("text=Open optimisation")
+    page.wait_for_selector("#best svg.chart")
+    page.click("#suggest")
+    page.wait_for_selector("#sug .panel")
+    shot(page, "8-optimise")
+    page.fill("#opt-n", "1")
+    page.click("#apply")
+    page.wait_for_selector("#runs-root table")
+    page.wait_for_function("document.querySelectorAll('.chip.opt').length >= 1 && document.querySelectorAll('.chip.queued, .chip.running').length === 0", timeout=60000)
+
+    # 8. reports
+    page.click("#nav a[data-nav=reports]")
+    page.click("text=Open reports")
+    page.wait_for_selector("iframe")
+    page.wait_for_selector("a:has-text('Schedules (CSV)')")
+    shot(page, "9-report")
+    with page.expect_download() as dl:
+        page.click("a:has-text('Report (JSON)')")
+    assert dl.value.suggested_filename.endswith("-report.json")
+
+    # 9. meter import
+    page.click("#nav a[data-nav=meter]")
+    page.click("#d2")
+    page.click("#prev")
+    page.wait_for_selector("#res .kpis")
+    assert "readings every 15 min" in page.inner_text("#res")
+    shot(page, "10-meter")
+
+    # 10. dashboard now lists the experiment with its saving
+    page.click("#nav a[data-nav=dash]")
+    page.wait_for_selector("tr.clickable")
+    assert "%" in page.inner_text("tr.clickable")
+    assert page.errors == [], page.errors
+
+
+def test_user_text_is_escaped_in_the_browser(page):
+    fresh(page, "#/new")
+    page.wait_for_selector("#f")
+    page.fill("#name", "<img src=x onerror=window.__xss=1>")
+    page.select_option("#method", "ofat")
+    page.fill("#lat", "0")
+    page.click("#f button[type=submit]")
+    page.wait_for_selector("text=Combinations to measure")
+    assert page.evaluate("window.__xss") is None
+    assert "<img src=x" in page.inner_text("h1")  # shown literally, not interpreted
+    assert page.errors == [], page.errors
