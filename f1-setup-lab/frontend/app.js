@@ -188,7 +188,7 @@ async function viewLive() {
       <div class="grid g2"><div class="panel"><h2>Receiver</h2>
         <div class="grid g2"><div class="field"><label for="lhost">IP address</label><input id="lhost" value="127.0.0.1" ${s.listening ? 'disabled' : ''}></div><div class="field"><label for="lport">Port</label><input id="lport" type="number" min="1024" max="65535" value="${META.game.default_port}" ${s.listening ? 'disabled' : ''}></div></div>
         <div class="row"><button class="btn primary" id="lcon" ${s.listening ? 'disabled' : ''}>Start listening</button><button class="btn" id="ldis" ${s.listening ? '' : 'disabled'}>Stop</button></div>
-        <h3>In the game</h3><p class="hint">Settings &rsaquo; Telemetry Settings: UDP Telemetry <b>On</b>, IP address and port as above, send rate 20 Hz or more, UDP format <b>F1 25</b> (not the 2026 Season Pack; this app decodes packet format ${esc(s.accepted_formats.join(', '))}).</p></div>
+        <h3>In the game</h3><p class="hint">Settings &rsaquo; Telemetry Settings: UDP Telemetry <b>On</b>, IP address and port as above, send rate 20 Hz or more, UDP format <b>F1 25</b> or <b>F1 25: 2026 Season Pack</b> (this app decodes packet format ${esc(s.accepted_formats.join(', '))}).</p></div>
       <div class="panel"><h2>Status</h2><table><tbody>
         <tr><td class="dim">Listening</td><td>${s.listening ? '<span class="good">yes</span>' : 'no'}</td></tr>
         <tr><td class="dim">Receiving packets</td><td>${s.connected ? '<span class="good">yes</span>' : '<span class="badc">no</span>'}</td></tr>
@@ -196,6 +196,8 @@ async function viewLive() {
         <tr><td class="dim">Wrong format</td><td class="num ${s.wrong_format ? 'badc' : ''}">${esc(s.wrong_format ?? 0)}</td></tr>
         <tr><td class="dim">Malformed</td><td class="num ${s.malformed ? 'badc' : ''}">${esc(s.malformed ?? 0)}</td></tr>
         <tr><td class="dim">Laps in this session</td><td class="num">${esc(s.laps_recorded)}</td></tr>
+        <tr><td class="dim">Game session</td><td class="mono">${esc(s.session?.uid ?? '&mdash;')} &middot; car ${esc(s.session?.player_car ?? '&mdash;')} &middot; fmt ${esc(s.session?.packet_format ?? '&mdash;')}</td></tr>
+        <tr><td class="dim">Telemetry samples</td><td class="num">${esc(s.telemetry?.samples ?? 0)}${s.telemetry?.samples ? ` &middot; top ${esc(s.telemetry.top_speed_kph)} km/h` : ''}</td></tr>
         <tr><td class="dim">Last error</td><td>${s.last_error ? `<span class="badc">${esc(s.last_error)}</span>` : '&mdash;'}</td></tr></tbody></table>
         ${s.wrong_format ? `<div class="note">${esc(s.format_help)}</div>` : ''}</div></div>
       <div class="panel"><h2>Current setup reported by the game</h2>${setup ? `<table><tbody>${setup}</tbody></table>` : '<p class="hint">Waiting for a Car Setups packet (about twice a second while the game is in a session).</p>'}</div>`;

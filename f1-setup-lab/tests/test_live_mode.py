@@ -146,7 +146,7 @@ def test_csv_import_cannot_be_attached_to_a_live_run(client, make_live):
 def test_status_reports_connection_wrong_format_and_malformed_packets(client):
     g = Game(client)
     st0 = g.connect()
-    assert st0["listening"] is True and st0["accepted_formats"] == [2025]
+    assert st0["listening"] is True and st0["accepted_formats"] == [2025, 2026]
     st = g.send(setup_packet(), setup_packet(fmt=2023), b"junk")
     assert st["packets"] == 1 and st["wrong_format"] == 1 and st["malformed"] == 1 and st["connected"] is True and st["current_setup"]["front_wing"] == 25
     assert "2026 Season Pack" in st["format_help"]

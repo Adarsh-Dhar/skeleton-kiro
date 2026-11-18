@@ -44,7 +44,7 @@ async def main(host: str, port: int, seconds: float | None) -> None:
         rx.stop()
         print(f"\npackets accepted {st['packets']}, wrong format {st['wrong_format']}, malformed {st['malformed']}")
         if st["wrong_format"]:
-            print("The game is sending a different UDP format: select the F1 25 format (not the 2026 Season Pack).")
+            print("The game is sending an unsupported UDP format: select F1 25 or F1 25: 2026 Season Pack.")
 
 
 if __name__ == "__main__":

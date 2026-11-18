@@ -6,10 +6,10 @@ import time
 from collections import Counter
 from collections.abc import Callable
 
-from f1lab.integrations.game_udp.protocols import f1_25 as P
+from f1lab.integrations.game_udp import protocols as P
 from f1lab.integrations.game_udp.recorder import RawRecorder
 
-ACCEPTED_FORMATS = {2025}  # the packet-format number in the header; add another only with its own decoder
+ACCEPTED_FORMATS = P.accepted_formats()  # packet-format numbers with a registered decoder
 
 
 class UdpReceiver(asyncio.DatagramProtocol):

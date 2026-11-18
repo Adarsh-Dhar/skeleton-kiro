@@ -54,10 +54,27 @@ def decode_setup(data: bytes, h: Header) -> dict[str, float]:
     return dict(zip(SETUP_FIELDS, CAR_SETUP.unpack_from(data, HEADER.size + h.player_car * CAR_SETUP.size), strict=True))
 
 
-def decode_telemetry(data: bytes, h: Header) -> dict[str, float]:
+def decode_telemetry(data: bytes, h: Header) -> dict[str, object]:
     _check(h, data)
     v = CAR_TELEMETRY.unpack_from(data, HEADER.size + h.player_car * CAR_TELEMETRY.size)
-    return {"speed_kph": v[0], "throttle": v[1], "steer": v[2], "brake": v[3], "gear": v[5], "rpm": v[6]}
+    return {
+        "speed_kph": v[0],
+        "throttle": v[1],
+        "steer": v[2],
+        "brake": v[3],
+        "clutch": v[4],
+        "gear": v[5],
+        "rpm": v[6],
+        "drs": v[7],
+        "rev_lights_percent": v[8],
+        "rev_lights_bit_value": v[9],
+        "brake_temperature_c": v[10:14],
+        "tyre_surface_temperature_c": v[14:18],
+        "tyre_inner_temperature_c": v[18:22],
+        "engine_temperature_c": v[22],
+        "tyre_pressure_psi": v[23:27],
+        "surface_type": v[27:31],
+    }
 
 
 @dataclass

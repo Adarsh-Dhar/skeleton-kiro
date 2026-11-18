@@ -24,7 +24,7 @@ class StintRecorder:
     """Records one stint. ``target`` is only the factors under test; every other setup field must equal ``baseline``."""
     target: dict; baseline: dict; min_valid_laps: int = 3; skip_out_lap: bool = True
     snapshots: list[dict] = field(default_factory=list); history: History | None = None
-    start_lap: int | None = None; end_lap: int | None = None
+    start_lap: int | None = None; end_lap: int | None = None; session_changed: bool = False
 
     def on_setup(self, setup: dict) -> None:
         if self.start_lap is not None and self.end_lap is None and (not self.snapshots or same(self.snapshots[-1], setup)):
@@ -39,6 +39,8 @@ class StintRecorder:
     def stop(self) -> StintResult:
         self.end_lap = len(self.history.laps) if self.history else 0
         why: list[str] = []
+        if self.session_changed:
+            why.append("game session changed during the stint")
         if not self.snapshots:
             why.append("no setup packet was received during the stint (check UDP settings)")
         else:

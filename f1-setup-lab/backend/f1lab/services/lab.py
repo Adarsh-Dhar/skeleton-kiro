@@ -492,10 +492,13 @@ class LabService:
         return self.live_status()
 
     def live_status(self) -> dict:
+        stint_tel = self.live.stint_telemetry or self.live.last_stint_telemetry
         out: dict[str, Any] = {
             "listening": self.udp is not None, "session_id": self.live_session, "accepted_formats": sorted(ACCEPTED_FORMATS),
-            "format_help": "Set the game's UDP format to the F1 25 format (not the 2026 Season Pack) and the IP/port to this receiver.",
+            "format_help": "Set the game's UDP format to F1 25 or F1 25: 2026 Season Pack; this receiver decodes both packet formats.",
             "current_setup": self.live.setup, "laps_recorded": len(self.live.history.laps) if self.live.history else 0,
+            "session": {"uid": self.live.session_uid, "player_car": self.live.player_car, "packet_format": self.live.packet_format},
+            "telemetry": self.live.telemetry.summary(), "stint_telemetry": stint_tel.summary() if stint_tel else None,
             "stint": {"experiment_id": self.active_stint[0], "run_id": self.active_stint[1]} if self.active_stint else None,
         }
         if self.udp is not None:
@@ -526,10 +529,14 @@ class LabService:
             raise Conflict("no stint in progress for this run: press Start stint first")
         result, top = self.live.stop_stint()
         self.active_stint = None
+        tel = self.live.last_stint_telemetry
         path = save_evidence(self.data_dir, exp_id, run_id, {
             "experiment_id": exp_id, "run_id": run_id, "target": run.configuration, "accepted": result.accepted, "reasons": result.reasons,
             "start_lap": result.start_lap, "end_lap": result.end_lap, "setups_seen": result.setups_seen, "top_speed_kph": top,
-            "laps": [asdict(lap) for lap in result.laps], "raw_session": self.live_session, "recorded_at": datetime.now(UTC).isoformat(),
+            "laps": [asdict(lap) for lap in result.laps], "raw_session": self.live_session,
+            "game_session": {"uid": self.live.session_uid, "player_car": self.live.player_car, "packet_format": self.live.packet_format},
+            "telemetry": tel.summary() if tel else None,
+            "recorded_at": datetime.now(UTC).isoformat(),
         })  # fmt: skip
         if not result.accepted:
             raise Conflict("stint rejected: " + "; ".join(result.reasons))  # nothing is sent to the SDK; the run stays queued
