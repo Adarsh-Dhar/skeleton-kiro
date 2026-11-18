@@ -83,19 +83,24 @@ def parse_telemetry_csv(text: str, time_unit: str = "s") -> ParsedTelemetry:
     return out
 
 
-def to_measurements(run_id: str, parsed: ParsedTelemetry, source: str) -> list[Measurement]:
-    """Build SDK measurements. Times carry the file's unit; the SDK converts ms -> s keeping the raw value."""
-    t0 = datetime(2026, 5, 1, 13, 0, tzinfo=UTC)
+def to_measurements(run_id: str, parsed: ParsedTelemetry, source: str, base_time: datetime | None = None) -> list[Measurement]:
+    """Build SDK measurements. Times carry the file's unit; the SDK converts ms -> s keeping the raw value.
+
+    The CSV has no clock, so laps are stamped backwards from ``base_time`` (default: now) using the nominal 90 s lap spacing, and every
+    measurement carries the quality flag ``import_time_assumed``. (Previously every import got the fixed date 2026-05-01 13:00.)
+    """
+    end = base_time or datetime.now(UTC)
+    last_lap = max((rec["lap"] for rec in parsed.laps), default=0)
     ms: list[Measurement] = []
     unit = "ms" if parsed.time_unit == "ms" else "seconds"
     for rec in parsed.laps:
-        ts = t0 + timedelta(seconds=90 * rec["lap"])
+        ts = end - timedelta(seconds=90 * (last_lap - rec["lap"]))
         meta = {"synthetic": False, "imported": True, "lap": rec["lap"]}
         for metric in ("sector_1", "sector_2", "sector_3", "lap_time"):
             ms.append(Measurement(run_id=run_id, metric=metric, value=rec[metric], unit=unit, timestamp=ts,
-                                  source=source, metadata=dict(meta)))  # fmt: skip
+                                  source=source, metadata=dict(meta), quality_flags=["import_time_assumed"]))  # fmt: skip
         for extra in EXTRA:
             if extra in rec:
                 ms.append(Measurement(run_id=run_id, metric=extra, value=rec[extra], unit=METRIC_UNITS[extra],
-                                      timestamp=ts, source=source, metadata=dict(meta)))  # fmt: skip
+                                      timestamp=ts, source=source, metadata=dict(meta), quality_flags=["import_time_assumed"]))  # fmt: skip
     return ms

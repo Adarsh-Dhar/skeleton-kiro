@@ -13,11 +13,12 @@
   <nav id="nav">
     <a href="#/" data-nav="dash">Dashboard</a>
     <a href="#/new" data-nav="new">New experiment</a>
-    <a href="#/telemetry" data-nav="telemetry">Telemetry import</a>
+    <a href="#/live" data-nav="live">Live simulator</a>
+      <a href="#/telemetry" data-nav="telemetry">Telemetry import</a>
   </nav>
   <div class="api" id="api-status" title="backend status"><i class="led"></i><span>connecting</span></div>
 </header>
-<div class="synthetic" role="note">SYNTHETIC DATA &mdash; the vehicle model is invented. Not real Formula 1 telemetry; no connection to any team, simulator licence or timing feed.</div>
+<div class="synthetic" id="banner" role="note">SYNTHETIC DATA &mdash; the vehicle model is invented. Not real Formula 1 telemetry; no connection to any team, simulator licence or timing feed.</div>
 <main id="view" aria-live="polite"></main>
 <div id="toast" class="toast" hidden></div>
 <script src="charts.js"></script>

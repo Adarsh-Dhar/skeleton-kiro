@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import asdict
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from trialforge import (
@@ -28,16 +31,27 @@ from trialforge import (
     SQLiteExperimentRepository,
 )
 
-from f1lab import SYNTHETIC_NOTICE
+from f1lab import notice_for
 from f1lab.adapters.sim_adapter import F1SimulatorAdapter
 from f1lab.adapters.telemetry import parse_telemetry_csv, to_measurements
 from f1lab.adapters.vehicle_model import BASELINE, FACTORS, METRIC_UNITS
 from f1lab.api.schemas import ExperimentRequest
+from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
+from f1lab.integrations.game_udp.evidence import load_evidence, save_evidence
+from f1lab.integrations.game_udp.live import LiveState
+from f1lab.integrations.game_udp.measurements import stint_to_measurements
+from f1lab.integrations.game_udp.receiver import ACCEPTED_FORMATS, UdpReceiver
+from f1lab.integrations.game_udp.recorder import RawRecorder
 from f1lab.services import narrative, report_html
 
 ADAPTER_PREFIX = "f1-sim/"
 GENERATORS = {4: ["D=ABC"], 3: ["C=AB"]}  # half fractions of the enabled factors (resolution IV and III)
-NOTABLE = {"unit_converted": "unit converted", "statistical_outlier": "outlier", "sensor_warning": "sensor warning"}
+NOTABLE = {"unit_converted": "unit converted", "statistical_outlier": "outlier", "sensor_warning": "sensor warning", "import_time_assumed": "time = import time"}
+LIVE = "live_simulator"
+
+
+def mode_of(spec: ExperimentSpec) -> str:
+    return spec.metadata.get("mode", "synthetic")
 
 
 class NotFound(KeyError):
@@ -56,7 +70,12 @@ def measurement_definitions() -> list[MeasurementDefinition]:
 class LabService:
     """Owns the SDK service, the per-experiment adapters and the background runner."""
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, data_dir: str | None = None) -> None:
+        self.data_dir = Path(data_dir) if data_dir else (Path(db_path).parent if "://" not in db_path else Path("data"))
+        self.live = LiveState()
+        self.udp: UdpReceiver | None = None
+        self.live_session: str | None = None
+        self.active_stint: tuple[str, str] | None = None
         self.registry = AdapterRegistry()
         self.repo = SQLiteExperimentRepository(f"sqlite:///{db_path}" if "://" not in db_path else db_path)
         self.svc = ExperimentService(registry=self.registry, repository=self.repo)
@@ -82,11 +101,56 @@ class LabService:
             )
 
     async def shutdown(self) -> None:
+        self.live_disconnect()
         await self.runner.shutdown()
         await self.registry.shutdown_all()
 
     # ------------------------------------------------------------------ creation
     def build_spec(self, req: ExperimentRequest, exp_id: str) -> ExperimentSpec:
+        return self._build_live_spec(req, exp_id) if req.mode == LIVE else self._build_synthetic_spec(req, exp_id)
+
+    @staticmethod
+    def _design_options(req: ExperimentRequest, k: int) -> tuple[str, dict[str, Any]]:
+        d = req.design
+        method = {"full_factorial": "factorial"}.get(d.method, d.method)
+        options: dict[str, Any] = {"replicates": d.replicates}
+        if method == "fractional_factorial":
+            options["center_points"] = 0 if req.mode == LIVE else d.center_points  # discrete game values have no centre point
+            if k in GENERATORS:
+                options["generators"] = GENERATORS[k]
+        elif method in ("central_composite", "box_behnken"):
+            options["center_points"] = max(d.center_points, 1)
+            options.pop("replicates")
+        elif method == "random":
+            options = {"n_runs": min(d.n_runs, d.run_budget)}
+        return method, options
+
+    def _build_live_spec(self, req: ExperimentRequest, exp_id: str) -> ExperimentSpec:
+        """A experiment whose runs are driven by a person in the game. No adapter: nothing here may be executed by a simulator."""
+        live = req.live
+        factors = [Factor(name=n, factor_type="discrete", values=sorted(f.values), unit=GAME_FACTORS[n]["unit"], default=f.baseline) for n, f in live.factors.items()]
+        method, options = self._design_options(req, len(factors))
+        defs = [
+            MeasurementDefinition(metric="lap_time", unit="seconds", required=True),
+            *[MeasurementDefinition(metric=f"sector_{i}", unit="seconds", required=False) for i in (1, 2, 3)],
+            MeasurementDefinition(metric="valid_laps", unit="count", data_type="integer", aggregation="last", required=True),
+            MeasurementDefinition(metric="lap_time_std", unit="seconds", aggregation="last", required=True),
+            MeasurementDefinition(metric="top_speed", unit="km/h", aggregation="max", required=False),
+        ]
+        return ExperimentSpec(
+            experiment_id=exp_id, name=req.name, hypothesis=req.hypothesis,
+            description="F1 SETUP LAB live-simulator experiment: stints driven in EA SPORTS F1 25, setups verified from UDP.",
+            factors=factors, objectives=[Objective(metric="lap_time", direction="minimize")],
+            constraints=[Constraint(metric="valid_laps", kind="output", minimum=live.min_valid_laps),
+                         Constraint(metric="lap_time_std", kind="output", maximum=live.max_lap_std)],
+            measurement_definitions=defs, design_method=method, design_options=options,
+            adapter_name=None, run_budget=req.design.run_budget, random_seed=req.design.seed,
+            execution=ExecutionPolicy(max_retries=0, max_concurrency=1, run_timeout_seconds=3600),
+            metadata={"app": "f1-setup-lab", "mode": LIVE, "synthetic": False, "game": GAME_ID, "live": live.model_dump(),
+                      "catalog_verified": all(GAME_FACTORS[n]["verified"] for n in live.factors)},
+        )  # fmt: skip
+
+    def _build_synthetic_spec(self, req: ExperimentRequest, exp_id: str) -> ExperimentSpec:
         factors = []
         for name, s in req.factors.items():
             if not s.enabled:
@@ -96,17 +160,7 @@ class LabService:
                                   default=base if s.low <= base <= s.high else round((s.low + s.high) / 2, 6)))  # fmt: skip
         k = len(factors)
         d = req.design
-        method = {"full_factorial": "factorial"}.get(d.method, d.method)
-        options: dict[str, Any] = {"replicates": d.replicates}
-        if method == "fractional_factorial":
-            options["center_points"] = d.center_points
-            if k in GENERATORS:
-                options["generators"] = GENERATORS[k]
-        elif method in ("central_composite", "box_behnken"):
-            options["center_points"] = max(d.center_points, 1)
-            options.pop("replicates")
-        elif method == "random":
-            options = {"n_runs": min(d.n_runs, d.run_budget)}
+        method, options = self._design_options(req, k)
         objectives = [Objective(metric="lap_time", direction="minimize")]
         if req.also_minimise_tyre_wear:
             objectives.append(Objective(metric="tyre_degradation", direction="minimize", weight=0.5))
@@ -131,7 +185,8 @@ class LabService:
         try:
             self.svc.design(spec)
         except Exception:
-            self.registry.unregister(spec.adapter_name)
+            if spec.adapter_name:
+                self.registry.unregister(spec.adapter_name)
             raise
         return self.detail(exp_id)
 
@@ -168,8 +223,12 @@ class LabService:
             "id": spec.experiment_id, "name": spec.name, "hypothesis": spec.hypothesis, "status": res.status.value,
             "created_at": spec.created_at.isoformat(), "design_method": res.plan.method, "run_budget": spec.run_budget,
             "runs_total": len(res.runs), "counts": counts, "min_stability": spec.metadata.get("min_stability"),
-            "factors": [{"name": f.name, "low": f.lower, "high": f.upper, "unit": f.unit, "label": FACTORS[f.name]["label"]} for f in spec.factors],
-            "best": {"run_id": best["run_id"], "lap_time": best["outcomes"]["lap_time"], "stability": best["outcomes"].get("stability"),
+            "mode": mode_of(spec), "min_valid_laps": spec.metadata.get("live", {}).get("min_valid_laps"), "max_lap_std": spec.metadata.get("live", {}).get("max_lap_std"),
+            "catalog_verified": spec.metadata.get("catalog_verified"),
+            "factors": [{"name": f.name, "low": f.lower if f.lower is not None else min(f.values), "high": f.upper if f.upper is not None else max(f.values),
+                         "values": f.values, "unit": f.unit, "label": (GAME_FACTORS if mode_of(spec) == LIVE else FACTORS).get(f.name, {}).get("label", f.name)}
+                        for f in spec.factors],
+            "best": {"run_id": best["run_id"], "lap_time": best["outcomes"]["lap_time"], "stability": best["outcomes"].get("stability"), "lap_time_std": best["outcomes"].get("lap_time_std"),
                      "configuration": best["configuration"]} if best else None,
             "multi_objective": len(spec.objectives) > 1,
         }  # fmt: skip
@@ -189,7 +248,9 @@ class LabService:
         d["runs"] = [self._run_row(r) for r in res.runs]
         d["design"] = self.design_view(res)
         d["simulator"] = res.spec.metadata.get("lab", {})
-        d["synthetic_notice"] = SYNTHETIC_NOTICE
+        d["synthetic_notice"] = notice_for(mode_of(res.spec))
+        d["notice"] = d["synthetic_notice"]
+        d["source_label"] = "SIM-RECORDED" if mode_of(res.spec) == LIVE else "SYNTHETIC"
         return d
 
     def design_view(self, res: ExperimentResult) -> dict:
@@ -207,8 +268,16 @@ class LabService:
         return [self._run_row(r) for r in self._result(exp_id).runs]
 
     # ------------------------------------------------------------------ execution
+    @staticmethod
+    def _require_synthetic(res: ExperimentResult) -> None:
+        """The SDK falls back to the only registered adapter when a spec names none, so a live experiment could be 'executed' by the
+        synthetic simulator. Refuse before anything is submitted."""
+        if mode_of(res.spec) != "synthetic":
+            raise Conflict("this experiment is measured in the simulator: use Start stint / Submit stint on each run instead of executing it")
+
     def execute(self, exp_id: str) -> dict:
         res = self._result(exp_id)
+        self._require_synthetic(res)
         if not any(r.status in (RunStatus.QUEUED, RunStatus.CREATED) for r in res.runs):
             raise Conflict("no queued runs to execute")
         self._register_adapter(res.spec)
@@ -222,6 +291,7 @@ class LabService:
 
     def retry_failed(self, exp_id: str) -> dict:
         res = self._result(exp_id)
+        self._require_synthetic(res)
         failed = [r for r in res.runs if r.status == RunStatus.FAILED]
         if not failed:
             raise Conflict("no failed runs to retry")
@@ -245,7 +315,7 @@ class LabService:
         for m in assessed:
             lap = by_lap.setdefault(m.metadata["lap"], {"lap": m.metadata["lap"], "flags": {}})
             lap[m.metric] = round(float(m.value), 4)
-            notable = [NOTABLE.get(f, f) for f in m.quality_flags if f not in ("run_id_bound", "timestamp_assumed_utc")]
+            notable = [NOTABLE.get(f, f) for f in m.quality_flags if f not in ("run_id_bound", "timestamp_assumed_utc", "import_time_assumed")]
             if notable:
                 lap["flags"][m.metric] = notable
         laps = [by_lap[k] for k in sorted(by_lap)]
@@ -263,6 +333,8 @@ class LabService:
 
     async def attach_telemetry(self, exp_id: str, run_id: str, csv_text: str, time_unit: str, filename: str) -> dict:
         res = self._result(exp_id)
+        if mode_of(res.spec) == LIVE:
+            raise Conflict("a CSV cannot prove which setup was driven: live experiments accept only verified stints (Start stint / Submit stint)")
         run = next((r for r in res.runs if r.run_id == run_id), None)
         if run is None:
             raise NotFound(run_id)
@@ -284,7 +356,7 @@ class LabService:
                     continue
                 lap = laps.setdefault(m.metadata["lap"], {"lap": m.metadata["lap"], "flags": {}})
                 lap[m.metric] = round(float(m.value), 4) if isinstance(m.value, (int, float)) else m.value
-                notable = [NOTABLE.get(f, f) for f in m.quality_flags if f not in ("run_id_bound", "timestamp_assumed_utc")]
+                notable = [NOTABLE.get(f, f) for f in m.quality_flags if f not in ("run_id_bound", "timestamp_assumed_utc", "import_time_assumed")]
                 if notable:
                     lap["flags"][m.metric] = notable
             rows = [laps[k] for k in sorted(laps)]
@@ -339,9 +411,11 @@ class LabService:
         recs = await self.optimise_suggest(exp_id, count, method)
         iteration = len(self.repo.get_plan(exp_id).design_info.get("sequential_extensions", [])) + 1
         runs = self.svc.add_runs(exp_id, [r["configuration"] for r in recs], iteration=iteration, source=f"optimizer:{method}")
-        self._register_adapter(res.spec)
-        self.runner.submit(exp_id)
-        return {"iteration": iteration, "added_runs": [r.run_id for r in runs], "recommendations": recs}
+        if mode_of(res.spec) == "synthetic":
+            self._register_adapter(res.spec)
+            self.runner.submit(exp_id)
+        return {"iteration": iteration, "added_runs": [r.run_id for r in runs], "recommendations": recs,
+                "awaiting_stints": mode_of(res.spec) != "synthetic"}
 
     def optimisation_history(self, exp_id: str) -> list[dict]:
         self._result(exp_id)
@@ -362,7 +436,7 @@ class LabService:
             "report": report.model_dump(mode="json"),
             "recommendation": rec,
             "effects": rec["effects"],
-            "synthetic_notice": SYNTHETIC_NOTICE,
+            "synthetic_notice": notice_for(mode_of(res.spec)),
         }
 
     async def report_html(self, exp_id: str) -> str:
@@ -370,7 +444,7 @@ class LabService:
         res = self._result(exp_id)
         runs = self.runs(exp_id)
         design = self.design_view(res)
-        return report_html.render(res.spec.name, res.spec.hypothesis, data["recommendation"], design, runs, data["effects"], data["report"])
+        return report_html.render(res.spec.name, res.spec.hypothesis, data["recommendation"], design, runs, data["effects"], data["report"], mode_of(res.spec))
 
     def csv_export(self, exp_id: str, kind: str) -> str:
         res = self._result(exp_id)
@@ -381,6 +455,93 @@ class LabService:
         if kind == "effects":
             return ReportEngine.effects_csv(self.svc.analysis_engine.analyse(self._completed(exp_id)))
         raise NotFound(kind)
+
+    # ------------------------------------------------------------------ live simulator (EA SPORTS F1 25 UDP)
+    def _live_result(self, exp_id: str) -> ExperimentResult:
+        res = self._result(exp_id)
+        if mode_of(res.spec) != LIVE:
+            raise Conflict("this is not a live-simulator experiment")
+        return res
+
+    @staticmethod
+    def _run(res: ExperimentResult, run_id: str):
+        run = next((r for r in res.runs if r.run_id == run_id), None)
+        if run is None:
+            raise NotFound(run_id)
+        return run
+
+    async def live_connect(self, host: str, port: int) -> dict:
+        if self.udp is not None:
+            raise Conflict("already listening: disconnect first")
+        sid = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        self.live = LiveState()
+        rec = RawRecorder(self.data_dir / "sessions" / sid / "raw.f1raw")
+        rx = UdpReceiver(self.live.on_packet, rec)
+        try:
+            await rx.start(host, port)
+        except OSError as exc:
+            rec.close()
+            raise Conflict(f"cannot listen on {host}:{port}: {exc}") from exc
+        self.udp, self.live_session = rx, sid
+        return self.live_status()
+
+    def live_disconnect(self) -> dict:
+        if self.udp is not None:
+            self.udp.stop()
+        self.udp, self.active_stint = None, None
+        return self.live_status()
+
+    def live_status(self) -> dict:
+        out: dict[str, Any] = {
+            "listening": self.udp is not None, "session_id": self.live_session, "accepted_formats": sorted(ACCEPTED_FORMATS),
+            "format_help": "Set the game's UDP format to the F1 25 format (not the 2026 Season Pack) and the IP/port to this receiver.",
+            "current_setup": self.live.setup, "laps_recorded": len(self.live.history.laps) if self.live.history else 0,
+            "stint": {"experiment_id": self.active_stint[0], "run_id": self.active_stint[1]} if self.active_stint else None,
+        }
+        if self.udp is not None:
+            out.update(self.udp.status())
+        return out
+
+    def stint_start(self, exp_id: str, run_id: str) -> dict:
+        res = self._live_result(exp_id)
+        run = self._run(res, run_id)
+        if run.status not in (RunStatus.CREATED, RunStatus.QUEUED):
+            raise Conflict(f"run is {run.status.value}; only queued runs can be measured")
+        if self.udp is None:
+            raise Conflict("not listening for the game: connect first")
+        if self.active_stint is not None:
+            raise Conflict("a stint is already in progress: submit it or disconnect")
+        target = {GAME_FACTORS[n]["packet_field"]: v for n, v in run.configuration.items()}
+        try:
+            self.live.start_stint(target)
+        except RuntimeError as exc:
+            raise Conflict(str(exc)) from exc
+        self.active_stint = (exp_id, run_id)
+        return {"started": True, "run_id": run_id, "target": run.configuration}
+
+    async def stint_submit(self, exp_id: str, run_id: str) -> dict:
+        res = self._live_result(exp_id)
+        run = self._run(res, run_id)
+        if self.active_stint != (exp_id, run_id):
+            raise Conflict("no stint in progress for this run: press Start stint first")
+        result, top = self.live.stop_stint()
+        self.active_stint = None
+        path = save_evidence(self.data_dir, exp_id, run_id, {
+            "experiment_id": exp_id, "run_id": run_id, "target": run.configuration, "accepted": result.accepted, "reasons": result.reasons,
+            "start_lap": result.start_lap, "end_lap": result.end_lap, "setups_seen": result.setups_seen, "top_speed_kph": top,
+            "laps": [asdict(lap) for lap in result.laps], "raw_session": self.live_session, "recorded_at": datetime.now(UTC).isoformat(),
+        })  # fmt: skip
+        if not result.accepted:
+            raise Conflict("stint rejected: " + "; ".join(result.reasons))  # nothing is sent to the SDK; the run stays queued
+        updated = await self.svc.ingest_measurements(exp_id, run_id, stint_to_measurements(run_id, result, top, evidence=str(path)))
+        return {"run": self._run_row(updated), "evidence": str(path)}
+
+    def evidence(self, exp_id: str, run_id: str) -> dict:
+        self._live_result(exp_id)
+        ev = load_evidence(self.data_dir, exp_id, run_id)
+        if ev is None:
+            raise NotFound(f"no evidence recorded for {run_id}")
+        return ev
 
     def delete_supported(self) -> bool:
         return False

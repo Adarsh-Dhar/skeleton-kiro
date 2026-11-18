@@ -1,0 +1,65 @@
+[
+  {
+    "id": "time-of-use",
+    "name": "Time-of-use",
+    "demand_charge_per_kw": 0.0,
+    "periods": [
+      {
+        "label": "Night",
+        "start": 23,
+        "end": 7,
+        "price": 0.11
+      },
+      {
+        "label": "Day",
+        "start": 7,
+        "end": 16,
+        "price": 0.22
+      },
+      {
+        "label": "Peak",
+        "start": 16,
+        "end": 21,
+        "price": 0.36
+      },
+      {
+        "label": "Evening",
+        "start": 21,
+        "end": 23,
+        "price": 0.22
+      }
+    ]
+  },
+  {
+    "id": "flat-rate",
+    "name": "Flat rate",
+    "demand_charge_per_kw": 0.0,
+    "periods": [
+      {
+        "label": "All day",
+        "start": 0,
+        "end": 24,
+        "price": 0.25
+      }
+    ]
+  },
+  {
+    "id": "night-saver-demand",
+    "name": "Night saver + demand charge",
+    "demand_charge_per_kw": 0.6,
+    "periods": [
+      {
+        "label": "Night",
+        "start": 0,
+        "end": 6,
+        "price": 0.09
+      },
+      {
+        "label": "Standard",
+        "start": 6,
+        "end": 24,
+        "price": 0.28
+      }
+    ]
+  }
+]

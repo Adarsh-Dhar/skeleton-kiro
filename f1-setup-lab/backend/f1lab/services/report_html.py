@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from html import escape as e
 
-from f1lab import SYNTHETIC_NOTICE
+from f1lab import notice_for
 
 
 def _table(headers: list[str], rows: list[list]) -> str:
@@ -13,7 +13,9 @@ def _table(headers: list[str], rows: list[list]) -> str:
     return f"<table><thead><tr>{th}</tr></thead><tbody>{tr}</tbody></table>"
 
 
-def render(name: str, hypothesis: str, rec: dict, design: dict, runs: list[dict], fx: dict, report: dict) -> str:
+def render(name: str, hypothesis: str, rec: dict, design: dict, runs: list[dict], fx: dict, report: dict, mode: str = "synthetic") -> str:
+    live = mode == "live_simulator"
+    second, second_head, second_fmt = ("lap_time_std", "lap spread (s)", ".2f") if live else ("stability", "stability", ".1f")
     setup = rec.get("setup") or {}
     best_rows = [[k, v] for k, v in setup.items()]
     eff_rows = [[x["term"], f"{x['low_to_high']:+.3f}" if x["low_to_high"] is not None else "", f"{x['p_value']:.3g}" if x["p_value"] is not None else "n/a",
@@ -23,16 +25,16 @@ def render(name: str, hypothesis: str, rec: dict, design: dict, runs: list[dict]
                    f"{r['p_value']:.3g}" if r["p_value"] is not None else ""] for r in (anova["rows"] if anova else [])]  # fmt: skip
     run_rows = [[r["order"] + 1, r["status"], *(f"{r['configuration'].get(k, ''):.2f}" if isinstance(r["configuration"].get(k), float) else r["configuration"].get(k, "")
                                                 for k in sorted(runs[0]["configuration"])),
-                 f"{r['outcomes'].get('lap_time', float('nan')):.3f}" if r["outcomes"] else "", f"{r['outcomes'].get('stability', float('nan')):.1f}" if r["outcomes"] else "",
+                 f"{r['outcomes'].get('lap_time', float('nan')):.3f}" if r["outcomes"] else "", format(r['outcomes'].get(second, float('nan')), second_fmt) if r["outcomes"] else "",
                  {True: "yes", False: "NO", None: ""}[r["feasible"]]] for r in runs] if runs else []  # fmt: skip
-    head = ["#", "status", *(sorted(runs[0]["configuration"]) if runs else []), "lap (s)", "stability", "feasible"]
+    head = ["#", "status", *(sorted(runs[0]["configuration"]) if runs else []), "lap (s)", second_head, "feasible"]
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><title>{e(name)} - F1 SETUP LAB report</title>
 <style>body{{font:14px/1.5 system-ui,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;color:#111}}h1{{margin-bottom:.2rem}}
 .warn{{background:#fff4d6;border:1px solid #e0b000;padding:.6rem 1rem;border-radius:6px}}table{{border-collapse:collapse;width:100%;margin:.5rem 0 1.2rem}}
 th,td{{border:1px solid #ccc;padding:.25rem .5rem;text-align:left;font-variant-numeric:tabular-nums}}th{{background:#f0f0f0}}
 .best{{background:#e8f6ea;border:1px solid #2e8b3d;padding:.6rem 1rem;border-radius:6px}}</style></head><body>
 <h1>{e(name)}</h1><p><em>F1 SETUP LAB - experiment report (TRIALFORGE report v{e(str(report.get("report_version", "")))})</em></p>
-<p class="warn"><strong>{e(SYNTHETIC_NOTICE)}</strong></p>
+<p class="warn"><strong>{e(notice_for(mode))}</strong></p>
 <h2>Hypothesis</h2><p>{e(hypothesis or "(none stated)")}</p>
 <h2>Recommendation</h2><div class="best"><strong>{e(rec.get("headline", ""))}</strong>{_table(["parameter", "value"], best_rows) if best_rows else ""}
 <ul>{"".join(f"<li>{e(x)}</li>" for x in rec.get("reasons", []))}</ul></div>

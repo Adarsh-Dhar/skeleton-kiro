@@ -6,10 +6,21 @@ from typing import Any
 
 from trialforge import AnalysisResult, ExperimentResult, RunStatus
 
-from f1lab import SYNTHETIC_NOTICE
+from f1lab import notice_for
 from f1lab.adapters.vehicle_model import FACTORS
+from f1lab.catalogs.ea_f1_25 import GAME_LABEL
 
 LABEL = {k: v["label"] for k, v in FACTORS.items()}
+
+
+def constraint_text(spec) -> str:
+    parts = []
+    for c in spec.constraints:
+        if c.minimum is not None:
+            parts.append(f"{c.metric} >= {c.minimum:g}")
+        if c.maximum is not None:
+            parts.append(f"{c.metric} <= {c.maximum:g}")
+    return ", ".join(parts) or "none"
 
 
 def run_outcomes(run) -> dict[str, float]:
@@ -64,24 +75,33 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, alpha: fl
     min_stab = next((c.minimum for c in spec.constraints if c.metric == "stability"), None)
     runs = {r.run_id: r for r in result.runs}
     done = [r for r in result.runs if r.status == RunStatus.COMPLETED]
-    caveats = [SYNTHETIC_NOTICE]
+    mode = spec.metadata.get("mode", "synthetic")
+    live = mode == "live_simulator"
+    labels = GAME_LABEL if live else LABEL
+    caveats = [notice_for(mode)]
+    if live and spec.metadata.get("catalog_verified") is False:
+        caveats.append("The game setup field mapping has not been verified with the probe (scripts/probe_setup.py): confirm each factor moves the value you expect.")
     fx = factor_effects(analysis, alpha)
     if not done:
         return {"status": "no_data", "headline": "No completed runs yet.", "reasons": [], "caveats": caveats, **{"effects": fx}}
     if not analysis.best_run_id:
         return {
             "status": "no_feasible",
-            "headline": f"No run satisfied the stability constraint (minimum {min_stab}).",
+            "headline": (f"No stint satisfied the constraints ({constraint_text(spec)})." if live else f"No run satisfied the stability constraint (minimum {min_stab})."),
             "reasons": ["Every completed run violated at least one constraint.",
-                        "Relax the constraint or explore setups with more downforce / better balance."],
+                        ("Relax the constraints, add replicates, or drive more consistent stints." if live
+                         else "Relax the constraint or explore setups with more downforce / better balance.")],
             "caveats": caveats,
             "effects": fx,
         }  # fmt: skip
     best = runs[analysis.best_run_id]
     o = run_outcomes(best)
+    first = (f"Fastest feasible observed setup: mean lap {o['lap_time']:.3f} s over its stint, lap-time spread {o.get('lap_time_std', float('nan')):.2f} s "
+             f"(constraints: {constraint_text(spec)})." if live else
+             f"Fastest feasible observed setup: mean lap {o['lap_time']:.3f} s over its stint, stability {o.get('stability', float('nan')):.1f}"
+             + (f" (minimum {min_stab:g})." if min_stab is not None else "."))
     reasons = [
-        f"Fastest feasible observed setup: mean lap {o['lap_time']:.3f} s over its stint, stability {o.get('stability', float('nan')):.1f}"
-        + (f" (minimum {min_stab:g})." if min_stab is not None else "."),
+        first,
         f"{len(analysis.feasible_run_ids)} of {len(analysis.feasible_run_ids) + len(analysis.infeasible_runs)} analysed runs were feasible; "
         "constraint-violating runs are never recommended, even when faster.",
     ]  # fmt: skip
@@ -94,12 +114,12 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, alpha: fl
     if faster_infeasible:
         f = min(faster_infeasible, key=lambda i: i["objectives"]["lap_time"])
         reasons.append(f"Faster setups existed ({f['objectives']['lap_time']:.3f} s) but violated the constraint, "
-                       "so the stability limit costs "
+                       f"so the {'constraints cost' if live else 'stability limit costs'} "
                        f"{o['lap_time'] - f['objectives']['lap_time']:.3f} s.")  # fmt: skip
     sig = [e for e in fx["effects"] if e["significant"]]
     for e in sig[:4]:
         d = "faster" if e["low_to_high"] < 0 else "slower"
-        reasons.append(f"{LABEL.get(e['term'], e['term'])}: moving from the low to the high end of the tested range "
+        reasons.append(f"{labels.get(e['term'], e['term'])}: moving from the low to the high end of the tested range "
                        f"makes laps {abs(e['low_to_high']):.2f} s {d} (p={e['p_value']:.3g}).")  # fmt: skip
     for e in [i for i in fx["interactions"] if i["significant"]][:2]:
         reasons.append(f"Interaction {e['term'].replace(':', ' x ')} is significant (p={e['p_value']:.3g}); "
@@ -117,11 +137,13 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, alpha: fl
     if any(o2.get("lap_time") is None for o2 in [o]):
         caveats.append("Lap time missing for the best run.")
     caveats.extend(analysis.warnings[:3])
-    caveats.append("Associations from this experiment describe the synthetic model; they say nothing about a real car.")
+    caveats.append("Findings describe one driver in one game on one track; they do not transfer to a real car." if live
+                   else "Associations from this experiment describe the synthetic model; they say nothing about a real car.")
     _ = seq
     return {
         "status": "recommended",
-        "headline": f"Recommended setup: lap {o['lap_time']:.3f} s at stability {o.get('stability', float('nan')):.1f}",
+        "headline": (f"Recommended setup: mean lap {o['lap_time']:.3f} s (spread {o.get('lap_time_std', float('nan')):.2f} s)" if live
+                     else f"Recommended setup: lap {o['lap_time']:.3f} s at stability {o.get('stability', float('nan')):.1f}"),
         "run_id": best.run_id,
         "setup": {k: round(v, 3) for k, v in best.configuration.items()},
         "expected": {k: round(v, 3) for k, v in o.items()},

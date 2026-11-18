@@ -22,12 +22,14 @@ from trialforge import (
 )
 from trialforge import ValidationError as TFValidationError
 
-from f1lab import SYNTHETIC_NOTICE, __version__
+from f1lab import SIM_RECORDED_NOTICE, SYNTHETIC_NOTICE, __version__
+from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
 from f1lab.adapters.vehicle_model import FACTORS
 from f1lab.api.schemas import (
     METHODS,
     AnalysisRequest,
     ExperimentRequest,
+    LiveConnectRequest,
     OptimiseRequest,
     TelemetryRequest,
     default_factors,
@@ -111,7 +113,11 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
     @app.get("/api/meta")
     def meta():
         return {
-            "notice": SYNTHETIC_NOTICE, "version": __version__, "trialforge_version": trialforge.__version__,
+            "notice": SYNTHETIC_NOTICE, "notices": {"synthetic": SYNTHETIC_NOTICE, "live_simulator": SIM_RECORDED_NOTICE},
+            "modes": [{"id": "synthetic", "label": "Synthetic simulator"}, {"id": "live_simulator", "label": "Live simulator (EA SPORTS F1 25)"}],
+            "game": {"id": GAME_ID, "factors": {k: {**v} for k, v in GAME_FACTORS.items()}, "default_port": 20777,
+                     "unsupported_methods": ["central_composite", "box_behnken"]},
+            "version": __version__, "trialforge_version": trialforge.__version__,
             "factors": {k: {**v} for k, v in FACTORS.items()},
             "default_factors": {k: s.model_dump() for k, s in default_factors().items()},
             "methods": [{"id": m, "description": METHOD_INFO[m]} for m in METHODS],
@@ -162,6 +168,32 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
     @app.post("/api/experiments/{exp_id}/runs/{run_id}/telemetry")
     async def attach_telemetry(exp_id: str, run_id: str, req: TelemetryRequest):
         return await lab.attach_telemetry(exp_id, run_id, req.csv, req.time_unit, req.filename)
+
+    # ------------------------------------------------------------ live simulator (UDP)
+    @app.get("/api/live/status")
+    def live_status():
+        return lab.live_status()
+
+    @app.post("/api/live/connect")
+    async def live_connect(req: LiveConnectRequest | None = None):
+        req = req or LiveConnectRequest()
+        return await lab.live_connect(req.host, req.port)
+
+    @app.post("/api/live/disconnect")
+    def live_disconnect():
+        return lab.live_disconnect()
+
+    @app.post("/api/experiments/{exp_id}/runs/{run_id}/stint/start")
+    def stint_start(exp_id: str, run_id: str):
+        return lab.stint_start(exp_id, run_id)
+
+    @app.post("/api/experiments/{exp_id}/runs/{run_id}/stint/submit")
+    async def stint_submit(exp_id: str, run_id: str):
+        return await lab.stint_submit(exp_id, run_id)
+
+    @app.get("/api/experiments/{exp_id}/runs/{run_id}/evidence")
+    def evidence(exp_id: str, run_id: str):
+        return lab.evidence(exp_id, run_id)
 
     # ------------------------------------------------------------ analysis / optimisation
     @app.post("/api/experiments/{exp_id}/analysis")

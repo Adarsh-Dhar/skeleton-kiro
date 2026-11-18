@@ -59,3 +59,7 @@ svg.chart{width:100%;height:auto;display:block}svg.chart text{fill:var(--dim);fo
 .warnlist{color:#ffd466;font-size:12px;margin:4px 0;padding-left:18px}
 .outlier td{background:#4d1b1455}.tag{font:600 10px var(--mono);color:var(--amber);border:1px solid #6b5112;border-radius:3px;padding:0 4px;margin-left:4px}
 .mono{font-family:var(--mono)}.dim{color:var(--dim)}.good{color:var(--green)}.badc{color:var(--bad)}code{font-family:var(--mono);background:#0b0e12;padding:1px 5px;border-radius:3px}
+
+.synthetic.simrec{background:#0c2233;color:#8fd0ff;border-bottom-color:#1d4a6b}
+.chip.simrec{color:#8fd0ff;border-color:#1d4a6b}
+.tabs.mode a{padding:6px 14px}
