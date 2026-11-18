@@ -62,4 +62,5 @@ svg.chart{width:100%;height:auto;display:block}svg.chart text{fill:var(--dim);fo
 
 .synthetic.simrec{background:#0c2233;color:#8fd0ff;border-bottom-color:#1d4a6b}
 .chip.simrec{color:#8fd0ff;border-color:#1d4a6b}
+.chip.hist{color:#d5b3ff;border-color:#5b3a8a}
 .tabs.mode a{padding:6px 14px}

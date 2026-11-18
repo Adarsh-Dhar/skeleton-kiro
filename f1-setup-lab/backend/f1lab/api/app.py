@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import trialforge
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -22,7 +23,7 @@ from trialforge import (
 )
 from trialforge import ValidationError as TFValidationError
 
-from f1lab import SIM_RECORDED_NOTICE, SYNTHETIC_NOTICE, __version__
+from f1lab import HISTORICAL_NOTICE, SIM_RECORDED_NOTICE, SYNTHETIC_NOTICE, __version__
 from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
 from f1lab.adapters.vehicle_model import FACTORS
 from f1lab.api.schemas import (
@@ -34,6 +35,8 @@ from f1lab.api.schemas import (
     TelemetryRequest,
     default_factors,
 )
+from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest
+from f1lab.integrations.historical.service import HistoricalService
 from f1lab.services.lab import Conflict, LabService, NotFound
 
 DEFAULT_FRONTEND = Path(__file__).resolve().parents[3] / "frontend"
@@ -56,6 +59,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
     if "://" not in db:
         Path(db).parent.mkdir(parents=True, exist_ok=True)
     lab = LabService(db)
+    hist = HistoricalService(lab.data_dir)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -65,6 +69,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
 
     app = FastAPI(title="F1 SETUP LAB", version=__version__, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.lab = lab
+    app.state.historical = hist
 
     # ------------------------------------------------------------ errors
     @app.exception_handler(RequestValidationError)
@@ -113,7 +118,8 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
     @app.get("/api/meta")
     def meta():
         return {
-            "notice": SYNTHETIC_NOTICE, "notices": {"synthetic": SYNTHETIC_NOTICE, "live_simulator": SIM_RECORDED_NOTICE},
+            "notice": SYNTHETIC_NOTICE, "notices": {"synthetic": SYNTHETIC_NOTICE, "live_simulator": SIM_RECORDED_NOTICE,
+                                                  "historical": HISTORICAL_NOTICE},
             "modes": [{"id": "synthetic", "label": "Synthetic simulator"}, {"id": "live_simulator", "label": "Live simulator (EA SPORTS F1 25)"}],
             "game": {"id": GAME_ID, "factors": {k: {**v} for k, v in GAME_FACTORS.items()}, "default_port": 20777,
                      "unsupported_methods": ["central_composite", "box_behnken"]},
@@ -183,6 +189,14 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
     def live_disconnect():
         return lab.live_disconnect()
 
+    @app.get("/api/live/telemetry")
+    def live_telemetry(scope: str = "live", limit: int = 1500):
+        if scope not in ("live", "stint"):
+            raise HTTPException(422, "scope must be 'live' or 'stint'")
+        if limit < 1 or limit > 3000:
+            raise HTTPException(422, "limit must be between 1 and 3000")
+        return lab.live_telemetry(scope, limit)
+
     @app.post("/api/experiments/{exp_id}/runs/{run_id}/stint/start")
     def stint_start(exp_id: str, run_id: str):
         return lab.stint_start(exp_id, run_id)
@@ -194,6 +208,67 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
     @app.get("/api/experiments/{exp_id}/runs/{run_id}/evidence")
     def evidence(exp_id: str, run_id: str):
         return lab.evidence(exp_id, run_id)
+
+    @app.get("/api/experiments/{exp_id}/runs/{run_id}/telemetry/series")
+    def run_telemetry_series(exp_id: str, run_id: str, limit: int = Query(5000, ge=1, le=20000)):
+        return lab.run_telemetry_series(exp_id, run_id, limit)
+
+    # ------------------------------------------------------------ historical F1 (FastF1)
+    @app.get("/api/historical/events")
+    async def hist_events(year: int = Query(2024, ge=2018, le=2100)):
+        return await asyncio.to_thread(hist.events, year)
+
+    @app.get("/api/historical/event-sessions")
+    async def hist_event_sessions(year: int = Query(2024, ge=2018, le=2100), event: str = Query(..., min_length=1)):
+        return await asyncio.to_thread(hist.sessions_for_event, year, event)
+
+    @app.get("/api/historical/drivers")
+    async def hist_drivers(year: int = Query(..., ge=2018, le=2100), event: str = Query(..., min_length=1), session: str = Query(..., min_length=1)):
+        return await hist.drivers_preview(year, event, session)
+
+    @app.post("/api/historical/import", status_code=202)
+    async def hist_import(req: HistoricalImportRequest):
+        return await hist.start_import(req)
+
+    @app.get("/api/historical/imports/{import_id}")
+    def hist_import_status(import_id: str):
+        return hist.import_status(import_id)
+
+    @app.get("/api/historical/sessions")
+    def hist_list_sessions():
+        return hist.list_sessions()
+
+    @app.get("/api/historical/sessions/{session_id}")
+    def hist_session(session_id: str):
+        return hist.get_session(session_id)
+
+    @app.get("/api/historical/sessions/{session_id}/drivers")
+    def hist_session_drivers(session_id: str):
+        return hist.drivers(session_id)
+
+    @app.get("/api/historical/sessions/{session_id}/laps")
+    def hist_laps(session_id: str, driver: str | None = None):
+        return hist.laps(session_id, driver)
+
+    @app.get("/api/historical/sessions/{session_id}/telemetry")
+    def hist_telemetry(session_id: str, driver: str = Query(..., min_length=1), lap: int | None = None, limit: int = Query(1500, ge=1, le=5000)):
+        return hist.telemetry(session_id, driver, lap, limit)
+
+    @app.get("/api/historical/sessions/{session_id}/position")
+    def hist_position(session_id: str, driver: str = Query(..., min_length=1), lap: int | None = None, limit: int = Query(3000, ge=1, le=10000)):
+        return hist.position(session_id, driver, lap, limit)
+
+    @app.get("/api/historical/sessions/{session_id}/weather")
+    def hist_weather(session_id: str):
+        return hist.weather(session_id)
+
+    @app.get("/api/historical/sessions/{session_id}/track-map")
+    def hist_track_map(session_id: str, driver: str | None = None, lap: int | None = None):
+        return hist.track_map(session_id, driver, lap)
+
+    @app.post("/api/historical/sessions/{session_id}/compare")
+    def hist_compare(session_id: str, req: HistoricalCompareRequest):
+        return hist.compare(session_id, req)
 
     # ------------------------------------------------------------ analysis / optimisation
     @app.post("/api/experiments/{exp_id}/analysis")

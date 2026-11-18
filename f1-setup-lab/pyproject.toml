@@ -11,6 +11,8 @@ dependencies = [
   "trialforge-core>=0.2.0,<0.3",   # install the wheel from ../skeleton/dist first (see README)
   "fastapi>=0.110",
   "uvicorn>=0.29",
+  "fastf1>=3.9.2,<4",              # historical F1 data provider (timing 2018 onwards)
+  "pyarrow>=18",                   # parquet storage for normalized historical datasets
 ]
 
 [project.optional-dependencies]

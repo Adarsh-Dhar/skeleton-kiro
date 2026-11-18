@@ -108,5 +108,37 @@ const Charts = (() => {
     return wrap(W, H, b, 'sector times per lap') + `<div class="legend"><span><i style="background:#4aa8ff"></i>sector 1</span><span><i style="background:#e10600"></i>sector 2</span><span><i style="background:#ffb400"></i>sector 3</span><span>white outline = flagged outlier lap</span></div>`;
   }
 
-  return { scatter, bars, lines, sectors, esc, f };
+  /** Track map from real position samples: points:[{x_m,y_m,speed_kph,distance_m}], corners:[{number,name,distance_m}]. Equal aspect, speed-coloured segments. */
+  function trackMap(o) {
+    const raw = (o.points || []).filter((p) => p.x_m !== null && p.y_m !== null && p.x_m !== undefined);
+    if (!raw.length) return '<div class="empty">No track position data for this selection.</div>';
+    const step = Math.max(1, Math.ceil(raw.length / 900));
+    const ds = raw.filter((_, i) => i % step === 0 || i === raw.length - 1);
+    const W = o.width || 660, H = o.height || 460, m = { l: 24, r: 24, t: 24, b: 30 };
+    const xs = ds.map((p) => p.x_m), ys = ds.map((p) => p.y_m);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const sc = Math.min((W - m.l - m.r) / Math.max(x1 - x0, 1e-6), (H - m.t - m.b) / Math.max(y1 - y0, 1e-6));
+    const ox = m.l + ((W - m.l - m.r) - (x1 - x0) * sc) / 2, oy = m.t + ((H - m.t - m.b) - (y1 - y0) * sc) / 2;
+    const X = (p) => ox + (p.x_m - x0) * sc, Y = (p) => oy + (y1 - p.y_m) * sc;
+    const sp = ds.map((p) => p.speed_kph).filter((v) => v !== null && v !== undefined);
+    const s0 = Math.min(...sp), s1 = Math.max(...sp), sn = s1 - s0 || 1;
+    const col = (v) => { const t = Math.max(0, Math.min(1, (v - s0) / sn)); return `rgb(${Math.round(74 + t * (225 - 74))},${Math.round(168 - t * 120)},${Math.round(255 - t * 200)})`; };
+    let b = '';
+    for (let i = 0; i < ds.length - 1; i++) {
+      const p = ds[i], q = ds[i + 1];
+      b += `<line x1="${X(p)}" y1="${Y(p)}" x2="${X(q)}" y2="${Y(q)}" stroke="${col(p.speed_kph ?? s0)}" stroke-width="3" stroke-linecap="round" opacity=".85"><title>${f(p.speed_kph, 0)} km/h</title></line>`;
+    }
+    const st = ds[0];
+    b += `<circle cx="${X(st)}" cy="${Y(st)}" r="6" fill="#fff" stroke="#e10600" stroke-width="2.5"/><text x="${X(st) + 10}" y="${Y(st) - 8}" style="fill:#fff;font-weight:700">S/F</text>`;
+    const withDist = ds.filter((p) => p.distance_m !== null && p.distance_m !== undefined);
+    (o.corners || []).forEach((c) => {
+      if (c.distance_m === null || c.distance_m === undefined || !withDist.length) return;
+      let best = withDist[0], bd = Infinity;
+      withDist.forEach((p) => { const d = Math.abs(p.distance_m - c.distance_m); if (d < bd) { bd = d; best = p; } });
+      b += `<circle cx="${X(best)}" cy="${Y(best)}" r="3.5" fill="none" stroke="#ffb400" stroke-width="1.5"/><text x="${X(best) + 6}" y="${Y(best) + 4}" style="fill:#ffb400">${esc(c.number ?? '')}</text>`;
+    });
+    return wrap(W, H, b, 'track map') + `<div class="legend"><span><i style="background:#4aa8ff"></i>slow</span><span><i style="background:#e10600"></i>fast</span><span>S/F = start/finish</span><span>amber = corner numbers</span></div>`;
+  }
+
+  return { scatter, bars, lines, sectors, trackMap, esc, f };
 })();

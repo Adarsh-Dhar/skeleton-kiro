@@ -13,6 +13,10 @@ SIM_RECORDED_NOTICE = (
     "SIMULATOR-RECORDED DATA: laps were driven by one person in EA SPORTS F1 25 on one track and setups were read from the game's UDP output. "
     "This is not real Formula 1 telemetry, and the findings say nothing about a real car or other drivers."
 )
+HISTORICAL_NOTICE = (
+    "HISTORICAL F1 DATA: real Formula 1 session data retrieved via the FastF1 library (unofficial, not affiliated with Formula 1). "
+    "Used for benchmarking and analysis only; it is not live telemetry and contains no car setup configuration."
+)
 
 
 def notice_for(mode: str) -> str:

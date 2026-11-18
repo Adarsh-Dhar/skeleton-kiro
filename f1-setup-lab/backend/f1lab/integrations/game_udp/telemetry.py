@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from f1lab.integrations.game_udp.protocols import Header
 
@@ -63,6 +63,18 @@ class TelemetryBuffer:
 
     def clear(self) -> None:
         self.samples.clear()
+
+    def to_records(self, limit: int = 2000) -> list[dict]:
+        """Chronological JSON-safe records, capped to the most recent ``limit`` samples."""
+        samples = list(self.samples)[-max(0, int(limit)):]
+        out = []
+        for s in samples:
+            d = asdict(s)
+            for k, v in d.items():
+                if isinstance(v, float):
+                    d[k] = round(v, 4)
+            out.append(d)
+        return out
 
     def summary(self) -> dict[str, object]:
         n = len(self.samples)

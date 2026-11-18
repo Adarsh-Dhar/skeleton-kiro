@@ -37,7 +37,7 @@ from f1lab.adapters.telemetry import parse_telemetry_csv, to_measurements
 from f1lab.adapters.vehicle_model import BASELINE, FACTORS, METRIC_UNITS
 from f1lab.api.schemas import ExperimentRequest
 from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
-from f1lab.integrations.game_udp.evidence import load_evidence, save_evidence
+from f1lab.integrations.game_udp.evidence import load_evidence, load_telemetry_series, save_evidence, save_telemetry_series
 from f1lab.integrations.game_udp.live import LiveState
 from f1lab.integrations.game_udp.measurements import stint_to_measurements
 from f1lab.integrations.game_udp.receiver import ACCEPTED_FORMATS, UdpReceiver
@@ -48,6 +48,7 @@ ADAPTER_PREFIX = "f1-sim/"
 GENERATORS = {4: ["D=ABC"], 3: ["C=AB"]}  # half fractions of the enabled factors (resolution IV and III)
 NOTABLE = {"unit_converted": "unit converted", "statistical_outlier": "outlier", "sensor_warning": "sensor warning", "import_time_assumed": "time = import time"}
 LIVE = "live_simulator"
+SOURCE_LIVE = "ea-sports-f1-25-udp"
 
 
 def mode_of(spec: ExperimentSpec) -> str:
@@ -505,6 +506,36 @@ class LabService:
             out.update(self.udp.status())
         return out
 
+    def live_telemetry(self, scope: str = "live", limit: int = 1500) -> dict:
+        """Decoded sample series for charting. ``live`` is the rolling session buffer; ``stint`` is the stint in progress or the last finished one."""
+        if scope == "live":
+            buffer = self.live.telemetry
+        elif scope == "stint":
+            buffer = self.live.stint_telemetry or self.live.last_stint_telemetry
+        else:
+            raise ValueError("scope must be 'live' or 'stint'")
+        if buffer is None:
+            return {"samples": [], "count": 0, "scope": scope, "source": SOURCE_LIVE, "summary": {"samples": 0}}
+        return {
+            "samples": buffer.to_records(limit),
+            "count": len(buffer.samples),
+            "scope": scope,
+            "source": SOURCE_LIVE,
+            "packet_format": self.live.packet_format,
+            "summary": buffer.summary(),
+        }
+
+    def run_telemetry_series(self, exp_id: str, run_id: str, limit: int = 5000) -> dict:
+        """Archived decoded telemetry for a finished live stint (saved alongside the evidence JSON)."""
+        self._live_result(exp_id)
+        self._run(self._result(exp_id), run_id)
+        records = load_telemetry_series(self.data_dir, exp_id, run_id)
+        if records is None:
+            raise NotFound(f"no decoded telemetry series recorded for {run_id}")
+        total = len(records)
+        return {"run_id": run_id, "experiment_id": exp_id, "source": SOURCE_LIVE, "count": total,
+                "samples": records[-limit:] if limit < total else records}
+
     def stint_start(self, exp_id: str, run_id: str) -> dict:
         res = self._live_result(exp_id)
         run = self._run(res, run_id)
@@ -530,12 +561,14 @@ class LabService:
         result, top = self.live.stop_stint()
         self.active_stint = None
         tel = self.live.last_stint_telemetry
+        telemetry_path = save_telemetry_series(self.data_dir, exp_id, run_id, tel.to_records(20_000)) if tel is not None else None
         path = save_evidence(self.data_dir, exp_id, run_id, {
             "experiment_id": exp_id, "run_id": run_id, "target": run.configuration, "accepted": result.accepted, "reasons": result.reasons,
             "start_lap": result.start_lap, "end_lap": result.end_lap, "setups_seen": result.setups_seen, "top_speed_kph": top,
             "laps": [asdict(lap) for lap in result.laps], "raw_session": self.live_session,
             "game_session": {"uid": self.live.session_uid, "player_car": self.live.player_car, "packet_format": self.live.packet_format},
             "telemetry": tel.summary() if tel else None,
+            "telemetry_series": str(telemetry_path) if telemetry_path else None,
             "recorded_at": datetime.now(UTC).isoformat(),
         })  # fmt: skip
         if not result.accepted:

@@ -52,6 +52,7 @@ async function route() {
     if (parts[0] === 'new') { setNav('new'); return parts[1] === 'live' ? await viewNewLive() : await viewNew(); }
     if (parts[0] === 'live') { setNav('live'); setBanner(LIVE); return await viewLive(); }
     if (parts[0] === 'telemetry') { setNav('telemetry'); return await viewTelemetryStandalone(); }
+    if (parts[0] === 'hist') { setNav('hist'); setBanner('historical'); return parts[1] ? await viewHistSession(parts[1], parts[2] || 'overview') : await viewHist(); }
     if (parts[0] === 'e' && parts[1]) {
       setNav('dash');
       const tab = parts[2] || 'design';
@@ -179,6 +180,52 @@ function liveRunPanel(d, ls) {
   return `<div class="panel"><h2>Run instructions</h2>${state}${body}${STINT_MSG ? `<div class="errors" role="alert"><b>Stint not accepted:</b> ${esc(STINT_MSG)}</div>` : ''}</div>`;
 }
 
+/* ------------------------------------------------- live telemetry charts */
+const WHEELS = ['RL', 'RR', 'FL', 'FR'];
+/* Bucket downsampling that keeps each bucket's min and max y so peaks (brake/throttle transitions) survive. */
+function downsample(pts, max = 300) {
+  if (pts.length <= max) return pts;
+  const nb = Math.max(1, Math.floor(max / 2)), size = pts.length / nb, out = [];
+  for (let b = 0; b < nb; b++) {
+    const seg = pts.slice(Math.floor(b * size), Math.floor((b + 1) * size));
+    if (!seg.length) continue;
+    let mn = seg[0], mx = seg[0];
+    seg.forEach((p) => { if (p.y < mn.y) mn = p; if (p.y > mx.y) mx = p; });
+    out.push(mn, mx);
+  }
+  return out.sort((a, b) => a.x - b.x);
+}
+const seriesFrom = (samples, fn, name, color) => ({ name, color, pts: downsample(samples.map((s) => ({ x: s.session_time, y: fn(s) })).filter((p) => p.y !== null && p.y !== undefined && !Number.isNaN(p.y))) });
+const wheelSeries = (samples, field, name, color) => WHEELS.map((w, i) => ({ name: `${name} ${w}`, color, pts: downsample(samples.map((s) => ({ x: s.session_time, y: s[field]?.[i] ?? null })).filter((p) => p.y !== null)) }));
+
+async function updateLiveCharts(s) {
+  const box = $('#live-charts'); if (!box) return;
+  const note = $('#live-tel-note');
+  if (note) note.innerHTML = s.connected ? '' : ' &middot; <span class="badc">no recent packets</span>';
+  let t;
+  try { t = await api('GET', '/api/live/telemetry?scope=live&limit=1500'); }
+  catch (e) { box.innerHTML = `<div class="errors">${esc(e.message)}</div>`; return; }
+  const samples = t.samples || [];
+  if (!samples.length) { box.innerHTML = '<div class="empty" style="grid-column:1/-1">No telemetry packets yet &mdash; the game must be in a session and sending UDP telemetry.</div>'; return; }
+  box.innerHTML = renderTelemetryCharts(samples);
+}
+
+/* Shared renderer for decoded UDP telemetry samples (live buffer or an archived stint series). */
+function renderTelemetryCharts(samples) {
+  const pct = (v) => v * 100;
+  const charts = [
+    { title: 'Speed', yLabel: 'km/h', series: [seriesFrom(samples, (s) => s.speed_kph, 'speed', '#e10600')] },
+    { title: 'Throttle &amp; brake', yLabel: 'input (%)', series: [seriesFrom(samples, (s) => pct(s.throttle), 'throttle', '#2ecc71'), seriesFrom(samples, (s) => pct(s.brake), 'brake', '#e10600')] },
+    { title: 'Steering', yLabel: 'steer (%)', series: [seriesFrom(samples, (s) => pct(s.steer), 'steer', '#4aa8ff')] },
+    { title: 'Engine RPM', yLabel: 'rpm', series: [seriesFrom(samples, (s) => s.rpm, 'rpm', '#ffb400')] },
+    { title: 'Gear', yLabel: 'gear', series: [seriesFrom(samples, (s) => s.gear, 'gear', '#c99bff')] },
+    { title: 'Tyre surface temperature', yLabel: '&deg;C', series: wheelSeries(samples, 'tyre_surface_temperature_c', 'tyre', '#ff9f43') },
+    { title: 'Tyre pressure', yLabel: 'psi', series: wheelSeries(samples, 'tyre_pressure_psi', 'tyre', '#00cec9') },
+    { title: 'Brake temperature', yLabel: '&deg;C', series: wheelSeries(samples, 'brake_temperature_c', 'brake', '#d63031') },
+  ];
+  return charts.map((c) => `<div class="panel" style="margin-bottom:0"><h2>${c.title}</h2>${Charts.lines({ series: c.series, xLabel: 'session time (s)', yLabel: c.yLabel, label: c.title })}</div>`).join('');
+}
+
 async function viewLive() {
   view().innerHTML = '<div id="live-root"></div>';
   const draw = async () => {
@@ -200,7 +247,9 @@ async function viewLive() {
         <tr><td class="dim">Telemetry samples</td><td class="num">${esc(s.telemetry?.samples ?? 0)}${s.telemetry?.samples ? ` &middot; top ${esc(s.telemetry.top_speed_kph)} km/h` : ''}</td></tr>
         <tr><td class="dim">Last error</td><td>${s.last_error ? `<span class="badc">${esc(s.last_error)}</span>` : '&mdash;'}</td></tr></tbody></table>
         ${s.wrong_format ? `<div class="note">${esc(s.format_help)}</div>` : ''}</div></div>
-      <div class="panel"><h2>Current setup reported by the game</h2>${setup ? `<table><tbody>${setup}</tbody></table>` : '<p class="hint">Waiting for a Car Setups packet (about twice a second while the game is in a session).</p>'}</div>`;
+      <div class="panel"><h2>Current setup reported by the game</h2>${setup ? `<table><tbody>${setup}</tbody></table>` : '<p class="hint">Waiting for a Car Setups packet (about twice a second while the game is in a session).</p>'}</div>
+      <div class="panel"><h2>Live telemetry<span class="dim" id="live-tel-note"></span></h2><p class="hint">Decoded from the game's UDP packets (${esc(s.accepted_formats.join(', '))}). Last ${1500} samples, peak-preserving downsampled for display.</p><div class="grid g2" id="live-charts"><div class="empty" style="grid-column:1/-1">Waiting for telemetry packets&hellip;</div></div></div>`;
+    updateLiveCharts(s);
     $('#lcon')?.addEventListener('click', async () => { try { await api('POST', '/api/live/connect', { host: $('#lhost').value, port: +$('#lport').value }); draw(); } catch (e) { $('#err').innerHTML = errorsBox(e); } });
     $('#ldis')?.addEventListener('click', async () => { await api('POST', '/api/live/disconnect'); draw(); });
     return s;
@@ -345,7 +394,16 @@ async function viewExpTelemetry(id) {
     const show = () => {
       const t = tel.find((x) => x.run_id === $('#runsel').value);
       $('#tel').innerHTML = `<div class="row"><span class="chip ${t.synthetic ? 'synthetic' : 'imported'}">${t.synthetic ? 'synthetic' : 'imported'}</span><span class="dim mono">${esc(t.source)}</span></div><div class="mono dim" style="margin:6px 0">${Object.entries(t.configuration).map(([k, v]) => `${esc(k)}=${fmt(v, 2)}`).join(' &middot; ')}</div>
-        ${Charts.sectors({ laps: t.laps })}${lapTable(t.laps)}`;
+        ${Charts.sectors({ laps: t.laps })}${lapTable(t.laps)}${isLive(d) ? `<div class="panel"><h2>Stint telemetry series</h2><p class="hint">Decoded UDP samples recorded during this stint (SIM-RECORDED).</p><div class="row"><button class="btn small" id="tel-series">Load telemetry charts</button><span class="dim" id="tel-series-msg"></span></div><div class="grid g2" id="tel-charts"></div></div>` : ''}`;
+      $('#tel-series')?.addEventListener('click', async () => {
+        const msg = $('#tel-series-msg'), box = $('#tel-charts');
+        try {
+          const r = await api('GET', `/api/experiments/${id}/runs/${t.run_id}/telemetry/series?limit=20000`);
+          if (!r.samples?.length) { msg.textContent = 'no decoded samples stored for this stint'; return; }
+          msg.textContent = `${r.count} samples`;
+          box.innerHTML = renderTelemetryCharts(r.samples);
+        } catch (e) { msg.innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
+      });
     };
     $('#runsel').addEventListener('change', show); show();
   }
@@ -473,6 +531,197 @@ async function viewReport(id) {
       <div class="grid g3"><div class="kpi"><b>${rep.completed_runs}/${rep.planned_runs}</b><span>runs completed</span></div><div class="kpi ${rep.failed_runs ? 'bad' : ''}"><b>${rep.failed_runs}</b><span>failed runs</span></div><div class="kpi"><b>${rep.constraint_violations.length}</b><span>constraint violations</span></div></div>
       <div class="panel"><h2>Limitations</h2><ul class="warnlist">${rep.limitations.map((l) => `<li>${esc(l)}</li>`).join('')}</ul></div>`;
   } catch (e) { $('#rep').innerHTML = errorsBox(e); }
+}
+
+/* ------------------------------------------------------------- historical F1 */
+const HIST_TABS = [['overview', 'Overview'], ['laps', 'Lap analysis'], ['telemetry', 'Telemetry'], ['track', 'Track map'], ['compare', 'Compare'], ['weather', 'Weather & tyres']];
+const histChip = '<span class="chip hist">HISTORICAL F1 · FASTF1</span>';
+
+async function viewHist() {
+  view().innerHTML = `<h1>Historical F1</h1><p class="sub">Real Formula 1 session data via <b>FastF1</b> (unofficial community library; timing and telemetry from 2018 onwards). For benchmarking and analysis &mdash; separate from your setup experiments.</p>
+  <div class="grid g21"><div><div class="panel" id="hist-form"><h2>Import a session</h2><div id="hist-err"></div>
+    <div class="grid g2"><div class="field"><label for="hyear">Season</label><input id="hyear" type="number" min="2018" max="2100" value="2024"></div>
+    <div class="field"><label for="hevent">Grand Prix</label><select id="hevent"><option>Loading&hellip;</option></select></div>
+    <div class="field"><label for="hsession">Session</label><select id="hsession"><option>&mdash;</option></select></div>
+    <div class="field"><label>&nbsp;</label><button class="btn" id="hloaddrv" type="button">Load drivers</button></div></div>
+    <div class="field"><label>Drivers</label><div id="hdrivers"><span class="dim">Pick a session and press "Load drivers" (leave all checked = whole field, or uncheck to select).</span></div></div>
+    <div class="field"><label>Include</label><div class="row"><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="htele" checked> telemetry</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hpos" checked> position</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hwx" checked> weather</label></div></div>
+    <button class="btn primary" id="himport">Import session</button><span class="dim" id="hmsg"></span><div id="hprog"></div></div>
+    <div class="note info">The first import downloads and processes the session (can take a few minutes); results are cached locally and re-imports are fast. Historical data never enters your setup experiments.</div></div>
+  <div><div class="panel"><h2>Imported sessions</h2><div id="hist-lib"><div class="dim">Loading&hellip;</div></div></div>
+    <div class="panel"><h2>About this data</h2><p class="hint">FastF1 is an unofficial Python library for Formula 1 timing and telemetry data. It is not affiliated with Formula 1, and coverage varies by year/session. Car telemetry is sampled at the timing feed's rate; weather is sampled sparsely. Historical sessions contain no car setup configuration, so they are kept separate from the TRIALFORGE setup experiments.</p></div></div></div>`;
+  let events = [];
+  const fillEvents = () => {
+    $('#hevent').innerHTML = events.map((e, i) => `<option value="${i}">${esc(e.event)}${e.location ? ` (${esc(e.location)})` : ''}</option>`).join('') || '<option>No events</option>';
+    fillSessions();
+  };
+  const fillSessions = () => {
+    const ev = events[+$('#hevent').value];
+    $('#hsession').innerHTML = (ev?.sessions || []).map((s) => `<option value="${esc(s.type)}">${esc(s.name || s.type)} (${esc(s.type)})</option>`).join('') || '<option>&mdash;</option>';
+  };
+  const loadEvents = async () => {
+    const y = +$('#hyear').value;
+    try { events = await api('GET', `/api/historical/events?year=${y}`); fillEvents(); $('#hist-err').innerHTML = ''; }
+    catch (e) { events = []; fillEvents(); $('#hist-err').innerHTML = errorsBox(e); }
+  };
+  $('#hyear').addEventListener('change', loadEvents);
+  $('#hevent').addEventListener('change', fillSessions);
+  $('#hloaddrv').addEventListener('click', async () => {
+    const ev = events[+$('#hevent').value];
+    if (!ev) return;
+    $('#hdrivers').innerHTML = '<span class="dim">Loading drivers&hellip;</span>';
+    try {
+      const ds = await api('GET', `/api/historical/drivers?year=${+$('#hyear').value}&event=${encodeURIComponent(ev.event)}&session=${encodeURIComponent($('#hsession').value)}`);
+      $('#hdrivers').innerHTML = ds.length ? `<div class="row" style="gap:14px">${ds.map((d) => `<label style="text-transform:none;letter-spacing:0"><input type="checkbox" class="hdrv" value="${esc(d.code)}" checked> ${esc(d.code)} <span class="dim">${esc(d.name)}</span></label>`).join('')}</div>` : '<span class="dim">No drivers returned.</span>';
+    } catch (e) { $('#hdrivers').innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
+  });
+  $('#himport').addEventListener('click', async () => {
+    const ev = events[+$('#hevent').value];
+    if (!ev) { $('#hist-err').innerHTML = errorsBox(new Error('pick a Grand Prix first')); return; }
+    const drivers = [...document.querySelectorAll('.hdrv:checked')].map((c) => c.value);
+    const body = { year: +$('#hyear').value, event: ev.event, session: $('#hsession').value, drivers,
+      include_telemetry: $('#htele').checked, include_position: $('#hpos').checked, include_weather: $('#hwx').checked };
+    try {
+      const r = await api('POST', '/api/historical/import', body);
+      $('#hmsg').textContent = 'import started';
+      const tick = async () => {
+        const j = await api('GET', `/api/historical/imports/${r.import_id}`);
+        $('#hprog').innerHTML = `<div class="note ${j.state === 'FAILED' ? '' : 'info'}">${esc(j.state)} &middot; ${esc(j.detail || '')}${j.error ? ` &middot; <span class="badc">${esc(j.error)}</span>` : ''}</div>`;
+        if (j.state === 'COMPLETED') { $('#hmsg').textContent = 'done'; loadLibrary(); return; }
+        if (j.state === 'FAILED') { $('#hmsg').textContent = 'failed'; return; }
+        setTimeout(tick, 2500);
+      };
+      tick();
+    } catch (e) { $('#hist-err').innerHTML = errorsBox(e); }
+  });
+  const loadLibrary = async () => {
+    try {
+      const list = await api('GET', '/api/historical/sessions');
+      $('#hist-lib').innerHTML = list.length ? `<table><thead><tr><th>Session</th><th>Season</th><th>Circuit</th><th class="num">Drivers</th><th>Imported</th><th></th></tr></thead><tbody>
+        ${list.map((s) => `<tr><td><b>${esc(s.event)}</b><div class="dim mono">${esc(s.session)} &middot; ${esc(s.session_id)}</div></td><td class="num">${esc(s.year)}</td><td>${esc(s.circuit || s.location || '&mdash;')}</td>
+        <td class="num">${(s.drivers || []).length}</td><td class="dim mono">${esc((s.imported_at || '').slice(0, 10))}</td><td><a class="btn small" href="#/hist/${esc(s.session_id)}">Open</a></td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">No historical sessions imported yet.</div>';
+    } catch (e) { $('#hist-lib').innerHTML = errorsBox(e); }
+  };
+  await loadEvents();
+  await loadLibrary();
+}
+
+async function viewHistSession(id, tab) {
+  const m = await api('GET', `/api/historical/sessions/${id}`);
+  view().innerHTML = `<div class="row"><div><h1>${esc(m.event)} ${m.round ? `<span class="dim">&middot; Round ${esc(m.round)}</span>` : ''}</h1>
+    <p class="sub">${esc(m.circuit || '')} &middot; ${esc(m.session)} (${esc(m.session_type)}) &middot; ${esc(m.session_date || '')} &middot; ${histChip}</p></div><div class="spacer"></div><a class="btn" href="#/hist">All sessions</a></div>
+    <div class="tabs">${HIST_TABS.map(([k, n]) => `<a href="#/hist/${esc(id)}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div><div id="hist-body"><div class="dim">Loading&hellip;</div></div>`;
+  const body = $('#hist-body');
+  const drivers = m.drivers || [];
+  const drvOpts = (sel = drivers[0]?.code) => drivers.map((d) => `<option value="${esc(d.code)}" ${d.code === sel ? 'selected' : ''}>${esc(d.code)} &middot; ${esc(d.name)}</option>`).join('');
+  const lapsFor = async (code) => (await api('GET', `/api/historical/sessions/${id}/laps?driver=${encodeURIComponent(code)}`));
+
+  if (tab === 'overview') {
+    const laps = await api('GET', `/api/historical/sessions/${id}/laps`);
+    const best = {};
+    laps.forEach((l) => { if (l.lap_time_s != null && l.is_valid !== false && (!best[l.driver] || l.lap_time_s < best[l.driver].lap_time_s)) best[l.driver] = l; });
+    const ch = m.channels || {};
+    body.innerHTML = `<div class="grid g21"><div>
+      <div class="panel"><h2>Session</h2><table><tbody>
+        <tr><td class="dim">Event</td><td>${esc(m.event)}${m.event_official && m.event_official !== m.event ? ` <span class="dim">(${esc(m.event_official)})</span>` : ''}</td></tr>
+        <tr><td class="dim">Circuit</td><td>${esc(m.circuit || m.location || '&mdash;')}</td></tr>
+        <tr><td class="dim">Session</td><td>${esc(m.session)} <span class="mono dim">(${esc(m.session_type)})</span></td></tr>
+        <tr><td class="dim">Date</td><td>${esc(m.session_date || '&mdash;')}</td></tr>
+        <tr><td class="dim">Imported</td><td class="mono dim">${esc(m.imported_at || '')}</td></tr>
+        <tr><td class="dim">Source</td><td class="mono">${esc(m.provider)} &middot; ${esc(m.session_id)}</td></tr></tbody></table></div>
+      <div class="panel"><h2>Drivers</h2><table><thead><tr><th>Code</th><th>Name</th><th>Team</th><th class="num">Best lap</th></tr></thead><tbody>
+        ${drivers.map((d) => `<tr><td class="mono"><b>${esc(d.code)}</b></td><td>${esc(d.name)}</td><td class="dim">${esc(d.team || '&mdash;')}</td><td class="num">${best[d.code] ? fmt(best[d.code].lap_time_s, 3) + ' s' : '&mdash;'}</td></tr>`).join('') || '<tr><td colspan="4" class="dim">none</td></tr>'}</tbody></table></div></div>
+      <div><div class="panel"><h2>Data available</h2><table><tbody>
+        <tr><td class="dim">Lap timing</td><td>${laps.length ? `<span class="good">${laps.length} laps</span>` : '<span class="badc">none</span>'}</td></tr>
+        <tr><td class="dim">Weather</td><td>${ch.weather ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}</td></tr>
+        <tr><td class="dim">Telemetry</td><td>${drivers.map((d) => `${esc(d.code)}: ${ch.telemetry?.[d.code] ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}`).join(' &middot; ') || '&mdash;'}</td></tr>
+        <tr><td class="dim">Position</td><td>${drivers.map((d) => `${esc(d.code)}: ${ch.position?.[d.code] ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}`).join(' &middot; ') || '&mdash;'}</td></tr></tbody></table>
+        <p class="hint">${esc(m.attribution || '')}</p></div></div></div>`;
+  } else if (tab === 'laps') {
+    body.innerHTML = `<div class="panel"><div class="row"><div class="field" style="max-width:280px"><label for="hlapdrv">Driver</label><select id="hlapdrv">${drvOpts()}</select></div></div><div id="hlapout"><div class="dim">Loading&hellip;</div></div></div>`;
+    const show = async () => {
+      const code = $('#hlapdrv').value, laps = await lapsFor(code);
+      const rows = laps.map((l) => ({ lap: l.lap_number, sector_1: l.sector_1_s, sector_2: l.sector_2_s, sector_3: l.sector_3_s, lap_time: l.lap_time_s, outlier: l.is_valid === false }));
+      $('#hlapout').innerHTML = `<div class="kpis"><div class="kpi"><b>${laps.length}</b><span>laps</span></div><div class="kpi good"><b>${laps.filter((l) => l.lap_time_s != null).length ? fmt(Math.min(...laps.map((l) => l.lap_time_s).filter((v) => v != null)), 3) : '&mdash;'}</b><span>best lap (s)</span></div>
+        <div class="kpi"><b>${laps.filter((l) => l.is_valid === false).length}</b><span>invalid/deleted</span></div><div class="kpi"><b>${[...new Set(laps.map((l) => l.compound).filter(Boolean))].join(', ') || '&mdash;'}</b><span>compounds</span></div></div>
+        <div class="grid g2"><div class="panel"><h2>Lap time</h2>${Charts.lines({ series: [{ name: `${code} lap time`, color: '#e10600', pts: laps.filter((l) => l.lap_time_s != null).map((l) => ({ x: l.lap_number, y: l.lap_time_s, flag: l.is_valid === false })) }], xLabel: 'lap', yLabel: 'seconds' })}</div>
+        <div class="panel"><h2>Sector times</h2>${Charts.sectors({ laps: rows })}</div></div>
+        <div class="panel"><h2>Laps</h2><div style="overflow:auto;max-height:420px"><table><thead><tr><th>Lap</th><th>Stint</th><th>Compound</th><th class="num">Tyre life</th><th class="num">S1</th><th class="num">S2</th><th class="num">S3</th><th class="num">Lap</th><th>Flags</th></tr></thead><tbody>
+        ${laps.map((l) => `<tr class="${l.is_valid === false ? 'outlier' : ''}"><td class="mono">${esc(l.lap_number)}</td><td class="mono">${esc(l.stint ?? '&mdash;')}</td><td>${esc(l.compound || '&mdash;')}</td><td class="num">${esc(l.tyre_life ?? '&mdash;')}</td>
+        <td class="num">${fmt(l.sector_1_s, 3)}</td><td class="num">${fmt(l.sector_2_s, 3)}</td><td class="num">${fmt(l.sector_3_s, 3)}</td><td class="num"><b>${fmt(l.lap_time_s, 3)}</b></td>
+        <td>${l.is_valid === false ? '<span class="tag">invalid</span>' : ''}${l.is_personal_best ? '<span class="chip completed">PB</span>' : ''}${l.pits ? '<span class="tag">pit</span>' : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
+    };
+    $('#hlapdrv').addEventListener('change', show); show();
+  } else if (tab === 'telemetry' || tab === 'track') {
+    body.innerHTML = `<div class="panel"><div class="row"><div class="field" style="max-width:220px"><label for="htrkdrv">Driver</label><select id="htrkdrv">${drvOpts()}</select></div>
+      <div class="field" style="max-width:160px"><label for="htrklap">Lap</label><select id="htrklap"><option>all</option></select></div></div><div id="htrkout"><div class="dim">Loading&hellip;</div></div></div>`;
+    const fillLaps = async () => {
+      const code = $('#htrkdrv').value, laps = await lapsFor(code);
+      const nums = [...new Set(laps.map((l) => l.lap_number).filter((n) => n != null))].sort((a, b) => a - b);
+      $('#htrklap').innerHTML = '<option value="">all</option>' + nums.map((n) => `<option value="${n}">${n}</option>`).join('');
+    };
+    const show = async () => {
+      const code = $('#htrkdrv').value, lap = $('#htrklap').value ? +$('#htrklap').value : null;
+      if (tab === 'telemetry') {
+        const r = await api('GET', `/api/historical/sessions/${id}/telemetry?driver=${encodeURIComponent(code)}${lap ? `&lap=${lap}` : ''}&limit=1500`);
+        $('#htrkout').innerHTML = r.samples.length ? histTraceCharts(r.samples) + `<p class="hint">${r.count} samples${lap ? ` on lap ${lap}` : ''} &middot; distance on the x-axis &middot; throttle/brake/DRS are percentages as published by the timing feed.</p>` : '<div class="empty">No telemetry stored for this driver/lap.</div>';
+      } else {
+        const r = await api('GET', `/api/historical/sessions/${id}/track-map?driver=${encodeURIComponent(code)}${lap ? `&lap=${lap}` : ''}`);
+        $('#htrkout').innerHTML = `<div class="panel">${Charts.trackMap({ points: r.points || [], corners: r.corners || [] })}</div><p class="hint">Actual X/Y position from the timing feed${lap ? `, lap ${lap}` : ', fastest available lap stream'}.</p>`;
+      }
+    };
+    $('#htrkdrv').addEventListener('change', async () => { await fillLaps(); show(); });
+    $('#htrklap').addEventListener('change', show);
+    await fillLaps(); show();
+  } else if (tab === 'compare') {
+    const [a, b] = drivers.length >= 2 ? [drivers[0].code, drivers[1].code] : [drivers[0]?.code, drivers[0]?.code];
+    body.innerHTML = `<div class="panel"><div class="grid g3">
+      <div class="field"><label>Driver A</label><select id="hcmpa">${drvOpts(a)}</select></div>
+      <div class="field"><label>Lap A</label><input id="hcmpla" type="number" min="1" value="1"></div>
+      <div class="field"><label>Driver B</label><select id="hcmpb">${drvOpts(b)}</select></div>
+      <div class="field"><label>Lap B</label><input id="hcmplb" type="number" min="1" value="1"></div></div>
+      <button class="btn primary" id="hcmpgo">Compare</button><span class="dim" id="hcmpmsg"></span><div id="hcmpout"></div></div>`;
+    $('#hcmpgo').addEventListener('click', async () => {
+      $('#hcmpout').innerHTML = '<div class="dim">Comparing&hellip;</div>';
+      try {
+        const r = await api('POST', `/api/historical/sessions/${id}/compare`, { driver_a: $('#hcmpa').value, lap_a: +$('#hcmpla').value, driver_b: $('#hcmpb').value, lap_b: +$('#hcmplb').value });
+        const pctA = (r.a.points.length ? Math.max(...r.a.points.map((p) => p.distance_m || 0)) : 1) || 1;
+        const pctB = (r.b.points.length ? Math.max(...r.b.points.map((p) => p.distance_m || 0)) : 1) || 1;
+        const ser = (pts, key, color, name, norm) => ({ name, color, pts: pts.map((p) => ({ x: (p.distance_m || 0) / norm * 100, y: p[key] })).filter((p) => p.y !== null && p.y !== undefined) });
+        $('#hcmpout').innerHTML = `<div class="note info">${esc(r.delta.note)}</div>
+          <div class="panel"><h2>Speed vs distance</h2>${Charts.lines({ series: [ser(r.a.points, 'speed_kph', '#e10600', `${r.a.driver} lap ${r.a.lap}`, pctA), ser(r.b.points, 'speed_kph', '#4aa8ff', `${r.b.driver} lap ${r.b.lap}`, pctB)], xLabel: 'lap distance (%)', yLabel: 'km/h' })}</div>
+          <div class="grid g2"><div class="panel"><h2>Throttle</h2>${Charts.lines({ series: [ser(r.a.points, 'throttle_pct', '#e10600', 'A', pctA), ser(r.b.points, 'throttle_pct', '#4aa8ff', 'B', pctB)], xLabel: 'lap distance (%)', yLabel: '%' })}</div>
+          <div class="panel"><h2>Brake</h2>${Charts.lines({ series: [ser(r.a.points, 'brake_pct', '#e10600', 'A', pctA), ser(r.b.points, 'brake_pct', '#4aa8ff', 'B', pctB)], xLabel: 'lap distance (%)', yLabel: '%' })}</div></div>
+          <div class="panel"><h2>Time delta (B &minus; A)</h2>${Charts.lines({ series: [{ name: 't_B - t_A (s)', color: '#ffb400', pts: r.delta.distance_pct.map((x, i) => ({ x: x * 100, y: r.delta.delta_s[i] })) }], xLabel: 'lap distance (%)', yLabel: 'seconds', ymin: Math.min(...r.delta.delta_s) - 0.05, ymax: Math.max(...r.delta.delta_s) + 0.05 })}
+          <p class="hint">Positive delta = driver B is slower than A at that point of the lap. Delta is computed on an interpolated common distance grid, not raw samples.</p></div>`;
+      } catch (e) { $('#hcmpmsg').innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
+    });
+  } else if (tab === 'weather') {
+    const [wx, laps] = await Promise.all([api('GET', `/api/historical/sessions/${id}/weather`), api('GET', `/api/historical/sessions/${id}/laps`)]);
+    const s = wx.samples || [];
+    const wchart = (title, key, unit) => {
+      const pts = downsample(s.map((p) => ({ x: p.time_s ?? 0, y: p[key] })).filter((p) => p.y !== null && p.y !== undefined));
+      return s.length ? `<div class="panel"><h2>${title}</h2>${Charts.lines({ series: [{ name: title, color: '#4aa8ff', pts }], xLabel: 'session time (s)', yLabel: unit })}</div>` : `<div class="panel"><h2>${title}</h2><div class="empty">No data.</div></div>`;
+    };
+    const stints = {};
+    laps.forEach((l) => { const k = `${l.driver}|${l.stint}`; if (l.compound || l.tyre_life != null) stints[k] = { driver: l.driver, stint: l.stint, compound: l.compound, tyre_life: l.tyre_life, laps: (stints[k]?.laps || 0) + 1 }; });
+    body.innerHTML = `<div class="note info">${esc(wx.note || 'Weather is sampled sparsely by the timing feed.')}</div>
+      <div class="grid g2">${wchart('Air temperature', 'air_temp_c', '°C')}${wchart('Track temperature', 'track_temp_c', '°C')}${wchart('Humidity', 'humidity_pct', '%')}${wchart('Wind speed', 'wind_speed_ms', 'm/s')}${wchart('Rainfall', 'rainfall_mm', 'mm')}${wchart('Pressure', 'pressure_hpa', 'hPa')}</div>
+      <div class="panel"><h2>Tyre strategy</h2><table><thead><tr><th>Driver</th><th>Stint</th><th>Compound</th><th class="num">Tyre life</th><th class="num">Laps</th></tr></thead><tbody>
+      ${Object.values(stints).map((t) => `<tr><td class="mono"><b>${esc(t.driver)}</b></td><td class="mono">${esc(t.stint ?? '&mdash;')}</td><td>${esc(t.compound || '&mdash;')}</td><td class="num">${esc(t.tyre_life ?? '&mdash;')}</td><td class="num">${t.laps}</td></tr>`).join('') || '<tr><td colspan="5" class="dim">No stint data.</td></tr>'}</tbody></table></div>`;
+  }
+}
+
+/* Speed/throttle/brake/RPM/gear/DRS traces vs distance for a historical lap. */
+function histTraceCharts(samples) {
+  const s = (key, name, color, scale = 1) => ({ name, color, pts: downsample(samples.map((p) => ({ x: p.distance_m, y: p[key] == null ? null : p[key] * scale })).filter((p) => p.y !== null && !Number.isNaN(p.y))) });
+  return `<div class="grid g2">
+    <div class="panel"><h2>Speed</h2>${Charts.lines({ series: [s('speed_kph', 'speed', '#e10600')], xLabel: 'distance (m)', yLabel: 'km/h' })}</div>
+    <div class="panel"><h2>Throttle &amp; brake</h2>${Charts.lines({ series: [s('throttle_pct', 'throttle', '#2ecc71'), s('brake_pct', 'brake', '#e10600')], xLabel: 'distance (m)', yLabel: '%' })}</div>
+    <div class="panel"><h2>RPM</h2>${Charts.lines({ series: [s('rpm', 'rpm', '#ffb400')], xLabel: 'distance (m)', yLabel: 'rpm' })}</div>
+    <div class="panel"><h2>Gear</h2>${Charts.lines({ series: [s('gear', 'gear', '#c99bff')], xLabel: 'distance (m)', yLabel: 'gear' })}</div>
+    <div class="panel"><h2>DRS</h2>${Charts.lines({ series: [s('drs', 'drs', '#00cec9')], xLabel: 'distance (m)', yLabel: 'drs', ymin: -0.1, ymax: 1.1 })}</div></div>`;
 }
 
 /* -------------------------------------------------------------------- boot */
