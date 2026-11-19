@@ -101,20 +101,28 @@ def test_repository_roundtrip(tmp_path):
 
 # ---------------------------------------------------------------- historical: normalizer
 def _fake_session():
+    # FastF1 Brake is a boolean 'brakes applied' flag; Distance is in metres.
     car = pd.DataFrame({"Time": [timedelta(seconds=i) for i in range(4)],
                         "SessionTime": [timedelta(seconds=i) for i in range(4)],
+                        "Distance": [0.0, 300.0, 600.0, 900.0],
                         "Speed": [100, 150, 200, 250], "Throttle": [50, 80, 100, 100],
-                        "Brake": [0, 10, 0, 0], "Gear": [3, 4, 5, 6], "RPM": [8000, 9000, 10000, 11000],
+                        "Brake": [False, True, False, False], "Gear": [3, 4, 5, 6], "RPM": [8000, 9000, 10000, 11000],
                         "DRS": [0, 0, 1, 1], "Steering": [0.1, 0.0, -0.1, 0.0]})
     pos = pd.DataFrame({"X": [0.0, 1.0, 2.0], "Y": [0.0, 1.0, 0.0], "Z": [0.0, 0.0, 0.0],
                         "Speed": [100, 150, 200], "SessionTime": [timedelta(seconds=i) for i in range(3)]})
     laps_rows = []
     for no in (1, 2):
         for drv in ("VER", "LEC"):
+            deleted = no == 2 and drv == "LEC"
             laps_rows.append({"LapNumber": no, "Driver": drv, "LapTime": timedelta(seconds=80 + no),
                               "Sector1Time": timedelta(seconds=26), "Sector2Time": timedelta(seconds=29),
                               "Sector3Time": timedelta(seconds=25), "Compound": "SOFT", "TyreLife": no,
-                              "Stint": 1, "IsPersonalBest": no == 1 and drv == "VER", "DriverNumber": 1, "Team": "Red Bull"})
+                              "Stint": 1, "IsPersonalBest": no == 1 and drv == "VER", "DriverNumber": 1, "Team": "Red Bull",
+                              # FastF1 flags: Deleted = steward deletion; IsAccurate = timing alignment only
+                              "Deleted": deleted, "DeletedReason": "Time deleted" if deleted else None,
+                              "IsAccurate": not (no == 2 and drv == "VER"),  # inaccurate timing, still a valid lap
+                              "PitInTime": timedelta(seconds=79) if (no == 1 and drv == "VER") else pd.NaT,
+                              "PitOutTime": timedelta(seconds=80) if (no == 1 and drv == "VER") else pd.NaT})
     laps = pd.DataFrame(laps_rows)
 
     class Lap:
@@ -180,7 +188,18 @@ def test_normalize_laps_timedelta_and_flags():
     ver = df[(df.driver == "VER") & (df.lap_number == 1)].iloc[0]
     assert ver.lap_time_s == pytest.approx(81.0)
     assert ver.sector_1_s == pytest.approx(26.0) and ver.compound == "SOFT" and ver.tyre_life == 1
-    assert ver.is_personal_best == True and ver.is_valid is None  # no validity column -> preserved as missing
+    assert ver.is_personal_best == True and ver.is_valid == True and ver.pits == True
+    # IsAccurate=False must NOT mark a lap invalid: VER lap 2 has inaccurate timing but is valid
+    ver2 = df[(df.driver == "VER") & (df.lap_number == 2)].iloc[0]
+    assert ver2.is_accurate == False and ver2.is_valid == True and ver2.is_deleted == False
+    # Deleted=True (steward deletion) => invalid, and the reason is preserved
+    lec2 = df[(df.driver == "LEC") & (df.lap_number == 2)].iloc[0]
+    assert lec2.is_deleted == True and lec2.is_valid == False and lec2.deleted_reason == "Time deleted"
+    # a session without any validity columns still yields missing (not fabricated) flags
+    bare = _fake_session()
+    bare.laps.df = bare.laps.df.drop(columns=["Deleted", "IsAccurate", "IsValid"], errors="ignore")
+    v = N.normalize_laps(bare).iloc[0]
+    assert pd.isna(v.is_valid)
 
 
 def test_normalize_weather():
@@ -194,6 +213,9 @@ def test_driver_telemetry_and_position():
     assert set(tel.lap_number.unique()) == {1, 2}
     assert tel.columns.tolist()[:2] == ["lap_number", "distance_m"] or "distance_m" in tel.columns
     assert tel.speed_kph.max() == 250.0 and tel.throttle_pct.max() == 100.0
+    # boolean Brake channel -> brake_applied on/off (0/100), never a fake percentage
+    assert "brake_applied" in tel.columns and "brake_pct" not in tel.columns
+    assert tel.brake_applied.max() == 100.0 and tel.brake_applied.min() == 0.0
     pos = N.driver_position(sess, "VER")
     assert len(pos) > 0 and "x_m" in pos.columns and "y_m" in pos.columns
 

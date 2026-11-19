@@ -5,9 +5,13 @@ A browser-based **design-of-experiments workstation** for vehicle setup, built e
 constraint; generate a fractional-factorial screening design; run it; see which factors matter (ANOVA, interactions, confidence
 intervals); let a Bayesian optimiser refine the setup; export a justified recommendation. No Python or command line is needed to *use* it.
 
-> **SYNTHETIC DATA.** The vehicle model is an invented response surface. This is **not** real Formula 1 telemetry and there is
-> **no connection** to any team, simulator licence or timing feed. Every screen carries a banner saying so, and every
-> exported report repeats it.
+The app works with **three data sources**, kept clearly labelled everywhere:
+
+| Mode | Source | Label | What it is |
+|---|---|---|---|
+| **Synthetic** (default) | Built-in vehicle model | `SYNTHETIC` | An invented response surface. Not real F1 telemetry. |
+| **Live simulator** | EA SPORTS F1 25 UDP telemetry | `SIM-RECORDED` | You drive stints in the game; the app records laps and verifies the game reported exactly the requested setup. |
+| **Historical F1** | [FastF1](https://github.com/theOehrly/FastF1) (unofficial) | `HISTORICAL F1 · FASTF1` | Real Grand Prix sessions (timing, telemetry, position, weather) imported for analysis and benchmarking &mdash; never mixed into setup experiments. |
 
 ![Analysis](docs/screenshots/06-analysis.png)
 
@@ -38,6 +42,8 @@ Open <http://127.0.0.1:8001>. State lives in one SQLite file (`data/f1lab.db`); 
 | 6 | **Analysis** | Factor effects with 95% CI, Type II ANOVA, interactions, feasibility plot, written justification | [06](docs/screenshots/06-analysis.png) |
 | 7 | **Optimisation** | Preview and run Bayesian-optimisation proposals; convergence chart | [07](docs/screenshots/07-optimisation-preview.png), [08](docs/screenshots/08-optimisation-result.png) |
 | 8 | **Report** | Printable HTML report, JSON, CSV exports, reproducibility facts | [09](docs/screenshots/09-report.png) |
+| 9 | **Live simulator** | Listen for EA SPORTS F1 25 UDP telemetry, watch live speed/throttle/brake/tyre charts, record verified stints | — |
+| 10 | **Historical F1** | Browse seasons/events, import real sessions via FastF1, analyse laps, telemetry, track map, weather and driver comparisons | — |
 
 Demo datasets: `data/demo_telemetry.csv` (seconds) and `data/demo_telemetry_ms.csv` (milliseconds): 8 laps, one deliberately slow lap
 that gets flagged. Both load from the Telemetry screen ("Load demo"). Failures are easy to demo: set *Demo fault rate* to 1 and *Retries* to 0
@@ -60,8 +66,30 @@ All experiment machinery comes from `trialforge`:
 | Persistence, history, reports, CSV exports | `SQLiteExperimentRepository`, `ExperimentService.report`, `ReportEngine` |
 
 Code map: `backend/f1lab/adapters` (vehicle model, simulator adapter, telemetry), `backend/f1lab/services` (`LabService`, narrative, HTML report),
-`backend/f1lab/api` (FastAPI routes/schemas), `frontend/` (no-build single-page app with its own SVG charts). The app imports
-`trialforge` only through its public top-level API; a skeleton-level proof test enforces this.
+`backend/f1lab/api` (FastAPI routes/schemas), `backend/f1lab/integrations/game_udp` (F1 25 / 2026-season UDP receiver, decoders, stint recorder),
+`backend/f1lab/integrations/historical` (FastF1 client, importer, normalizer, parquet repository, service), `frontend/` (no-build single-page app
+with its own SVG charts). The app imports `trialforge` only through its public top-level API; a skeleton-level proof test enforces this.
+
+## Live simulator mode (EA SPORTS F1 25)
+
+Open **Live simulator** in the nav (or "New experiment &rarr; Live simulator"). In the game's telemetry settings enable UDP telemetry
+(F1 25 or F1 25: 2026 Season Pack format), point it at the shown IP/port, then press **Start listening**. The **Live telemetry** charts
+update from the decoded stream (speed, throttle/brake, steering, RPM, gear, clutch, DRS, rev lights, tyre temperatures/pressures,
+track surface). For experiments, each generated setup is driven by you in the game garage; a stint is accepted only if the game
+reported exactly the target setup for the whole stint, and the decoded telemetry is archived with the run as evidence.
+
+## Historical F1 mode (FastF1)
+
+Open **Historical F1**. Pick a season and Grand Prix, choose a session (FP1&ndash;FP3, Q, SQ, S, R), optionally select drivers, and import.
+FastF1 downloads the session (coverage starts in 2018; data appears after a session finishes), the importer normalizes laps, car telemetry,
+track position and weather into Parquet under `data/historical/`, and the session screens provide lap/sector analysis, telemetry traces,
+a track map with corner markers, weather/tyre-stint views and driver-vs-driver comparisons with an interpolated time delta.
+Lap validity follows the timing feed: laps deleted by the stewards (`Deleted`) are marked invalid, while `IsAccurate` (timing alignment
+quality) is stored separately and never treated as a deletion. The car `Brake` channel is published by FastF1 as a boolean
+"brakes applied" flag, so it is stored as `brake_applied` (0/100), not as a brake-pressure percentage.
+
+FastF1 is an unofficial community library and is not affiliated with Formula 1; its timing feed sometimes requires F1 account
+credentials (`F1_USERNAME`/`F1_PASSWORD` environment variables) for recent sessions.
 
 ## Reading the results honestly
 
@@ -78,13 +106,14 @@ Code map: `backend/f1lab/adapters` (vehicle model, simulator adapter, telemetry)
 ```bash
 pip install -e ".[test]"
 python -m playwright install chromium     # only for the browser tests
-python -m pytest                          # 59 tests: 55 API/backend + 4 real-browser end-to-end
+python -m pytest                          # API/backend tests + real-browser end-to-end (skipped without Chromium)
 ```
 Backend tests cover validation, constraint handling, failed runs and retries, cancellation, telemetry import, optimisation, reports, restart persistence,
-a simulated mid-run crash with recovery, and proof that the app runs on the *installed* SDK. The browser tests walk the whole workflow with the mouse
-and regenerate `docs/screenshots/`.
+the UDP receiver/decoders and stint recording, and the historical importer/normalizer/repository against a fake FastF1 session. The browser tests walk
+the whole workflow with the mouse and regenerate `docs/screenshots/`.
 
 ## Limitations
 
-Single-process server (the SDK's local background runner); SQLite only; no user accounts; the vehicle model is synthetic and deliberately simple; statistical
-limits are those of the SDK (see `../skeleton/docs/limitations.md`).
+Single-process server (the SDK's local background runner); SQLite only; no user accounts; historical sessions are analysis-only and contain no car
+setup configuration; FastF1 coverage/accuracy varies by season and the live mode depends on the game's UDP output being enabled; the synthetic
+vehicle model is deliberately simple; statistical limits are those of the SDK (see `../skeleton/docs/limitations.md`).

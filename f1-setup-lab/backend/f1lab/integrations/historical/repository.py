@@ -115,4 +115,7 @@ class HistoricalRepository:
             return []
         if limit is not None and len(df) > limit:
             df = df.tail(limit)
-        return df.where(pd.notna(df), None).to_dict(orient="records")
+        # astype(object) first so nullable Int64/boolean NA values become None (JSON-safe),
+        # not pd.NA which is not serializable.
+        obj = df.astype(object)
+        return obj.where(pd.notna(obj), None).to_dict(orient="records")

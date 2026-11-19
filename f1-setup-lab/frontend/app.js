@@ -198,6 +198,7 @@ function downsample(pts, max = 300) {
 const seriesFrom = (samples, fn, name, color) => ({ name, color, pts: downsample(samples.map((s) => ({ x: s.session_time, y: fn(s) })).filter((p) => p.y !== null && p.y !== undefined && !Number.isNaN(p.y))) });
 const wheelSeries = (samples, field, name, color) => WHEELS.map((w, i) => ({ name: `${name} ${w}`, color, pts: downsample(samples.map((s) => ({ x: s.session_time, y: s[field]?.[i] ?? null })).filter((p) => p.y !== null)) }));
 
+let liveChartKey = '';
 async function updateLiveCharts(s) {
   const box = $('#live-charts'); if (!box) return;
   const note = $('#live-tel-note');
@@ -206,6 +207,10 @@ async function updateLiveCharts(s) {
   try { t = await api('GET', '/api/live/telemetry?scope=live&limit=1500'); }
   catch (e) { box.innerHTML = `<div class="errors">${esc(e.message)}</div>`; return; }
   const samples = t.samples || [];
+  // Only rebuild the SVGs when the stream actually advanced; identical polls are a no-op.
+  const key = `${t.count ?? samples.length}:${samples.length ? samples[samples.length - 1].session_time : 0}`;
+  if (key === liveChartKey) return;
+  liveChartKey = key;
   if (!samples.length) { box.innerHTML = '<div class="empty" style="grid-column:1/-1">No telemetry packets yet &mdash; the game must be in a session and sending UDP telemetry.</div>'; return; }
   box.innerHTML = renderTelemetryCharts(samples);
 }
@@ -219,41 +224,57 @@ function renderTelemetryCharts(samples) {
     { title: 'Steering', yLabel: 'steer (%)', series: [seriesFrom(samples, (s) => pct(s.steer), 'steer', '#4aa8ff')] },
     { title: 'Engine RPM', yLabel: 'rpm', series: [seriesFrom(samples, (s) => s.rpm, 'rpm', '#ffb400')] },
     { title: 'Gear', yLabel: 'gear', series: [seriesFrom(samples, (s) => s.gear, 'gear', '#c99bff')] },
+    { title: 'Clutch', yLabel: 'clutch', series: [seriesFrom(samples, (s) => s.clutch, 'clutch', '#95a5a6')] },
+    { title: 'DRS', yLabel: 'state', series: [seriesFrom(samples, (s) => s.drs, 'drs', '#00cec9')] },
+    { title: 'Rev lights', yLabel: '%', series: [seriesFrom(samples, (s) => s.rev_lights_percent, 'rev lights', '#ff9f43')] },
     { title: 'Tyre surface temperature', yLabel: '&deg;C', series: wheelSeries(samples, 'tyre_surface_temperature_c', 'tyre', '#ff9f43') },
+    { title: 'Tyre inner temperature', yLabel: '&deg;C', series: wheelSeries(samples, 'tyre_inner_temperature_c', 'tyre inner', '#e17055') },
     { title: 'Tyre pressure', yLabel: 'psi', series: wheelSeries(samples, 'tyre_pressure_psi', 'tyre', '#00cec9') },
     { title: 'Brake temperature', yLabel: '&deg;C', series: wheelSeries(samples, 'brake_temperature_c', 'brake', '#d63031') },
+    { title: 'Track surface type', yLabel: 'type', series: wheelSeries(samples, 'surface_type', 'surface', '#6c5ce7') },
   ];
   return charts.map((c) => `<div class="panel" style="margin-bottom:0"><h2>${c.title}</h2>${Charts.lines({ series: c.series, xLabel: 'session time (s)', yLabel: c.yLabel, label: c.title })}</div>`).join('');
 }
 
+function liveStatusRows(s) {
+  return `<tr><td class="dim">Listening</td><td>${s.listening ? '<span class="good">yes</span>' : 'no'}</td></tr>
+    <tr><td class="dim">Receiving packets</td><td>${s.connected ? '<span class="good">yes</span>' : '<span class="badc">no</span>'}</td></tr>
+    <tr><td class="dim">Packets accepted</td><td class="num">${esc(s.packets ?? '&mdash;')}</td></tr>
+    <tr><td class="dim">Wrong format</td><td class="num ${s.wrong_format ? 'badc' : ''}">${esc(s.wrong_format ?? 0)}</td></tr>
+    <tr><td class="dim">Malformed</td><td class="num ${s.malformed ? 'badc' : ''}">${esc(s.malformed ?? 0)}</td></tr>
+    <tr><td class="dim">Laps in this session</td><td class="num">${esc(s.laps_recorded)}</td></tr>
+    <tr><td class="dim">Game session</td><td class="mono">${esc(s.session?.uid ?? '&mdash;')} &middot; car ${esc(s.session?.player_car ?? '&mdash;')} &middot; fmt ${esc(s.session?.packet_format ?? '&mdash;')}</td></tr>
+    <tr><td class="dim">Telemetry samples</td><td class="num">${esc(s.telemetry?.samples ?? 0)}${s.telemetry?.samples ? ` &middot; top ${esc(s.telemetry.top_speed_kph)} km/h` : ''}</td></tr>
+    <tr><td class="dim">Last error</td><td>${s.last_error ? `<span class="badc">${esc(s.last_error)}</span>` : '&mdash;'}</td></tr>`;
+}
+
 async function viewLive() {
-  view().innerHTML = '<div id="live-root"></div>';
+  // Static shell rendered once; the 1 s poll updates only the status table, setup panel and charts
+  // so form fields and scroll position are never reset.
+  view().innerHTML = `<div id="live-root"><h1>Live simulator</h1><p class="sub">Receive EA SPORTS F1 25 UDP telemetry on this computer. Setups come from the game itself, so every stint can be checked against the setup the experiment asked for.</p><div id="err"></div>
+    <div class="grid g2"><div class="panel"><h2>Receiver</h2>
+      <div class="grid g2"><div class="field"><label for="lhost">IP address</label><input id="lhost" value="127.0.0.1"></div><div class="field"><label for="lport">Port</label><input id="lport" type="number" min="1024" max="65535" value="${META.game.default_port}"></div></div>
+      <div class="row"><button class="btn primary" id="lcon">Start listening</button><button class="btn" id="ldis" disabled>Stop</button></div>
+      <h3>In the game</h3><p class="hint">Settings &rsaquo; Telemetry Settings: UDP Telemetry <b>On</b>, IP address and port as above, send rate 20 Hz or more, UDP format <b>F1 25</b> or <b>F1 25: 2026 Season Pack</b> (this app decodes packet format <span id="live-formats">&hellip;</span>).</p></div>
+    <div class="panel"><h2>Status</h2><table><tbody id="live-status"><tr><td class="dim">Loading&hellip;</td></tr></tbody></table><div id="live-extra"></div></div></div>
+    <div class="panel"><h2>Current setup reported by the game</h2><div id="live-setup"><p class="hint">Waiting for the first status update&hellip;</p></div></div>
+    <div class="panel"><h2>Live telemetry<span class="dim" id="live-tel-note"></span></h2><p class="hint">Decoded from the game's UDP packets. Last 1500 samples, peak-preserving downsampled for display.</p><div class="grid g2" id="live-charts"><div class="empty" style="grid-column:1/-1">Waiting for telemetry packets&hellip;</div></div></div>
+  </div>`;
   const draw = async () => {
-    const s = await api('GET', '/api/live/status'); const root = $('#live-root'); if (!root) return s;
+    const s = await api('GET', '/api/live/status');
+    if (!document.getElementById('live-root')) return s;  // user navigated away; poll stops itself
+    $('#live-status').innerHTML = liveStatusRows(s);
+    const fmts = $('#live-formats'); if (fmts && s.accepted_formats) fmts.textContent = s.accepted_formats.join(', ');
+    $('#live-extra').innerHTML = s.wrong_format ? `<div class="note">${esc(s.format_help)}</div>` : '';
     const setup = s.current_setup ? Object.entries(s.current_setup).map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td class="num">${esc(fmt(v, Number.isInteger(v) ? 0 : 2))}</td></tr>`).join('') : '';
-    root.innerHTML = `<h1>Live simulator</h1><p class="sub">Receive EA SPORTS F1 25 UDP telemetry on this computer. Setups come from the game itself, so every stint can be checked against the setup the experiment asked for.</p><div id="err"></div>
-      <div class="grid g2"><div class="panel"><h2>Receiver</h2>
-        <div class="grid g2"><div class="field"><label for="lhost">IP address</label><input id="lhost" value="127.0.0.1" ${s.listening ? 'disabled' : ''}></div><div class="field"><label for="lport">Port</label><input id="lport" type="number" min="1024" max="65535" value="${META.game.default_port}" ${s.listening ? 'disabled' : ''}></div></div>
-        <div class="row"><button class="btn primary" id="lcon" ${s.listening ? 'disabled' : ''}>Start listening</button><button class="btn" id="ldis" ${s.listening ? '' : 'disabled'}>Stop</button></div>
-        <h3>In the game</h3><p class="hint">Settings &rsaquo; Telemetry Settings: UDP Telemetry <b>On</b>, IP address and port as above, send rate 20 Hz or more, UDP format <b>F1 25</b> or <b>F1 25: 2026 Season Pack</b> (this app decodes packet format ${esc(s.accepted_formats.join(', '))}).</p></div>
-      <div class="panel"><h2>Status</h2><table><tbody>
-        <tr><td class="dim">Listening</td><td>${s.listening ? '<span class="good">yes</span>' : 'no'}</td></tr>
-        <tr><td class="dim">Receiving packets</td><td>${s.connected ? '<span class="good">yes</span>' : '<span class="badc">no</span>'}</td></tr>
-        <tr><td class="dim">Packets accepted</td><td class="num">${esc(s.packets ?? '&mdash;')}</td></tr>
-        <tr><td class="dim">Wrong format</td><td class="num ${s.wrong_format ? 'badc' : ''}">${esc(s.wrong_format ?? 0)}</td></tr>
-        <tr><td class="dim">Malformed</td><td class="num ${s.malformed ? 'badc' : ''}">${esc(s.malformed ?? 0)}</td></tr>
-        <tr><td class="dim">Laps in this session</td><td class="num">${esc(s.laps_recorded)}</td></tr>
-        <tr><td class="dim">Game session</td><td class="mono">${esc(s.session?.uid ?? '&mdash;')} &middot; car ${esc(s.session?.player_car ?? '&mdash;')} &middot; fmt ${esc(s.session?.packet_format ?? '&mdash;')}</td></tr>
-        <tr><td class="dim">Telemetry samples</td><td class="num">${esc(s.telemetry?.samples ?? 0)}${s.telemetry?.samples ? ` &middot; top ${esc(s.telemetry.top_speed_kph)} km/h` : ''}</td></tr>
-        <tr><td class="dim">Last error</td><td>${s.last_error ? `<span class="badc">${esc(s.last_error)}</span>` : '&mdash;'}</td></tr></tbody></table>
-        ${s.wrong_format ? `<div class="note">${esc(s.format_help)}</div>` : ''}</div></div>
-      <div class="panel"><h2>Current setup reported by the game</h2>${setup ? `<table><tbody>${setup}</tbody></table>` : '<p class="hint">Waiting for a Car Setups packet (about twice a second while the game is in a session).</p>'}</div>
-      <div class="panel"><h2>Live telemetry<span class="dim" id="live-tel-note"></span></h2><p class="hint">Decoded from the game's UDP packets (${esc(s.accepted_formats.join(', '))}). Last ${1500} samples, peak-preserving downsampled for display.</p><div class="grid g2" id="live-charts"><div class="empty" style="grid-column:1/-1">Waiting for telemetry packets&hellip;</div></div></div>`;
+    $('#live-setup').innerHTML = setup ? `<table><tbody>${setup}</tbody></table>` : '<p class="hint">Waiting for a Car Setups packet (about twice a second while the game is in a session).</p>';
+    $('#lhost').disabled = $('#lport').disabled = s.listening;
+    $('#lcon').disabled = s.listening; $('#ldis').disabled = !s.listening;
     updateLiveCharts(s);
-    $('#lcon')?.addEventListener('click', async () => { try { await api('POST', '/api/live/connect', { host: $('#lhost').value, port: +$('#lport').value }); draw(); } catch (e) { $('#err').innerHTML = errorsBox(e); } });
-    $('#ldis')?.addEventListener('click', async () => { await api('POST', '/api/live/disconnect'); draw(); });
     return s;
   };
+  $('#lcon').addEventListener('click', async () => { try { await api('POST', '/api/live/connect', { host: $('#lhost').value, port: +$('#lport').value }); draw(); } catch (e) { $('#err').innerHTML = errorsBox(e); } });
+  $('#ldis').addEventListener('click', async () => { await api('POST', '/api/live/disconnect'); draw(); });
   const first = await draw();
   poll(async () => { try { await draw(); } catch (_) { /* transient */ } }, 1000);
   return first;
@@ -536,6 +557,8 @@ async function viewReport(id) {
 /* ------------------------------------------------------------- historical F1 */
 const HIST_TABS = [['overview', 'Overview'], ['laps', 'Lap analysis'], ['telemetry', 'Telemetry'], ['track', 'Track map'], ['compare', 'Compare'], ['weather', 'Weather & tyres']];
 const histChip = '<span class="chip hist">HISTORICAL F1 · FASTF1</span>';
+/* FastF1 brake data is an on/off flag stored as brake_applied (0/100); brake_pct is a fallback. */
+const brakeOf = (pts) => (pts.some((p) => p.brake_applied != null) ? 'brake_applied' : 'brake_pct');
 
 async function viewHist() {
   view().innerHTML = `<h1>Historical F1</h1><p class="sub">Real Formula 1 session data via <b>FastF1</b> (unofficial community library; timing and telemetry from 2018 onwards). For benchmarking and analysis &mdash; separate from your setup experiments.</p>
@@ -650,7 +673,7 @@ async function viewHistSession(id, tab) {
         <div class="panel"><h2>Laps</h2><div style="overflow:auto;max-height:420px"><table><thead><tr><th>Lap</th><th>Stint</th><th>Compound</th><th class="num">Tyre life</th><th class="num">S1</th><th class="num">S2</th><th class="num">S3</th><th class="num">Lap</th><th>Flags</th></tr></thead><tbody>
         ${laps.map((l) => `<tr class="${l.is_valid === false ? 'outlier' : ''}"><td class="mono">${esc(l.lap_number)}</td><td class="mono">${esc(l.stint ?? '&mdash;')}</td><td>${esc(l.compound || '&mdash;')}</td><td class="num">${esc(l.tyre_life ?? '&mdash;')}</td>
         <td class="num">${fmt(l.sector_1_s, 3)}</td><td class="num">${fmt(l.sector_2_s, 3)}</td><td class="num">${fmt(l.sector_3_s, 3)}</td><td class="num"><b>${fmt(l.lap_time_s, 3)}</b></td>
-        <td>${l.is_valid === false ? '<span class="tag">invalid</span>' : ''}${l.is_personal_best ? '<span class="chip completed">PB</span>' : ''}${l.pits ? '<span class="tag">pit</span>' : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
+        <td>${l.is_valid === false ? '<span class="tag">invalid</span>' : ''}${l.is_deleted ? '<span class="tag">deleted</span>' : ''}${l.is_accurate === false ? '<span class="tag dim">timing approx.</span>' : ''}${l.is_personal_best ? '<span class="chip completed">PB</span>' : ''}${l.pits ? '<span class="tag">pit</span>' : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
     };
     $('#hlapdrv').addEventListener('change', show); show();
   } else if (tab === 'telemetry' || tab === 'track') {
@@ -665,7 +688,7 @@ async function viewHistSession(id, tab) {
       const code = $('#htrkdrv').value, lap = $('#htrklap').value ? +$('#htrklap').value : null;
       if (tab === 'telemetry') {
         const r = await api('GET', `/api/historical/sessions/${id}/telemetry?driver=${encodeURIComponent(code)}${lap ? `&lap=${lap}` : ''}&limit=1500`);
-        $('#htrkout').innerHTML = r.samples.length ? histTraceCharts(r.samples) + `<p class="hint">${r.count} samples${lap ? ` on lap ${lap}` : ''} &middot; distance on the x-axis &middot; throttle/brake/DRS are percentages as published by the timing feed.</p>` : '<div class="empty">No telemetry stored for this driver/lap.</div>';
+        $('#htrkout').innerHTML = r.samples.length ? histTraceCharts(r.samples) + `<p class="hint">${r.count} samples${lap ? ` on lap ${lap}` : ''} &middot; distance on the x-axis &middot; throttle is a percentage; brake is an on/off flag (the timing feed publishes no brake pressure); DRS is a state flag.</p>` : '<div class="empty">No telemetry stored for this driver/lap.</div>';
       } else {
         const r = await api('GET', `/api/historical/sessions/${id}/track-map?driver=${encodeURIComponent(code)}${lap ? `&lap=${lap}` : ''}`);
         $('#htrkout').innerHTML = `<div class="panel">${Charts.trackMap({ points: r.points || [], corners: r.corners || [] })}</div><p class="hint">Actual X/Y position from the timing feed${lap ? `, lap ${lap}` : ', fastest available lap stream'}.</p>`;
@@ -692,7 +715,7 @@ async function viewHistSession(id, tab) {
         $('#hcmpout').innerHTML = `<div class="note info">${esc(r.delta.note)}</div>
           <div class="panel"><h2>Speed vs distance</h2>${Charts.lines({ series: [ser(r.a.points, 'speed_kph', '#e10600', `${r.a.driver} lap ${r.a.lap}`, pctA), ser(r.b.points, 'speed_kph', '#4aa8ff', `${r.b.driver} lap ${r.b.lap}`, pctB)], xLabel: 'lap distance (%)', yLabel: 'km/h' })}</div>
           <div class="grid g2"><div class="panel"><h2>Throttle</h2>${Charts.lines({ series: [ser(r.a.points, 'throttle_pct', '#e10600', 'A', pctA), ser(r.b.points, 'throttle_pct', '#4aa8ff', 'B', pctB)], xLabel: 'lap distance (%)', yLabel: '%' })}</div>
-          <div class="panel"><h2>Brake</h2>${Charts.lines({ series: [ser(r.a.points, 'brake_pct', '#e10600', 'A', pctA), ser(r.b.points, 'brake_pct', '#4aa8ff', 'B', pctB)], xLabel: 'lap distance (%)', yLabel: '%' })}</div></div>
+          <div class="panel"><h2>Brake (on/off)</h2>${Charts.lines({ series: [ser(r.a.points, brakeOf(r.a.points), '#e10600', 'A', pctA), ser(r.b.points, brakeOf(r.b.points), '#4aa8ff', 'B', pctB)], xLabel: 'lap distance (%)', yLabel: 'applied (0/100)' })}</div></div>
           <div class="panel"><h2>Time delta (B &minus; A)</h2>${Charts.lines({ series: [{ name: 't_B - t_A (s)', color: '#ffb400', pts: r.delta.distance_pct.map((x, i) => ({ x: x * 100, y: r.delta.delta_s[i] })) }], xLabel: 'lap distance (%)', yLabel: 'seconds', ymin: Math.min(...r.delta.delta_s) - 0.05, ymax: Math.max(...r.delta.delta_s) + 0.05 })}
           <p class="hint">Positive delta = driver B is slower than A at that point of the lap. Delta is computed on an interpolated common distance grid, not raw samples.</p></div>`;
       } catch (e) { $('#hcmpmsg').innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
@@ -713,12 +736,16 @@ async function viewHistSession(id, tab) {
   }
 }
 
-/* Speed/throttle/brake/RPM/gear/DRS traces vs distance for a historical lap. */
+/* Speed/throttle/brake/RPM/gear/DRS traces vs distance for a historical lap.
+   FastF1's Brake channel is a boolean 'brakes applied' flag, stored as brake_applied (0/100);
+   brake_pct only exists if a source ever provides a real percentage. */
 function histTraceCharts(samples) {
   const s = (key, name, color, scale = 1) => ({ name, color, pts: downsample(samples.map((p) => ({ x: p.distance_m, y: p[key] == null ? null : p[key] * scale })).filter((p) => p.y !== null && !Number.isNaN(p.y))) });
+  const brakeKey = samples.some((p) => p.brake_applied != null) ? 'brake_applied' : 'brake_pct';
+  const brakeName = brakeKey === 'brake_applied' ? 'brake applied' : 'brake';
   return `<div class="grid g2">
     <div class="panel"><h2>Speed</h2>${Charts.lines({ series: [s('speed_kph', 'speed', '#e10600')], xLabel: 'distance (m)', yLabel: 'km/h' })}</div>
-    <div class="panel"><h2>Throttle &amp; brake</h2>${Charts.lines({ series: [s('throttle_pct', 'throttle', '#2ecc71'), s('brake_pct', 'brake', '#e10600')], xLabel: 'distance (m)', yLabel: '%' })}</div>
+    <div class="panel"><h2>Throttle &amp; brake</h2>${Charts.lines({ series: [s('throttle_pct', 'throttle', '#2ecc71'), s(brakeKey, brakeName, '#e10600')], xLabel: 'distance (m)', yLabel: '%' })}</div>
     <div class="panel"><h2>RPM</h2>${Charts.lines({ series: [s('rpm', 'rpm', '#ffb400')], xLabel: 'distance (m)', yLabel: 'rpm' })}</div>
     <div class="panel"><h2>Gear</h2>${Charts.lines({ series: [s('gear', 'gear', '#c99bff')], xLabel: 'distance (m)', yLabel: 'gear' })}</div>
     <div class="panel"><h2>DRS</h2>${Charts.lines({ series: [s('drs', 'drs', '#00cec9')], xLabel: 'distance (m)', yLabel: 'drs', ymin: -0.1, ymax: 1.1 })}</div></div>`;

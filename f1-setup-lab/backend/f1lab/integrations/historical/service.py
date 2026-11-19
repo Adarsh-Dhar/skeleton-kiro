@@ -20,7 +20,8 @@ from f1lab.integrations.historical.importer import import_session, resolve_event
 from f1lab.integrations.historical.repository import HistoricalRepository, session_id
 from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest
 
-TELEMETRY_CHANNELS = ("distance_m", "session_time_s", "speed_kph", "throttle_pct", "brake_pct", "steer_pct", "gear", "rpm", "drs")
+TELEMETRY_CHANNELS = ("distance_m", "session_time_s", "speed_kph", "throttle_pct", "brake_applied", "brake_pct",
+                      "steer_pct", "gear", "rpm", "drs")
 POSITION_CHANNELS = ("distance_m", "session_time_s", "x_m", "y_m", "z_m", "speed_kph")
 
 # FastF1 schedule session names -> session type codes accepted by get_session()
@@ -252,7 +253,7 @@ class HistoricalService:
         delta = t_b - t_a  # positive => B is slower than A at that point of the lap
 
         def trace(df, limit=600):
-            return _records(_thin(df, limit), None, ("distance_m", "speed_kph", "throttle_pct", "brake_pct", "rpm", "gear", "drs"))
+            return _records(_thin(df, limit), None, ("distance_m", "speed_kph", "throttle_pct", "brake_applied", "brake_pct", "rpm", "gear", "drs"))
 
         return {
             "a": {"driver": a_code, "lap": req.lap_a, "points": trace(ta)},

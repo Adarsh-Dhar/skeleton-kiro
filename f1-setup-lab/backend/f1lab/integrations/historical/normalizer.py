@@ -112,6 +112,20 @@ def _present(v: Any) -> bool:
     return True
 
 
+def _flag(v: Any) -> bool | None:
+    """None-safe boolean for timing flags (Deleted, IsValid, IsAccurate, ...)."""
+    return bool(v) if _present(v) else None
+
+
+def _pit_flag(lap: Any) -> bool:
+    """A lap is a pit lap when FastF1 recorded PitInTime/PitOutTime (or a legacy Pits flag)."""
+    for n in ("PitInTime", "PitOutTime", "pit_in_time", "pit_out_time"):
+        if _present(_pick(lap, n)):
+            return True
+    p = _pick(lap, "Pits", "pits")
+    return bool(_flag(p)) if _present(p) else False
+
+
 def session_info(session, year: int, event: str, session_type: str) -> dict:
     """Canonical session metadata for the manifest."""
     ev = getattr(session, "event", None)
@@ -123,17 +137,21 @@ def session_info(session, year: int, event: str, session_type: str) -> dict:
         date = get("EventDate")
     if hasattr(date, "isoformat") and _present(date):
         date = date.isoformat()
-    circuit_info = getattr(session, "circuit_info", None)
-    circuit_name = None
-    if circuit_info is not None:
-        circuit_name = circuit_info.get("Name") if hasattr(circuit_info, "get") else getattr(circuit_info, "Name", None)
+    # FastF1's session_info JSON carries Meeting.Circuit.{ShortName,OfficialName}
+    meeting_circuit = {}
+    try:
+        si = getattr(session, "session_info", None) or {}
+        meeting_circuit = (si.get("Meeting", {}) or {}).get("Circuit", {}) or {}
+    except Exception:
+        meeting_circuit = {}
     return {
         "year": year,
         "event": get("EventName") or get("OfficialEventName") or event,
         "event_official": get("OfficialEventName"),
         "location": get("Location"),
-        "round": get("Round"),
-        "circuit": circuit_name or get("CircuitShortName") or get("CircuitName"),
+        "round": get("Round") or get("RoundNumber"),
+        "circuit": (meeting_circuit.get("ShortName") or meeting_circuit.get("OfficialName")
+                    or get("CircuitShortName") or get("CircuitName")),
         "session_type": session_type,
         "session_name": get("SessionName") or session_type,
         "session_date": str(date) if date else None,
@@ -170,14 +188,33 @@ def normalize_laps(session) -> pd.DataFrame:
             "sector_4_s": _td_s(_pick(lap, "Sector4Time", "sector_4")),
             "compound": _pick(lap, "Compound", "compound"),
             "tyre_life": _num(_pick(lap, "TyreLife", "tyre_life")),
-            "is_personal_best": _pick(lap, "IsPersonalBest", "is_personal_best"),
-            "is_valid": _pick(lap, "IsValid", "is_valid", "Deleted"),
-            "pits": bool(_pick(lap, "Pits", "pits") or False),
+            "is_personal_best": _flag(_pick(lap, "IsPersonalBest", "is_personal_best")),
+            # FastF1 semantics: 'Deleted' = lap removed by the stewards; 'IsAccurate' = timing
+            # alignment quality. They are independent concepts and must not be conflated.
+            "is_deleted": _flag(_pick(lap, "Deleted", "is_deleted")),
+            "is_accurate": _flag(_pick(lap, "IsAccurate", "is_accurate")),
+            "deleted_reason": _pick(lap, "DeletedReason", "deleted_reason"),
+            "is_valid": _flag(_pick(lap, "IsValid", "is_valid")),
+            "pits": _pit_flag(lap),
         })
     df = pd.DataFrame(rows)
+    for c in ("is_deleted", "is_accurate", "is_valid", "is_personal_best"):
+        if c in df.columns:
+            df[c] = df[c].map(_flag).astype("boolean")
     if "is_valid" in df.columns:
-        # FastF1 may expose a 'Deleted' flag instead of a validity flag
-        df["is_valid"] = df["is_valid"].map(lambda v: None if v is None or (isinstance(v, float) and pd.isna(v)) else bool(v))
+        # Validity: when steward deletion info exists it is authoritative (Deleted=True => invalid).
+        # Otherwise keep an explicit IsValid flag. IsAccurate is never used for validity.
+        deleted = df["is_deleted"] if "is_deleted" in df.columns else pd.Series([pd.NA] * len(df), dtype="boolean")
+        raw_valid = df["is_valid"]
+        df["is_valid"] = pd.array(
+            [(not bool(d)) if pd.notna(d) else (bool(v) if pd.notna(v) else pd.NA)
+             for d, v in zip(deleted.tolist(), raw_valid.tolist())],
+            dtype="boolean",
+        )
+    for c in ("driver_number", "lap_number", "stint", "lap_time_s", "sector_1_s", "sector_2_s",
+              "sector_3_s", "sector_4_s", "tyre_life"):
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
     for c in ("driver_number", "lap_number", "stint", "tyre_life"):
         if c in df.columns:
             df[c] = df[c].astype("Int64")
@@ -213,6 +250,26 @@ def normalize_weather(session) -> pd.DataFrame:
     return df
 
 
+def _brake_channels(vals) -> tuple[list | None, list | None]:
+    """Split the raw Brake channel into (brake_applied, brake_pct).
+
+    FastF1 publishes ``Brake`` as a boolean 'brakes applied' flag (unlike ``Throttle``, which is a
+    0-100 percentage). An on/off signal must never be stored as a measured brake percentage, so
+    boolean/0-1 data becomes ``brake_applied`` on a 0/100 scale; only genuine percentages (max > 1)
+    are kept as ``brake_pct``.
+    """
+    if vals is None:
+        return None, None
+    nums = pd.to_numeric(pd.Series(list(vals)), errors="coerce")
+    finite = nums.dropna()
+    if finite.empty:
+        return None, None
+    is_flag = str(getattr(vals, "dtype", "")) in ("bool", "boolean") or float(finite.max()) <= 1.0
+    if is_flag:
+        return [None if pd.isna(v) else (100.0 if float(v) > 0 else 0.0) for v in nums], None
+    return None, [_num(v) for v in vals]
+
+
 def _car_frame(car: pd.DataFrame) -> pd.DataFrame:
     """Canonical per-sample car telemetry frame (no lap column yet)."""
     if car is None or not len(car):
@@ -225,17 +282,27 @@ def _car_frame(car: pd.DataFrame) -> pd.DataFrame:
         except Exception:
             pass
     dist_col = _col(c, "Distance", "distance")
+    brake_col = _col(c, "Brake", "brake")
+    brake_applied, brake_pct = _brake_channels(c[brake_col] if brake_col else None)
     out = pd.DataFrame({
         "distance_m": c[dist_col] if dist_col else pd.NA,
         "session_time_s": [_td_s(v) for v in c[_col(c, "SessionTime", "session_time")] ] if _col(c, "SessionTime", "session_time") else None,
         "speed_kph": [_num(v) for v in c[_col(c, "Speed", "speed")]] if _col(c, "Speed", "speed") else None,
         "throttle_pct": [_num(v) for v in c[_col(c, "Throttle", "throttle")]] if _col(c, "Throttle", "throttle") else None,
-        "brake_pct": [_num(v) for v in c[_col(c, "Brake", "brake")]] if _col(c, "Brake", "brake") else None,
+        "brake_applied": brake_applied,
+        "brake_pct": brake_pct,
         "steer_pct": [_num(v) for v in c[_col(c, "Steer", "Steering", "steer", "steering")]] if _col(c, "Steer", "Steering", "steer", "steering") else None,
         "gear": [_num(v) for v in c[_col(c, "Gear", "nGear", "gear")]] if _col(c, "Gear", "nGear", "gear") else None,
         "rpm": [_num(v) for v in c[_col(c, "RPM", "rpm")]] if _col(c, "RPM", "rpm") else None,
         "drs": [_num(v) for v in c[_col(c, "DRS", "drs")]] if _col(c, "DRS", "drs") else None,
     })
+    # exactly one brake representation exists; drop the unused one
+    for col in ("brake_applied", "brake_pct"):
+        if out[col].isna().all():
+            out = out.drop(columns=[col])
+    # canonical telemetry columns are all numeric; coerce so parquet storage gets real dtypes
+    for col in out.columns:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
     # keep only rows with at least one real measurement
     keep = out.notna().any(axis=1)
     return out[keep].reset_index(drop=True)
@@ -297,6 +364,8 @@ def _pos_frame(pos: pd.DataFrame) -> pd.DataFrame:
         "z_m": [_num(v) for v in p[_col(p, "Z", "z")]] if _col(p, "Z", "z") else None,
         "speed_kph": [_num(v) for v in p[_col(p, "Speed", "speed")]] if _col(p, "Speed", "speed") else None,
     })
+    for col in out.columns:
+        out[col] = pd.to_numeric(out[col], errors="coerce")
     keep = out[["x_m", "y_m"]].notna().all(axis=1)
     return out[keep].reset_index(drop=True)
 
@@ -325,23 +394,40 @@ def driver_position(session, driver_code: str, driver_number: str | None = None,
     return pd.concat(frames, ignore_index=True)
 
 
+def _circuit_info(session) -> Any:
+    """FastF1 >=3.x exposes ``session.get_circuit_info()`` returning a CircuitInfo dataclass with a
+    ``corners`` DataFrame (X, Y, Number, Letter, Angle, Distance). Test doubles and older shims may
+    instead carry a ``circuit_info`` attribute or a dict with a Turns/corners table."""
+    getter = getattr(session, "get_circuit_info", None)
+    if callable(getter):
+        try:
+            info = getter()
+            if info is not None:
+                return info
+        except Exception:
+            pass
+    return getattr(session, "circuit_info", None)
+
+
 def circuit_corners(session) -> list[dict]:
-    """Corner markers [{number,name,distance_m}] when FastF1 circuit info is available."""
-    try:
-        info = getattr(session, "circuit_info", None)
-    except Exception:
-        info = None
+    """Corner markers [{number,name,letter,distance_m,x_m,y_m}] from FastF1 circuit info."""
+    info = _circuit_info(session)
     if info is None:
         return []
-    turns = info.get("Turns") if hasattr(info, "get") else getattr(info, "Turns", None)
-    if turns is None or not len(turns):
+    corners = getattr(info, "corners", None)
+    if corners is None and hasattr(info, "get"):
+        corners = info.get("corners") or info.get("Corners") or info.get("Turns")
+    if corners is None or not len(corners):
         return []
     out = []
-    for _, t in turns.iterrows():
+    for _, t in corners.iterrows():
         out.append({
-            "number": _num(t.get("Number")),
-            "name": t.get("Name"),
-            "distance_m": _num(t.get("Distance")),
+            "number": _num(t.get("Number", t.get("number"))),
+            "name": t.get("Name", t.get("name")),
+            "letter": t.get("Letter", t.get("letter")),
+            "distance_m": _num(t.get("Distance", t.get("distance"))),
+            "x_m": _num(t.get("X", t.get("x"))),
+            "y_m": _num(t.get("Y", t.get("y"))),
         })
     return out
 
