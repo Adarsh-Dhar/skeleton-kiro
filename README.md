@@ -77,10 +77,14 @@ Savings are only real when measured. Setup-field mappings are only verified when
 scripts/check-release.sh
 ```
 
-Builds all four packages, imports both apps, checks that both use the installed SDK version, lints, compiles every Python file, checks
-JavaScript syntax and the start scripts, runs the SDK, root, F1 and WATTWISE tests and the browser tests (when Chromium is installed), and
-prints PASSED / FAILED / SKIPPED / UNAVAILABLE separately. Opt-in: `RUN_NETWORK_TESTS=1` (real FastF1 download, needs `F1_USERNAME` /
-`F1_PASSWORD`), `RUN_START_SMOKE=1` (full install and start of both apps). Skipped and unavailable checks are not passes.
+Works from a clean checkout (needs Python 3.11+ and access to PyPI). It creates its own environment, `.run/release-venv` (recreated on every
+run; `--reuse` keeps it), builds the TRIALFORGE wheel into `skeleton/dist/`, installs that wheel with its test extras, the root database
+package and both apps with their test dependencies, and checks that both apps use the SDK from that environment's `site-packages` (not the
+source tree). It then builds the other packages, lints, compiles every Python file, checks JavaScript and shell syntax, runs the SDK, root,
+F1 and WATTWISE test suites and the browser tests (when Playwright's Chromium is installed; `INSTALL_CHROMIUM=1` downloads it), and prints
+PASSED / FAILED / SKIPPED / UNAVAILABLE separately. Opt-in: `RUN_NETWORK_TESTS=1` (real FastF1 download, needs `F1_USERNAME` /
+`F1_PASSWORD`), `RUN_START_SMOKE=1` (full install and start of both apps). The real-game and real-household checks are always listed as
+SKIPPED manual gates. Skipped and unavailable checks are not passes.
 
 ## Manual acceptance gates
 
