@@ -1,23 +1,32 @@
 """HistoricalDataService: coordinates FastF1 imports (background jobs) and session queries.
 
-Historical sessions live under ``<data_dir>/historical`` and are completely separate from the
-TRIALFORGE experiment store: they are for analysis/benchmarking, never setup-response measurements.
+Historical sessions and import jobs live in the root database (``f1_hist_*``, ``f1_import_job``) and are completely
+separate from the TRIALFORGE experiment tables: they are for analysis/benchmarking, never setup-response measurements.
 """
 
 from __future__ import annotations
 
 import asyncio
-import uuid
-from datetime import UTC, datetime
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+from sqlalchemy import Engine
 
-from f1lab.integrations.historical.fastf1_client import FastF1Client, FastF1Unavailable
-from f1lab.integrations.historical.importer import import_session, resolve_event, _session_code
-from f1lab.integrations.historical.repository import HistoricalRepository, session_id
+from f1lab.integrations.historical.fastf1_client import FastF1Client, cache_stats
+from f1lab.integrations.historical.importer import (
+    CANCELLED,
+    NETWORK_TIMEOUT,
+    ImportCancelled,
+    _session_code,
+    classify,
+    import_session,
+    resolve_event,
+)
+from f1lab.integrations.historical.jobs import ACTIVE, ImportJobStore, dedupe_key
+from f1lab.integrations.historical.repository import HistoricalRepository
 from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest
 
 TELEMETRY_CHANNELS = ("distance_m", "session_time_s", "speed_kph", "throttle_pct", "brake_applied", "brake_pct",
@@ -63,16 +72,34 @@ def _records(df: pd.DataFrame, limit: int | None = None, channels: tuple[str, ..
 
 
 class HistoricalService:
-    def __init__(self, data_dir: str | Path) -> None:
-        self.repo = HistoricalRepository(Path(data_dir) / "historical")
+    """``engine`` is the root database; ``cache_dir`` is FastF1's download cache (reused by every import)."""
+
+    def __init__(self, engine: Engine, cache_dir: str | Path, client_factory: Callable[[], Any] | None = None,
+                 job_timeout_s: float = 1800.0) -> None:
+        self.repo = HistoricalRepository(engine, cache_dir)
+        self.jobs = ImportJobStore(engine)
         self._client: FastF1Client | None = None
-        self._jobs: dict[str, dict] = {}
+        self._client_factory = client_factory
         self._driver_cache: dict[tuple, list[dict]] = {}
+        self._tasks: dict[str, asyncio.Task] = {}
+        self._gate = asyncio.Semaphore(1)  # one FastF1 import at a time (FastF1 is not designed for concurrent loads)
+        self.job_timeout_s = job_timeout_s
+
+    def recover(self) -> int:
+        """Mark imports interrupted by a previous shutdown/crash as FAILED (code INTERRUPTED). Returns how many."""
+        return self.jobs.mark_interrupted()
+
+    async def shutdown(self) -> None:
+        for jid, task in list(self._tasks.items()):
+            if not task.done():
+                self.jobs.request_cancel(jid)
+                task.cancel()
+        self._tasks.clear()
 
     @property
     def client(self) -> FastF1Client:
         if self._client is None:
-            self._client = FastF1Client(self.repo.cache_dir)
+            self._client = self._client_factory() if self._client_factory else FastF1Client(self.repo.cache_dir)
         return self._client
 
     # ------------------------------------------------------------- schedule browsing
@@ -116,40 +143,124 @@ class HistoricalService:
         return drivers
 
     # ------------------------------------------------------------- imports
-    async def start_import(self, req: HistoricalImportRequest) -> dict:
-        job = {"import_id": "imp-" + uuid.uuid4().hex[:10], "state": "QUEUED", "detail": "queued",
-               "error": None, "created_at": datetime.now(UTC).isoformat(), "finished_at": None,
-               "request": req.model_dump(), "session_id": None}
-        self._jobs[job["import_id"]] = job
-        asyncio.create_task(self._run_import(job, req.model_dump()))
-        return {"import_id": job["import_id"], "state": job["state"]}
+    @staticmethod
+    def _not_found(what: str):
+        from f1lab.services.lab import NotFound
 
-    async def _run_import(self, job: dict, payload: dict) -> None:
-        def progress(state: str, detail: str) -> None:
-            job["state"], job["detail"] = state, detail
+        return NotFound(what)
 
-        try:
-            manifest = await asyncio.to_thread(import_session, self.client, self.repo, payload, progress)
-            job.update(state="COMPLETED", detail="import complete", session_id=manifest["session_id"],
-                       finished_at=datetime.now(UTC).isoformat())
-        except FastF1Unavailable as exc:
-            job.update(state="FAILED", error=str(exc), finished_at=datetime.now(UTC).isoformat())
-        except Exception as exc:  # network errors, missing data, bad driver codes
-            job.update(state="FAILED", error=str(exc), finished_at=datetime.now(UTC).isoformat())
+    async def start_import(self, req: HistoricalImportRequest, force: bool = False) -> dict:
+        """Queue an import. A request identical to one already running, or one already completed whose session is
+        still stored, returns that job (``duplicate: true``) instead of downloading again, unless ``force``."""
+        payload = req.model_dump()
+        key = dedupe_key(payload)
+        active = self.jobs.find_active(key)
+        if active is not None:
+            return {**active, "duplicate": True}
+        if not force:
+            done = self.jobs.find_completed(key)
+            if done is not None and done.get("session_id") and self.repo.exists(done["session_id"]):
+                return {**done, "duplicate": True}
+        job = self.jobs.create(payload)
+        self._spawn(job["import_id"], payload, force)
+        return {**job, "duplicate": False}
+
+    def _spawn(self, import_id: str, payload: dict, force: bool) -> None:
+        task = asyncio.create_task(self._run_import(import_id, payload, force))
+        self._tasks[import_id] = task
+        task.add_done_callback(lambda _t, i=import_id: self._tasks.pop(i, None))
+
+    async def _run_import(self, import_id: str, payload: dict, force: bool) -> None:
+        jobs = self.jobs
+        if self._gate.locked():
+            jobs.progress(import_id, "QUEUED", "waiting for another import to finish")
+        async with self._gate:
+            if jobs.cancel_requested(import_id):
+                jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="cancelled before it started", detail="cancelled")
+                return
+            timed_out = False
+
+            def progress(state: str, detail: str) -> None:
+                jobs.progress(import_id, state if state in ACTIVE else "PROCESSING", detail)
+
+            def should_cancel() -> bool:
+                return timed_out or jobs.cancel_requested(import_id)
+
+            before = cache_stats(self.repo.cache_dir)
+            work = asyncio.to_thread(import_session, self.client, self.repo, payload, progress, should_cancel=should_cancel, force=force)
+            try:
+                manifest = await asyncio.wait_for(asyncio.shield(work), timeout=self.job_timeout_s)
+            except TimeoutError:
+                timed_out = True  # the worker thread stops at its next checkpoint and stores nothing
+                jobs.update(import_id, state="FAILED", error_code=NETWORK_TIMEOUT,
+                            error=f"the import did not finish within {int(self.job_timeout_s)} s; nothing was stored. Retry it.",
+                            detail="timed out")
+                return
+            except asyncio.CancelledError:
+                jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="the application shut down", detail="cancelled")
+                raise
+            except ImportCancelled:
+                jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="cancelled by the user; nothing was stored", detail="cancelled")
+                return
+            except Exception as exc:  # network errors, missing data, bad driver codes
+                jobs.update(import_id, state="FAILED", error_code=classify(exc), error=str(exc) or type(exc).__name__, detail="failed")
+                return
+            after = cache_stats(self.repo.cache_dir)
+            if manifest.get("reused"):
+                note = "already stored; reused without downloading"
+            elif after["bytes"] > before["bytes"]:
+                note = f"import complete; downloaded {round((after['bytes'] - before['bytes']) / 1e6, 1)} MB into the FastF1 cache"
+            else:
+                note = "import complete; served from the FastF1 cache (no new downloads)"
+            if manifest.get("warnings"):
+                note += "; warnings: " + "; ".join(manifest["warnings"][:5])
+            jobs.update(import_id, state="COMPLETED", detail=note, session_id=manifest["session_id"], error=None, error_code=None)
 
     def import_status(self, import_id: str) -> dict:
-        job = self._jobs.get(import_id)
+        job = self.jobs.get(import_id)
         if job is None:
-            from f1lab.services.lab import NotFound
-            raise NotFound(import_id)
-        return {k: v for k, v in job.items() if k != "request"} | {"request": job["request"]}
+            raise self._not_found(import_id)
+        return job
+
+    def list_imports(self, limit: int = 50) -> list[dict]:
+        return self.jobs.list(limit)
+
+    def cancel_import(self, import_id: str) -> dict:
+        job = self.import_status(import_id)
+        if job["state"] not in ACTIVE:
+            from f1lab.services.lab import Conflict
+
+            raise Conflict(f"import {import_id} is {job['state']}; only queued or running imports can be cancelled")
+        self.jobs.request_cancel(import_id)
+        if import_id not in self._tasks:  # not running in this process (should not happen after recover())
+            self.jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="cancelled", detail="cancelled")
+        else:
+            self.jobs.progress(import_id, job["state"], "cancelling: stops at the next step (an in-flight download finishes first)")
+        return self.import_status(import_id)
+
+    async def retry_import(self, import_id: str) -> dict:
+        job = self.import_status(import_id)
+        if job["state"] not in ("FAILED", "CANCELLED"):
+            from f1lab.services.lab import Conflict
+
+            raise Conflict(f"import {import_id} is {job['state']}; only failed or cancelled imports can be retried")
+        active = self.jobs.find_active(dedupe_key(job["request"]))
+        if active is not None:
+            return {**active, "duplicate": True}
+        new = self.jobs.create(job["request"], retry_of=import_id, attempts=job["attempts"] + 1)
+        self._spawn(new["import_id"], job["request"], False)
+        return {**new, "duplicate": False}
+
+    def delete_session(self, sid: str) -> dict:
+        if not self.repo.delete_session(sid):
+            raise self._not_found(sid)
+        return {"deleted": sid}
 
     # ------------------------------------------------------------- stored sessions
     def _manifest(self, sid: str) -> dict:
         m = self.repo.manifest(sid)
         if m is None:
-            from f1lab.services.lab import NotFound
-            raise NotFound(sid)
+            raise self._not_found(sid)
         return m
 
     def list_sessions(self) -> list[dict]:
@@ -208,7 +319,7 @@ class HistoricalService:
                 "driver": code, "lap": lap}
 
     def weather(self, sid: str) -> dict:
-        m = self._manifest(sid)
+        self._manifest(sid)  # 404 for an unknown session
         df = self.repo.weather(sid)
         return {"samples": _records(df), "count": len(df), "note": "weather is sampled sparsely by the timing feed"}
 

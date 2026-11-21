@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field
 
 SESSION_TYPES = ("FP1", "FP2", "FP3", "Q", "SQ", "S", "R")
 
-IMPORT_STATES = ("QUEUED", "DOWNLOADING", "PROCESSING", "SAVING", "COMPLETED", "FAILED")
+IMPORT_STATES = ("QUEUED", "DOWNLOADING", "PROCESSING", "SAVING", "COMPLETED", "FAILED", "CANCELLED")
 
 
 class HistoricalImportRequest(BaseModel):

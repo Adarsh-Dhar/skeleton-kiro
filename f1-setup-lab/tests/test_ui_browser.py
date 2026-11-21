@@ -144,7 +144,7 @@ def test_invalid_configuration_is_explained_in_the_ui(page):
     page.fill('[data-hi="front_wing"]', "40")
     page.fill("#budget", "6")
     page.click("text=Generate design")
-    page.wait_for_selector(".errors")
+    page.wait_for_selector(".errors:has-text('budget')")  # the previous error box is still on screen until the new response arrives
     assert "budget" in page.inner_text(".errors").lower()
     shot(page, "11-validation-error", full=False)
     assert page.errors == []
@@ -187,3 +187,64 @@ def test_standalone_telemetry_import_flags_outlier_and_converts_units(page):
     page.wait_for_selector("text=missing required column")
     assert "sector_3" in page.inner_text("main")
     assert page.errors == []
+
+
+def test_stint_telemetry_inspector(page, live):
+    """Saved stint replay/inspection (F1-K2) on a live experiment whose two stints have archived decoded telemetry."""
+    import json
+    import urllib.request
+
+    from test_live_mode import live_body
+
+    from db import create_db_engine
+    from f1lab.integrations.game_udp.evidence import save_telemetry_series
+
+    req = urllib.request.Request(live.url + "/api/experiments", data=json.dumps(live_body(name="inspector test")).encode(),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    d = json.loads(urllib.request.urlopen(req).read())
+    engine = create_db_engine(live.db_path)
+
+    def stint(speed0, n, with_tyres):
+        return [{"session_time": 100 + i * 0.05, "frame_id": i, "packet_format": 2025, "packet_id": 6, "session_uid": 1, "speed_kph": speed0 + (i % 200),
+                 "throttle": (i % 40) / 40, "steer": 0.1, "brake": 0.0 if i % 50 else 1.0, "gear": 6, "rpm": 11000.0, "clutch": None, "drs": 0,
+                 "rev_lights_percent": None, "engine_temperature_c": None, "brake_temperature_c": [400, 400, 410, 410],
+                 "tyre_surface_temperature_c": [90, 91, 92, 93] if with_tyres else [], "tyre_inner_temperature_c": [],
+                 "tyre_pressure_psi": [22.0, 22.0, 23.0, 23.0], "surface_type": [0, 0, 0, 0]} for i in range(n)]
+    r1, r2 = d["runs"][0]["run_id"], d["runs"][1]["run_id"]
+    save_telemetry_series(engine, d["id"], r1, stint(120, 1500, True))
+    save_telemetry_series(engine, d["id"], r2, stint(110, 900, False))
+    fresh(page, f"#/e/{d['id']}/telemetry")
+    page.wait_for_selector("#tel-run")
+    page.click("#tel-series")
+    page.wait_for_selector("svg.insp")
+    stat = page.inner_text("#istat")
+    assert "1500 measured samples" in stat and "downsampled" in stat
+    assert "Clutch" in page.inner_text(".note") and "never shown as zero" in page.inner_text(".note")
+    assert page.is_disabled('[data-ch="clutch"]') and not page.is_disabled('[data-ch="rpm"]')
+    page.check('[data-ch="rpm"]')
+    page.wait_for_function("document.querySelectorAll('svg.insp').length === 5")
+    page.query_selector("svg.insp").scroll_into_view_if_needed()
+    box = page.query_selector("svg.insp .insp-hit").bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.wait_for_selector("#iread table")
+    assert "measured sample at" in page.inner_text("#iread").lower() and "frame" in page.inner_text("#iread").lower()
+    # drag to zoom: the window shrinks
+    page.mouse.move(box["x"] + box["width"] * 0.25, box["y"] + 20)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] * 0.5, box["y"] + 20)
+    page.mouse.up()
+    page.wait_for_function("!document.querySelector('#istat').innerText.includes('1500 measured samples in window')")
+    assert float(page.input_value("#ia1")) - float(page.input_value("#ia0")) < 75 * 0.5
+    page.click("#iplay")
+    page.wait_for_timeout(400)
+    page.click("#iplay")
+    # comparison against derived distance
+    page.select_option("#tel-cmp", r2)
+    page.click("#tel-series")
+    page.wait_for_selector("text=derived")
+    assert "900" in page.inner_text("#istat") and "(B only)" in page.inner_text(".note")
+    with page.expect_download() as dl:
+        page.click("a:has-text('CSV, run 1')")
+    assert dl.value.suggested_filename.endswith("-telemetry.csv")
+    shot(page, "14-stint-inspector", full=False)
+    assert page.errors == [], page.errors

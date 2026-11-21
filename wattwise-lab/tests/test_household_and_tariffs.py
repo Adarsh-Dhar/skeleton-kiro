@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from wattwise.adapters.household_model import (
     BASELINE,
     DEFAULT_APPLIANCES,
@@ -135,17 +136,26 @@ def test_summarise_handles_a_custom_interval():
     assert s["energy_kwh"] == pytest.approx(6.0) and s["peak_power_kw"] == 4.0 and s["energy_cost"] == pytest.approx(1.5)
 
 
-# ------------------------------------------------------------------ tariff store
+# ------------------------------------------------------------------ tariff store (root database)
+def _db(tmp_path):
+    from db import create_db_engine, migrate
+
+    e = create_db_engine(tmp_path / "trialforge.db")
+    migrate(e)
+    return e
+
+
 def test_store_seeds_defaults_and_persists(tmp_path):
-    p = tmp_path / "t.json"
+    p = _db(tmp_path)
     assert {t["id"] for t in TariffStore(p).list()} == {"time-of-use", "flat-rate", "night-saver-demand"}
     s = TariffStore(p)
     saved = s.save({"name": "My Tariff", "demand_charge_per_kw": 0.1, "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.3}]})
     assert saved["id"] == "my-tariff" and TariffStore(p).get("my-tariff")["periods"][0]["price"] == 0.3
+    assert not list(tmp_path.glob("*.json"))  # no tariffs.json any more
 
 
 def test_store_rejects_invalid_duplicate_and_unknown(tmp_path):
-    s = TariffStore(tmp_path / "t.json")
+    s = TariffStore(_db(tmp_path))
     with pytest.raises(TariffError):
         s.save({"name": "bad", "periods": [{"label": "x", "start": 0, "end": 5, "price": 0.1}]})
     with pytest.raises(TariffError):
@@ -157,7 +167,7 @@ def test_store_rejects_invalid_duplicate_and_unknown(tmp_path):
 
 
 def test_store_update_and_delete_keep_at_least_one(tmp_path):
-    s = TariffStore(tmp_path / "t.json")
+    s = TariffStore(_db(tmp_path))
     s.save({"name": "Flat rate", "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.4}]}, tariff_id="flat-rate")
     assert s.get("flat-rate")["periods"][0]["price"] == 0.4
     s.delete("time-of-use")

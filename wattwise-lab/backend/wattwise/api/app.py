@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import trialforge
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -32,13 +32,19 @@ from wattwise.api.schemas import (
     AnalysisRequest,
     DayRequest,
     ExperimentRequest,
+    HouseholdPut,
+    HouseholdSettings,
     MeterAttachRequest,
+    MeterImportRequest,
     MeterRequest,
     OptimiseRequest,
     TariffIn,
     default_factors,
 )
+from wattwise.services.comparison import build as comparison_build
+from wattwise.services.comparison_report import render as comparison_html
 from wattwise.services.lab import Conflict, LabService, NotFound
+from wattwise.services.meter_library import preview as meter_preview_fn
 from wattwise.services.tariffs import TariffError
 
 DEFAULT_ROOT = Path(__file__).resolve().parents[3]
@@ -57,10 +63,7 @@ def _issue(field: str, message: str) -> dict:
 
 
 def create_app(db_path: str | None = None, frontend_dir: str | None = None, data_dir: str | None = None) -> FastAPI:
-    db = db_path or os.environ.get("WATTWISE_DB", "data/wattwise.db")
-    if "://" not in db:
-        Path(db).parent.mkdir(parents=True, exist_ok=True)
-    lab = LabService(db)
+    lab = LabService(db_path)  # db_path is for tests; production uses the root database (TRIALFORGE_DB)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -213,6 +216,67 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
     @app.post("/api/experiments/{exp_id}/runs/{run_id}/meter")
     async def attach_meter(exp_id: str, run_id: str, req: MeterAttachRequest):
         return await lab.attach_meter(exp_id, run_id, req)
+
+    # ------------------------------------------------------------ historical meter-data library (measured usage, not run results)
+    @app.post("/api/meter/import/preview")
+    def meter_import_preview(req: MeterImportRequest):
+        return meter_preview_fn(req.csv, req.options)
+
+    @app.post("/api/meter/import", status_code=201)
+    def meter_import(req: MeterImportRequest):
+        return lab.meters.import_csv(req.csv, req.file_name, req.options, req.source, req.force)
+
+    @app.get("/api/meter/imports")
+    def meter_imports():
+        return lab.meters.list()
+
+    @app.get("/api/meter/imports/{import_id}")
+    def meter_import_detail(import_id: str):
+        return lab.meters.get(import_id)
+
+    @app.get("/api/meter/imports/{import_id}/readings")
+    def meter_import_readings(import_id: str, offset: int = Query(0, ge=0), limit: int = Query(5000, ge=1, le=20000)):
+        return lab.meters.readings_view(import_id, offset, limit)
+
+    @app.get("/api/meter/imports/{import_id}/summary")
+    def meter_import_summary(import_id: str, tariff_id: str | None = None):
+        return lab.meter_baseline(import_id, tariff_id)
+
+    @app.get("/api/meter/imports/{import_id}/calibration")
+    def meter_import_calibration(import_id: str):
+        return lab.calibration(import_id)
+
+    @app.delete("/api/meter/imports/{import_id}")
+    def meter_import_delete(import_id: str):
+        return lab.meters.delete(import_id)
+
+    @app.get("/api/comparison")
+    def comparison(import_id: str, exp_id: str):
+        return comparison_build(lab, import_id, exp_id)
+
+    @app.get("/api/comparison/report.html", response_class=HTMLResponse)
+    def comparison_report(import_id: str, exp_id: str):
+        return comparison_html(comparison_build(lab, import_id, exp_id))
+
+    # ------------------------------------------------------------ household settings (server-side; replaces browser storage)
+    @app.get("/api/household")
+    def household_get():
+        return lab.households.get()
+
+    @app.put("/api/household")
+    def household_put(req: HouseholdPut):
+        settings = HouseholdSettings(**req.model_dump(exclude={"migrated_from"}))
+        lab.resolve_tariff(settings.tariff_id, None)  # 404 for an unknown tariff
+        if settings.baseline_import_id:
+            lab.meters.get(settings.baseline_import_id)
+        if req.migrated_from == "localStorage":
+            state, applied = lab.households.migrate_once(settings, "migrated-localstorage")
+            return {**state, "migration_applied": applied}
+        return lab.households.put(settings)
+
+    @app.post("/api/household/reset")
+    def household_reset():
+        return lab.households.reset()
 
     # ------------------------------------------------------------ analysis / optimisation
     @app.post("/api/experiments/{exp_id}/analysis")

@@ -313,6 +313,7 @@ def test_html_report_escapes_user_text(run_experiment, client):
 
 def test_a_fixed_id_reproduces_results_exactly(tmp_path):
     from fastapi.testclient import TestClient
+
     from wattwise.api.app import create_app
 
     out = []

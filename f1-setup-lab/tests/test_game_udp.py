@@ -6,6 +6,7 @@ import socket
 import struct
 
 import pytest
+
 from f1lab.integrations.game_udp import recorder as rec
 from f1lab.integrations.game_udp.capture import StintRecorder, same
 from f1lab.integrations.game_udp.live import LiveState
@@ -129,19 +130,55 @@ def test_live_state_records_a_stint_and_top_speed():
 
 
 # ------------------------------------------------------------------ raw recording and the receiver
-def test_raw_recording_round_trips_and_tolerates_a_truncated_tail(tmp_path):
-    p = tmp_path / "s.f1raw"
-    r = rec.RawRecorder(p)
+def _engine(tmp_path):
+    from db import create_db_engine, migrate
+
+    e = create_db_engine(tmp_path / "trialforge.db")
+    migrate(e)
+    return e
+
+
+def test_raw_recording_round_trips_through_the_database(tmp_path):
+    e = _engine(tmp_path)
+    r = rec.RawRecorder(e, "s1")
     r.write(b"abc", 1.0)
     r.write(setup_packet(), 2.0)
     r.close()
+    got = list(rec.read_raw(e, "s1"))
+    assert [t for t, _ in got] == [1.0, 2.0] and got[0][1] == b"abc" and len(got[1][1]) == 1133
+    # re-opening the same recording appends after the last packet
+    r2 = rec.RawRecorder(e, "s1")
+    r2.write(b"xyz", 3.0)
+    r2.close()
+    assert [d for _, d in rec.read_raw(e, "s1")][-1] == b"xyz"
+    assert rec.list_recordings(e)[0]["packets"] == 3
+    assert not list(tmp_path.rglob("*.f1raw"))
+
+
+def test_legacy_f1raw_files_import_and_tolerate_a_truncated_tail(tmp_path):
+    (tmp_path / "20250101T000000Z").mkdir()
+    p = rec.write_raw_file(tmp_path / "20250101T000000Z" / "raw.f1raw", [(1.0, b"abc"), (2.0, setup_packet())])
     with p.open("ab") as f:
         f.write(b"\x00\x00\x00")  # crash mid-write
-    got = list(rec.read_raw(p))
+    got = list(rec.read_raw_file(p))
     assert [t for t, _ in got] == [1.0, 2.0] and got[0][1] == b"abc" and len(got[1][1]) == 1133
+    e = _engine(tmp_path)
+    rid, n = rec.import_raw_file(e, p)
+    assert rid == "20250101T000000Z" and n == 2 and len(list(rec.read_raw(e, rid))) == 2
+
+
+def test_recorder_batches_many_packets(tmp_path):
+    e = _engine(tmp_path)
+    r = rec.RawRecorder(e, "big")
+    for i in range(3000):
+        r.write(bytes([i % 256]) * 40, float(i))
+    r.close()
+    got = list(rec.read_raw(e, "big"))
+    assert len(got) == 3000 and r.written == 3000 and r.errors == 0 and got[-1][0] == 2999.0
 
 
 def test_receiver_over_real_udp_counts_good_bad_and_wrong_format(tmp_path):
+    engine = _engine(tmp_path)
     seen = []
 
     def on_packet(h, data):
@@ -150,7 +187,7 @@ def test_receiver_over_real_udp_counts_good_bad_and_wrong_format(tmp_path):
             P.decode_setup(data, h)
 
     async def main():
-        rx = UdpReceiver(on_packet, rec.RawRecorder(tmp_path / "raw.f1raw"))
+        rx = UdpReceiver(on_packet, rec.RawRecorder(engine, "rx"))
         port = await rx.start("127.0.0.1", 0)
         tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         for pkt in (setup_packet(), history_packet(2), b"junk", setup_packet(fmt=2023), setup_packet()[:-5]):
@@ -162,4 +199,4 @@ def test_receiver_over_real_udp_counts_good_bad_and_wrong_format(tmp_path):
 
     st = asyncio.run(main())
     assert seen == [5, 11, 5] and st["packets"] == 3 + 0 and st["malformed"] == 2 and st["wrong_format"] == 1 and st["connected"] is True
-    assert len(list(rec.read_raw(tmp_path / "raw.f1raw"))) == 3
+    assert len(list(rec.read_raw(engine, "rx"))) == 3

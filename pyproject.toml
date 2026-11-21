@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+[project]
+name = "trialforge-db"
+version = "0.1.0"
+description = "Root database package shared by F1 SETUP LAB and WATTWISE LAB: one SQLite file (data/trialforge.db), all app models, ordered migrations"
+requires-python = ">=3.11"
+dependencies = [
+  "SQLAlchemy>=2.0,<3",
+  "pandas>=2.0",
+]
+[project.scripts]
+trialforge-db = "db.migrate:main"
+[tool.setuptools.packages.find]
+include = ["db*"]
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+extend-exclude = ["skeleton", "f1-setup-lab", "wattwise-lab", "data", ".run"]  # the SDK and each app have their own ruff config
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501"]
+[tool.ruff.lint.isort]
+known-first-party = ["db"]

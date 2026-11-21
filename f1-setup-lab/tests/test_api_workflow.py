@@ -11,15 +11,16 @@ from conftest import wait_done
 
 # ----------------------------------------------------------------------------- SDK usage
 def test_application_runs_on_the_installed_sdk_not_a_copy(client):
-    import f1lab
     import trialforge
+
+    import f1lab
 
     h = client.get("/api/health").json()
     assert (
         h["trialforge"] == trialforge.__version__ and trialforge.__version__.startswith("0.2.") and "site-packages" in h["trialforge_path"]
     )
     lab = client.app.state.lab
-    assert type(lab.svc) is trialforge.ExperimentService and type(lab.repo) is trialforge.SQLiteExperimentRepository
+    assert type(lab.svc) is trialforge.ExperimentService and isinstance(lab.repo, trialforge.SQLiteExperimentRepository) and type(lab.repo).__mro__[1] is trialforge.SQLiteExperimentRepository  # app-scoped subclass of the unmodified SDK repository
     assert not hasattr(f1lab, "ExperimentService") and "examples" not in __import__("sys").modules
 
 
@@ -281,8 +282,9 @@ def test_fixed_experiment_id_reproduces_results_exactly_and_duplicates_are_rejec
     first = wait_done(client, a["id"])
     assert client.post("/api/experiments", json={"name": "dup", "experiment_id": "repro-1"}).status_code == 409
     assert client.post("/api/experiments", json={"name": "bad id", "experiment_id": "Bad ID!"}).status_code == 422
-    from f1lab.api.app import create_app
     from fastapi.testclient import TestClient
+
+    from f1lab.api.app import create_app
 
     with TestClient(create_app(":memory:" if False else str(client.app.state.lab.repo.url.replace("sqlite:///", "")) + ".2")) as c2:
         b = c2.post(
@@ -357,8 +359,9 @@ def test_multi_objective_experiment_reports_pareto(run_experiment, client):
 
 # -------------------------------------------------------------------------------- persistence
 def test_experiments_survive_restart_and_reanalysis_is_identical(db_path):
-    from f1lab.api.app import create_app
     from fastapi.testclient import TestClient
+
+    from f1lab.api.app import create_app
 
     with TestClient(create_app(db_path)) as c1:
         eid = c1.post("/api/experiments", json={"name": "persist", "simulator": {"latency_seconds": 0}}).json()["id"]

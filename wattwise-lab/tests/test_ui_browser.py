@@ -151,7 +151,36 @@ def test_user_text_is_escaped_in_the_browser(page):
     page.select_option("#method", "ofat")
     page.fill("#lat", "0")
     page.click("#f button[type=submit]")
+    page.wait_for_url("**/#/e/*/design")  # the hash changes before the design view has rendered
+    page.wait_for_function("document.querySelector('h1') && document.querySelector('h1').innerText !== 'Experiment designer'")
     page.wait_for_selector("text=Combinations to measure")
     assert page.evaluate("window.__xss") is None
     assert "<img src=x" in page.inner_text("h1")  # shown literally, not interpreted
+    assert page.errors == [], page.errors
+
+
+def test_my_usage_library_baseline_and_comparison(page):
+    """Historical meter library (K2/K3), measured baseline (K4) and actual-vs-optimised comparison (K6) in the browser."""
+    fresh(page, "#/usage")
+    page.wait_for_selector("#u-demo")
+    page.click("#u-demo")
+    page.wait_for_function("document.querySelector('#u-csv').value.length > 100")
+    page.click("#u-prev")
+    page.wait_for_selector("text=How this file will be read")
+    res = page.inner_text("#u-res")
+    assert "power_kw" in res and "96 / 96" in res and "Converted readings" in res
+    page.click("#u-import")
+    page.wait_for_selector("[data-open]")
+    page.wait_for_selector("#u-base")
+    assert "mean daily energy" in page.inner_text("#u-detail").lower()
+    assert "MEASURED" in page.inner_text("#u-detail")
+    page.click("#u-base")  # use as household baseline (stored on the server)
+    page.wait_for_selector("text=Stop using as baseline")
+    hh = page.evaluate("fetch('/api/household').then(r => r.json())")
+    assert hh["saved"] and hh["settings"]["baseline_import_id"]
+    page.click("#u-cmp")
+    page.wait_for_selector("text=Estimated savings")
+    out = page.inner_text("#u-cmpres")
+    assert "PROJECTED" in out and "MEASURED" in out
+    shot(page, "11-my-usage")
     assert page.errors == [], page.errors

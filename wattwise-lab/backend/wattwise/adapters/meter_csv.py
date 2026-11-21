@@ -6,7 +6,7 @@ import csv
 import io
 import math
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from trialforge import Measurement
 
@@ -50,7 +50,7 @@ def parse_meter_csv(text: str, unit: str = "kW") -> ParsedMeter:
             break
         try:
             ts = datetime.fromisoformat((row[names["timestamp"]] or "").strip().replace("Z", "+00:00"))
-            ts = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+            ts = ts if ts.tzinfo else ts.replace(tzinfo=UTC)
         except ValueError:
             out.errors.append(f"line {i}: invalid timestamp {(row.get(names['timestamp']) or '')!r} (use ISO-8601)")
             continue

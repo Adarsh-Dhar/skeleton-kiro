@@ -4,11 +4,12 @@ from __future__ import annotations
 import struct
 
 import pytest
+from udp_packets import BASE_SETUP
+
 from f1lab.integrations.game_udp import protocols as REG
 from f1lab.integrations.game_udp.live import LiveState
 from f1lab.integrations.game_udp.protocols import f1_25_2026 as P
 from f1lab.integrations.game_udp.receiver import UdpReceiver
-from udp_packets import BASE_SETUP
 
 LAPS = [(90.5, (28.1, 35.2, 27.2), 15), (89.4, (27.9, 34.5, 27.0), 15), (89.7, (28.0, 34.6, 27.1), 15), (89.2, (27.8, 34.4, 27.0), 15), (89.0, (27.7, 34.3, 27.0), 15)]
 

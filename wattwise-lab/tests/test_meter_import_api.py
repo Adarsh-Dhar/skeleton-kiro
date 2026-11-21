@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from wattwise.adapters.household_model import DEFAULT_TARIFFS, summarise
 
 CSV_HEAD = "timestamp,power_kw\n"

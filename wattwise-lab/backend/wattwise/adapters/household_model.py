@@ -10,6 +10,8 @@ import hashlib
 import random
 from typing import Any
 
+from wattwise.adapters import tariff_model as TM
+
 STEP_H = 0.25
 WINDOW_START = 16.0
 STEPS = 96
@@ -52,16 +54,31 @@ def _in_period(p: dict, hod: float) -> bool:
     return (s <= hod < e) if s < e else (hod >= s or hod < e)
 
 
+def _coverage_issues(periods: list[dict], prefix: str = "") -> list[str]:
+    issues: list[str] = []
+    gaps, overlaps = [], []
+    for k in range(96):
+        hod = k * STEP_H
+        n = sum(_in_period(p, hod) for p in periods)
+        (gaps if n == 0 else overlaps if n > 1 else []).append(clock(hod))
+    if gaps:
+        issues.append(f"{prefix}periods leave gaps (no price) at {', '.join(gaps[:4])}{'...' if len(gaps) > 4 else ''}")
+    if overlaps:
+        issues.append(f"{prefix}periods overlap at {', '.join(overlaps[:4])}{'...' if len(overlaps) > 4 else ''}")
+    return issues
+
+
 def validate_tariff(t: dict[str, Any]) -> list[str]:
-    """Return a list of problems (empty = valid): periods must tile the 24 h day exactly, with non-negative prices."""
+    """Return a list of problems (empty = valid): periods must tile the 24 h day exactly (for every month/day type they
+    apply to), with non-negative prices. Optional extensions are checked by ``tariff_model.validate_extensions``."""
     issues: list[str] = []
     periods = t.get("periods") or []
     if not str(t.get("name", "")).strip():
         issues.append("tariff name is required")
     if not periods:
         return issues + ["at least one price period is required"]
-    if len(periods) > 12:
-        issues.append("at most 12 periods are supported")
+    if len(periods) > 12 * (4 if TM.date_dependent(t) else 1):
+        issues.append("at most 12 periods are supported" if not TM.date_dependent(t) else "at most 48 periods are supported")
     for i, p in enumerate(periods, 1):
         try:
             s, e, price = float(p["start"]), float(p["end"]), float(p["price"])
@@ -72,17 +89,15 @@ def validate_tariff(t: dict[str, Any]) -> list[str]:
             issues.append(f"period {i}: start/end must be hours in [0, 24] and differ")
         if price < 0 or price > 10:
             issues.append(f"period {i}: price must be between 0 and 10 per kWh")
+    issues += TM.validate_extensions(t)
     if issues:
         return issues
-    gaps, overlaps = [], []
-    for k in range(96):
-        hod = k * STEP_H
-        n = sum(_in_period(p, hod) for p in periods)
-        (gaps if n == 0 else overlaps if n > 1 else []).append(clock(hod))
-    if gaps:
-        issues.append(f"periods leave gaps (no price) at {', '.join(gaps[:4])}{'...' if len(gaps) > 4 else ''}")
-    if overlaps:
-        issues.append(f"periods overlap at {', '.join(overlaps[:4])}{'...' if len(overlaps) > 4 else ''}")
+    for month, day_type in TM.contexts(t):
+        applicable = [p for p in periods if TM.applies(p, month, day_type)]
+        prefix = "" if month is None and day_type is None else f"{'month ' + str(month) + ' ' if month else ''}{day_type or ''}: ".replace("  ", " ")
+        issues += _coverage_issues(applicable, prefix)
+        if len(issues) > 6:
+            break
     if not 0 <= float(t.get("demand_charge_per_kw", 0) or 0) <= 100:
         issues.append("demand charge must be between 0 and 100 per kW")
     return issues
@@ -90,6 +105,8 @@ def validate_tariff(t: dict[str, Any]) -> list[str]:
 
 def price_at(tariff: dict[str, Any], abs_hour: float) -> float:
     hod = abs_hour % 24
+    if TM.date_dependent(tariff):
+        return float(TM.period_for(tariff, hod, *TM.simulation_context(tariff))["price"])
     for p in tariff["periods"]:
         if _in_period(p, hod):
             return float(p["price"])
@@ -98,6 +115,9 @@ def price_at(tariff: dict[str, Any], abs_hour: float) -> float:
 
 def period_label(tariff: dict[str, Any], abs_hour: float) -> str:
     hod = abs_hour % 24
+    if TM.date_dependent(tariff):
+        p = TM.period_for(tariff, hod, *TM.simulation_context(tariff))
+        return p.get("label") or f"{p['start']}-{p['end']}"
     return next((p.get("label") or f"{p['start']}-{p['end']}" for p in tariff["periods"] if _in_period(p, hod)), "?")
 
 
@@ -118,7 +138,11 @@ def simulate(setup: dict[str, float], household: dict[str, Any], rng: random.Ran
     for i in range(STEPS):
         t = WINDOW_START + i * STEP_H
         hod = t % 24
-        base = household.get("base_load_kw", 0.35) + (1.0 if 18 <= hod < 21 else 0.0) + (0.6 if 6.5 <= hod < 8.5 else 0.0)
+        profile = household.get("base_profile_kw")  # calibrated from historical meter data (96 steps from 16:00), if selected
+        if profile:
+            base = float(profile[i])
+        else:  # synthetic profile: base load plus evening and morning peaks
+            base = household.get("base_load_kw", 0.35) + (1.0 if 18 <= hod < 21 else 0.0) + (0.6 if 6.5 <= hod < 8.5 else 0.0)
         if rng:
             base += abs(rng.gauss(0, 0.03))
         app = sum(a["power_kw"] for a in apps if (flex_start if a["flexible"] else a["fixed_start"]) <= t < (flex_start if a["flexible"] else a["fixed_start"]) + a["duration_h"])
@@ -138,7 +162,13 @@ def simulate(setup: dict[str, float], household: dict[str, Any], rng: random.Ran
 
 def summarise(readings: list[tuple[float, float]], tariff: dict[str, Any], *, step_h: float = STEP_H, ev_kw: list[float] | None = None,
               departure_charge_pct: float | None = None) -> dict[str, Any]:
-    """Energy, cost (tariff + demand charge), peak and cost by period from (abs_hour, kW) readings."""
+    """Energy, cost (tariff + demand charge), peak and cost by period from (abs_hour, kW) readings.
+
+    Tariffs that use the optional extensions (fixed charges, tiers, taxes, export credits, seasonal/day-type periods) are
+    priced by ``_summarise_extended``; original tariffs keep this exact code path (identical costs).
+    """
+    if TM.is_extended(tariff):
+        return _summarise_extended(readings, tariff, step_h=step_h, ev_kw=ev_kw, departure_charge_pct=departure_charge_pct)
     kwh = sum(kw * step_h for _, kw in readings)
     peak = max((kw for _, kw in readings), default=0.0)
     by_period: dict[str, dict[str, float]] = {}
@@ -152,6 +182,34 @@ def summarise(readings: list[tuple[float, float]], tariff: dict[str, Any], *, st
         d["cost"] += c
     demand = float(tariff.get("demand_charge_per_kw", 0) or 0) * peak
     out = {"energy_kwh": kwh, "energy_cost": energy_cost + demand, "energy_charge": energy_cost, "demand_charge": demand, "peak_power_kw": peak,
+           "cost_by_period": by_period}  # fmt: skip
+    if ev_kw is not None:
+        out["ev_energy_kwh"] = sum(ev_kw) * step_h
+    if departure_charge_pct is not None:
+        out["departure_charge_pct"] = departure_charge_pct
+    return out
+
+
+def _summarise_extended(readings: list[tuple[float, float]], tariff: dict[str, Any], *, step_h: float, ev_kw: list[float] | None,
+                        departure_charge_pct: float | None) -> dict[str, Any]:
+    """One simulated day under an extended tariff. Billing-period items (monthly charge, billing-period demand) are prorated."""
+    month, day_type = TM.simulation_context(tariff)
+    kwh = sum(kw * step_h for _, kw in readings)
+    peak = max((kw for _, kw in readings), default=0.0)
+    by_period: dict[str, dict[str, float]] = {}
+    charge = credit = cum = 0.0
+    for t, kw in readings:
+        e = kw * step_h
+        r = TM.price_interval(tariff, t % 24, e, cum, month, day_type)
+        cum += r["import_kwh"]
+        charge += r["charge"]
+        credit += r["credit"]
+        d = by_period.setdefault(r["label"], {"kwh": 0.0, "cost": 0.0})
+        d["kwh"] += e
+        d["cost"] += r["charge"] - r["credit"]
+    parts = TM.finish(tariff, charge, credit, peak, 1.0, single_day=True)
+    out = {"energy_kwh": kwh, "energy_cost": parts["total"], "energy_charge": charge, "demand_charge": parts["demand_charge"],
+           "fixed_charge": parts["fixed_charge"], "tax": parts["tax"], "export_credit": credit, "peak_power_kw": peak,
            "cost_by_period": by_period}  # fmt: skip
     if ev_kw is not None:
         out["ev_energy_kwh"] = sum(ev_kw) * step_h

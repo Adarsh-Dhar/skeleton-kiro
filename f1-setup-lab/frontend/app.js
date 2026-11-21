@@ -70,7 +70,7 @@ function expHeader(d, tab) {
   return `<div class="row"><div><h1>${esc(d.name)}</h1><p class="sub">${esc(d.hypothesis || 'No hypothesis stated')}</p></div><div class="spacer"></div>
     <div>${isLive(d) ? '<span class="chip simrec">SIM-RECORDED</span> ' : '<span class="chip synthetic">SYNTHETIC</span> '}${statusChip(d.status)}</div></div>
     <div class="row"><div style="flex:1">${progress(d.counts.completed, d.runs_total)}</div><span class="mono dim">${d.counts.completed}/${d.runs_total} runs complete &middot; budget ${d.runs_total}/${d.run_budget}</span></div>
-    <div class="tabs">${TABS.filter(([k]) => !(isLive(d) && k === 'telemetry')).map(([k, n]) => `<a href="#/e/${esc(d.id)}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div>`;
+    <div class="tabs">${TABS.map(([k, n]) => `<a href="#/e/${esc(d.id)}/${k}" class="${k === tab ? 'on' : ''}">${isLive(d) && k === 'telemetry' ? 'Stint telemetry' : n}</a>`).join('')}</div>`;
 }
 
 /* --------------------------------------------------------------- dashboard */
@@ -291,7 +291,8 @@ async function viewNewLive() {
     <div class="panel"><h2>2 &middot; Setup variables</h2><table><thead><tr><th>Use</th><th>Setup</th><th>Values you will set (comma separated, 2&ndash;7)</th><th>Baseline</th><th>Mapping</th></tr></thead><tbody>
       ${Object.entries(gf).map(([k, v]) => `<tr><td><input type="checkbox" data-en="${k}" checked></td><td>${esc(v.label)}<div class="dim mono">${k}</div></td>
       <td><input data-vals="${k}" value="${defaults[k]?.[0] || ''}" aria-label="${esc(v.label)} values"></td><td><input type="number" step="any" data-base="${k}" value="${defaults[k]?.[1] ?? ''}" aria-label="${esc(v.label)} baseline"></td>
-      <td>${v.verified ? '<span class="chip completed">verified</span>' : '<span class="chip waiting_for_measurements" title="Run scripts/probe_setup.py to verify this field">not verified</span>'}</td></tr>`).join('')}</tbody></table>
+      <td>${Object.entries(v.verification || {}).map(([variant, s]) => `<div>${s.verified ? '<span class="chip completed"' : '<span class="chip waiting_for_measurements"'} title="${esc(s.source)}">${esc((META.game.variants || {})[variant] || variant)}: ${s.verified ? 'verified' : 'not verified'}</span></div>`).join('')
+        || (v.verified ? '<span class="chip completed">verified</span>' : '<span class="chip waiting_for_measurements" title="Run scripts/probe_setup.py, then scripts/verify_setup_mapping.py">not verified</span>')}</td></tr>`).join('')}</tbody></table>
       <p class="hint">The example values are placeholders: use values your game's garage actually offers. The baseline must be one of them.</p></div>
     <div class="panel"><h2>3 &middot; Objective &amp; constraints</h2><div class="grid g2"><div class="field"><label>Objective</label><input value="Minimise mean lap time" disabled></div>
       <div class="field"><label for="minlaps">Valid timed laps per stint</label><input id="minlaps" type="number" min="2" max="20" value="3"></div>
@@ -407,6 +408,7 @@ async function viewTelemetryStandalone() {
 }
 async function viewExpTelemetry(id) {
   const d = await api('GET', `/api/experiments/${id}`);
+  if (isLive(d)) return viewStintTelemetry(id, d);
   const tel = await api('GET', `/api/experiments/${id}/telemetry`);
   const queued = d.runs.filter((r) => r.status === 'queued');
   view().innerHTML = expHeader(d, 'telemetry') + `<div class="grid g21"><div><div class="panel"><h2>Run telemetry</h2>${tel.length ? `<div class="row"><select id="runsel" style="max-width:420px">${tel.map((t) => `<option value="${esc(t.run_id)}">Run ${t.order + 1} &middot; ${t.status} &middot; ${t.synthetic ? 'synthetic' : 'imported'}</option>`).join('')}</select></div><div id="tel"></div>` : '<div class="empty">No telemetry yet. Execute runs or import a CSV.</div>'}</div></div>
@@ -415,16 +417,7 @@ async function viewExpTelemetry(id) {
     const show = () => {
       const t = tel.find((x) => x.run_id === $('#runsel').value);
       $('#tel').innerHTML = `<div class="row"><span class="chip ${t.synthetic ? 'synthetic' : 'imported'}">${t.synthetic ? 'synthetic' : 'imported'}</span><span class="dim mono">${esc(t.source)}</span></div><div class="mono dim" style="margin:6px 0">${Object.entries(t.configuration).map(([k, v]) => `${esc(k)}=${fmt(v, 2)}`).join(' &middot; ')}</div>
-        ${Charts.sectors({ laps: t.laps })}${lapTable(t.laps)}${isLive(d) ? `<div class="panel"><h2>Stint telemetry series</h2><p class="hint">Decoded UDP samples recorded during this stint (SIM-RECORDED).</p><div class="row"><button class="btn small" id="tel-series">Load telemetry charts</button><span class="dim" id="tel-series-msg"></span></div><div class="grid g2" id="tel-charts"></div></div>` : ''}`;
-      $('#tel-series')?.addEventListener('click', async () => {
-        const msg = $('#tel-series-msg'), box = $('#tel-charts');
-        try {
-          const r = await api('GET', `/api/experiments/${id}/runs/${t.run_id}/telemetry/series?limit=20000`);
-          if (!r.samples?.length) { msg.textContent = 'no decoded samples stored for this stint'; return; }
-          msg.textContent = `${r.count} samples`;
-          box.innerHTML = renderTelemetryCharts(r.samples);
-        } catch (e) { msg.innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
-      });
+        ${Charts.sectors({ laps: t.laps })}${lapTable(t.laps)}`;
     };
     $('#runsel').addEventListener('change', show); show();
   }
@@ -433,6 +426,30 @@ async function viewExpTelemetry(id) {
   $('#x-attach')?.addEventListener('click', async () => {
     try { const r = await api('POST', `/api/experiments/${id}/runs/${$('#x-run').value}/telemetry`, { csv: imp.csv(), time_unit: imp.unit(), filename: imp.name() }); toast('Telemetry attached; run completed', true); if (r.row_errors.length) toast(`${r.row_errors.length} row(s) skipped`); viewExpTelemetry(id); }
     catch (e) { $('#x-perr').innerHTML = errorsBox(e); }
+  });
+}
+/* Saved stints of a live experiment: the decoded UDP telemetry archived with each submitted stint (accepted or rejected). */
+async function viewStintTelemetry(id, d) {
+  const idx = await api('GET', `/api/experiments/${id}/telemetry/series-index`);
+  const stored = idx.filter((r) => r.samples);
+  const runNo = (rid) => (d.runs.find((x) => x.run_id === rid)?.order ?? 0) + 1;
+  const opt = (r) => `<option value="${esc(r.run_id)}">Run ${r.order + 1} &middot; ${esc(r.status)} &middot; ${r.samples} samples</option>`;
+  view().innerHTML = expHeader(d, 'telemetry') + `<div class="panel"><h2>Stint telemetry inspector</h2>
+    <p class="hint">Decoded UDP samples recorded during each submitted stint (SIM-RECORDED), exactly as stored. Pick a stint, choose channels and a time window, hover or replay, or compare two stints. CSV import is not available for live experiments: a CSV cannot prove which setup was driven.</p>
+    ${stored.length ? `<div class="row"><select id="tel-run" style="width:auto">${stored.map(opt).join('')}</select><select id="tel-cmp" style="width:auto"><option value="">no comparison</option>${stored.map((r) => `<option value="${esc(r.run_id)}">compare with run ${r.order + 1}</option>`).join('')}</select>
+      <button class="btn primary small" id="tel-series">Open recorded telemetry</button><span class="dim" id="tel-series-msg"></span></div><div id="tel-insp"></div>`
+    : '<div class="empty">No stint telemetry stored yet. Drive a stint (Run monitor &rarr; Start stint / Submit stint) to record one.</div>'}</div>`;
+  $('#tel-series')?.addEventListener('click', async () => {
+    const msg = $('#tel-series-msg'), a = $('#tel-run').value, other = $('#tel-cmp').value === a ? '' : $('#tel-cmp').value;
+    try {
+      const r = await api('GET', `/api/experiments/${id}/runs/${a}/telemetry/series?limit=20000`);
+      const b = other ? await api('GET', `/api/experiments/${id}/runs/${other}/telemetry/series?limit=20000`) : null;
+      const dl = (rid) => `<a class="btn small" href="/api/experiments/${esc(id)}/runs/${esc(rid)}/telemetry/series.csv" download>CSV, run ${runNo(rid)} (all samples)</a>
+        <a class="btn small" href="/api/experiments/${esc(id)}/runs/${esc(rid)}/telemetry/series?limit=20000" download="${esc(rid)}-telemetry.json">JSON, run ${runNo(rid)}</a>`;
+      msg.textContent = `${r.count} measured samples${b ? `; comparing with run ${runNo(other)} (${b.count})` : ''}`;
+      Inspector.mount($('#tel-insp'), { a: { label: `Run ${runNo(a)}`, samples: r.samples }, b: b && b.samples?.length ? { label: `Run ${runNo(other)}`, samples: b.samples } : null,
+        downloads: `<div class="row" style="margin-top:12px"><span class="dim">Download the decoded dataset:</span>${dl(a)}${b ? dl(other) : ''}</div>` });
+    } catch (e) { msg.innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
   });
 }
 function importModal(id, runId, n, done) {
@@ -572,6 +589,7 @@ async function viewHist() {
     <button class="btn primary" id="himport">Import session</button><span class="dim" id="hmsg"></span><div id="hprog"></div></div>
     <div class="note info">The first import downloads and processes the session (can take a few minutes); results are cached locally and re-imports are fast. Historical data never enters your setup experiments.</div></div>
   <div><div class="panel"><h2>Imported sessions</h2><div id="hist-lib"><div class="dim">Loading&hellip;</div></div></div>
+    <div class="panel"><h2>Recent imports</h2><div id="hist-jobs"><div class="dim">Loading&hellip;</div></div></div>
     <div class="panel"><h2>About this data</h2><p class="hint">FastF1 is an unofficial Python library for Formula 1 timing and telemetry data. It is not affiliated with Formula 1, and coverage varies by year/session. Car telemetry is sampled at the timing feed's rate; weather is sampled sparsely. Historical sessions contain no car setup configuration, so they are kept separate from the TRIALFORGE setup experiments.</p></div></div></div>`;
   let events = [];
   const fillEvents = () => {
@@ -606,17 +624,40 @@ async function viewHist() {
       include_telemetry: $('#htele').checked, include_position: $('#hpos').checked, include_weather: $('#hwx').checked };
     try {
       const r = await api('POST', '/api/historical/import', body);
-      $('#hmsg').textContent = 'import started';
-      const tick = async () => {
-        const j = await api('GET', `/api/historical/imports/${r.import_id}`);
-        $('#hprog').innerHTML = `<div class="note ${j.state === 'FAILED' ? '' : 'info'}">${esc(j.state)} &middot; ${esc(j.detail || '')}${j.error ? ` &middot; <span class="badc">${esc(j.error)}</span>` : ''}</div>`;
-        if (j.state === 'COMPLETED') { $('#hmsg').textContent = 'done'; loadLibrary(); return; }
-        if (j.state === 'FAILED') { $('#hmsg').textContent = 'failed'; return; }
-        setTimeout(tick, 2500);
-      };
-      tick();
+      $('#hmsg').textContent = r.duplicate ? (r.state === 'COMPLETED' ? 'already imported (no download needed)' : 'this import is already running') : 'import started';
+      trackImport(r.import_id);
     } catch (e) { $('#hist-err').innerHTML = errorsBox(e); }
   });
+  // progress of one durable import job (it survives a server restart); cancel / retry from here
+  const trackImport = (jid) => {
+    const tick = async () => {
+      let j;
+      try { j = await api('GET', `/api/historical/imports/${jid}`); } catch (e) { $('#hprog').innerHTML = errorsBox(e); return; }
+      const active = !['COMPLETED', 'FAILED', 'CANCELLED'].includes(j.state);
+      $('#hprog').innerHTML = `<div class="note ${j.state === 'FAILED' ? '' : 'info'}"><b>${esc(j.state)}</b> &middot; ${esc(j.detail || '')}${j.error ? ` &middot; <span class="badc">${esc(j.error_code || '')}: ${esc(j.error)}</span>` : ''}
+        ${active ? ' <button class="btn small" id="hcancel" type="button">Cancel</button>' : ''}${['FAILED', 'CANCELLED'].includes(j.state) ? ' <button class="btn small" id="hretry" type="button">Retry</button>' : ''}</div>`;
+      $('#hcancel')?.addEventListener('click', async () => { try { await api('POST', `/api/historical/imports/${jid}/cancel`); } catch (e) { $('#hist-err').innerHTML = errorsBox(e); } });
+      $('#hretry')?.addEventListener('click', async () => {
+        try { const n = await api('POST', `/api/historical/imports/${jid}/retry`); trackImport(n.import_id); } catch (e) { $('#hist-err').innerHTML = errorsBox(e); }
+      });
+      if (j.state === 'COMPLETED') { $('#hmsg').textContent = 'done'; loadLibrary(); loadJobs(); return; }
+      if (!active) { $('#hmsg').textContent = j.state.toLowerCase(); loadJobs(); return; }
+      setTimeout(tick, 1500);
+    };
+    tick();
+  };
+  const loadJobs = async () => {
+    try {
+      const jobs = await api('GET', '/api/historical/imports?limit=10');
+      $('#hist-jobs').innerHTML = jobs.length ? `<table><thead><tr><th>Import</th><th>State</th><th>Detail</th><th></th></tr></thead><tbody>${jobs.map((j) => `<tr>
+        <td class="mono">${esc(j.request.year)} ${esc(j.request.event)} ${esc(j.request.session)}<div class="dim">${esc((j.created_at || '').slice(0, 16).replace('T', ' '))}</div></td>
+        <td>${esc(j.state)}${j.error_code ? `<div class="badc mono">${esc(j.error_code)}</div>` : ''}</td><td class="dim">${esc(j.error || j.detail || '')}</td>
+        <td><button class="btn small hjob" data-id="${esc(j.import_id)}" type="button">Show</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">No imports yet.</div>';
+      document.querySelectorAll('.hjob').forEach((b) => b.addEventListener('click', () => trackImport(b.dataset.id)));
+      const running = jobs.find((j) => !['COMPLETED', 'FAILED', 'CANCELLED'].includes(j.state));
+      if (running && !$('#hprog').innerHTML) trackImport(running.import_id);
+    } catch (e) { $('#hist-jobs').innerHTML = errorsBox(e); }
+  };
   const loadLibrary = async () => {
     try {
       const list = await api('GET', '/api/historical/sessions');
@@ -628,6 +669,7 @@ async function viewHist() {
   };
   await loadEvents();
   await loadLibrary();
+  await loadJobs();
 }
 
 async function viewHistSession(id, tab) {

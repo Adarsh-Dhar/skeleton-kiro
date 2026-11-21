@@ -9,12 +9,13 @@ import time
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
+
 from wattwise.api.app import create_app
 
 
 @pytest.fixture
 def db_path(tmp_path):
-    return str(tmp_path / "wattwise.db")
+    return str(tmp_path / "trialforge.db")  # a per-test root database
 
 
 @pytest.fixture

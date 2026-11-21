@@ -7,6 +7,8 @@ this class only maps the application's concepts (setup factors, stability limit,
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import uuid
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -28,20 +30,29 @@ from trialforge import (
     Objective,
     ReportEngine,
     RunStatus,
-    SQLiteExperimentRepository,
 )
 
+from db.config import resolve_db_url, sqlite_file_path
+from db.models.common import APP_F1
+from db.scoped import ScopedExperimentRepository
 from f1lab import notice_for
 from f1lab.adapters.sim_adapter import F1SimulatorAdapter
 from f1lab.adapters.telemetry import parse_telemetry_csv, to_measurements
 from f1lab.adapters.vehicle_model import BASELINE, FACTORS, METRIC_UNITS
 from f1lab.api.schemas import ExperimentRequest
 from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
-from f1lab.integrations.game_udp.evidence import load_evidence, load_telemetry_series, save_evidence, save_telemetry_series
+from f1lab.catalogs.verification import VARIANTS, factors_verified
+from f1lab.integrations.game_udp.evidence import (
+    load_evidence,
+    load_telemetry_series,
+    save_evidence,
+    save_telemetry_series,
+    telemetry_series_count,
+)
 from f1lab.integrations.game_udp.live import LiveState
 from f1lab.integrations.game_udp.measurements import stint_to_measurements
 from f1lab.integrations.game_udp.receiver import ACCEPTED_FORMATS, UdpReceiver
-from f1lab.integrations.game_udp.recorder import RawRecorder
+from f1lab.integrations.game_udp.recorder import RawRecorder, new_recording_id
 from f1lab.services import narrative, report_html
 
 ADAPTER_PREFIX = "f1-sim/"
@@ -71,14 +82,17 @@ def measurement_definitions() -> list[MeasurementDefinition]:
 class LabService:
     """Owns the SDK service, the per-experiment adapters and the background runner."""
 
-    def __init__(self, db_path: str, data_dir: str | None = None) -> None:
-        self.data_dir = Path(data_dir) if data_dir else (Path(db_path).parent if "://" not in db_path else Path("data"))
+    def __init__(self, db_path: str | None = None, data_dir: str | None = None) -> None:
+        """``db_path`` is for tests only; production always uses the root database (``TRIALFORGE_DB`` / ``data/trialforge.db``)."""
+        url = resolve_db_url(db_path)
+        file = sqlite_file_path(url)
+        self.data_dir = Path(data_dir) if data_dir else (file.parent if file else Path("data"))
         self.live = LiveState()
         self.udp: UdpReceiver | None = None
         self.live_session: str | None = None
         self.active_stint: tuple[str, str] | None = None
         self.registry = AdapterRegistry()
-        self.repo = SQLiteExperimentRepository(f"sqlite:///{db_path}" if "://" not in db_path else db_path)
+        self.repo = ScopedExperimentRepository(APP_F1, url)
         self.svc = ExperimentService(registry=self.registry, repository=self.repo)
         self.runner = LocalBackgroundRunner(self.svc)
 
@@ -148,7 +162,9 @@ class LabService:
             adapter_name=None, run_budget=req.design.run_budget, random_seed=req.design.seed,
             execution=ExecutionPolicy(max_retries=0, max_concurrency=1, run_timeout_seconds=3600),
             metadata={"app": "f1-setup-lab", "mode": LIVE, "synthetic": False, "game": GAME_ID, "live": live.model_dump(),
-                      "catalog_verified": all(GAME_FACTORS[n]["verified"] for n in live.factors)},
+                      # verified only by a recorded manual confirmation (never by code or the probe); unknown variant => all variants
+                      "catalog_verified": factors_verified(self.repo.db_engine, list(live.factors)),
+                      "catalog_verification": {v: factors_verified(self.repo.db_engine, list(live.factors), v) for v in VARIANTS}},
         )  # fmt: skip
 
     def _build_synthetic_spec(self, req: ExperimentRequest, exp_id: str) -> ExperimentSpec:
@@ -179,7 +195,7 @@ class LabService:
     def create(self, req: ExperimentRequest) -> dict:
         """Validate, register the experiment's simulator, generate the design. Raises SDK ValidationError/DesignError."""
         exp_id = req.experiment_id or "f1-" + uuid.uuid4().hex[:8]
-        if self.repo.has_experiment(exp_id):
+        if self.repo.has_experiment(exp_id) or self.repo.exists_anywhere(exp_id):
             raise Conflict(f"an experiment with id '{exp_id}' already exists")
         spec = self.build_spec(req, exp_id)
         self._register_adapter(spec)
@@ -474,9 +490,9 @@ class LabService:
     async def live_connect(self, host: str, port: int) -> dict:
         if self.udp is not None:
             raise Conflict("already listening: disconnect first")
-        sid = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        sid = new_recording_id()  # the raw capture lives in f1_udp_recording / f1_udp_packet under this id
         self.live = LiveState()
-        rec = RawRecorder(self.data_dir / "sessions" / sid / "raw.f1raw")
+        rec = RawRecorder(self.repo.db_engine, sid, host=host, port=port, source="live")
         rx = UdpReceiver(self.live.on_packet, rec)
         try:
             await rx.start(host, port)
@@ -529,12 +545,45 @@ class LabService:
         """Archived decoded telemetry for a finished live stint (saved alongside the evidence JSON)."""
         self._live_result(exp_id)
         self._run(self._result(exp_id), run_id)
-        records = load_telemetry_series(self.data_dir, exp_id, run_id)
+        records = load_telemetry_series(self.repo.db_engine, exp_id, run_id)
         if records is None:
             raise NotFound(f"no decoded telemetry series recorded for {run_id}")
         total = len(records)
         return {"run_id": run_id, "experiment_id": exp_id, "source": SOURCE_LIVE, "count": total,
                 "samples": records[-limit:] if limit < total else records}
+
+    def telemetry_series_index(self, exp_id: str) -> list[dict]:
+        """Which runs of a live experiment have archived decoded telemetry, and how many measured samples each."""
+        res = self._live_result(exp_id)
+        engine = self.repo.db_engine
+        return [{"run_id": r.run_id, "order": r.order, "status": r.status.value, "configuration": r.configuration,
+                 "samples": telemetry_series_count(engine, exp_id, r.run_id)} for r in res.runs]
+
+    def telemetry_series_csv(self, exp_id: str, run_id: str) -> str:
+        """Every stored decoded sample of a stint as CSV (all rows, never downsampled; per-wheel arrays as RL/RR/FL/FR columns)."""
+        self._live_result(exp_id)
+        self._run(self._result(exp_id), run_id)
+        records = load_telemetry_series(self.repo.db_engine, exp_id, run_id)
+        if records is None:
+            raise NotFound(f"no decoded telemetry series recorded for {run_id}")
+        wheels = ("rl", "rr", "fl", "fr")
+        cols: list[str] = []
+        for rec in records:
+            for k, v in rec.items():
+                names = [f"{k}_{w}" for w in wheels[:len(v)]] if isinstance(v, (list, tuple)) else [k]
+                cols += [n for n in names if n not in cols]
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["seq", *cols])
+        for i, rec in enumerate(records):
+            flat: dict[str, Any] = {}
+            for k, v in rec.items():
+                if isinstance(v, (list, tuple)):
+                    flat.update({f"{k}_{wh}": x for wh, x in zip(wheels, v, strict=False)})
+                else:
+                    flat[k] = v
+            w.writerow([i, *("" if flat.get(c) is None else flat[c] for c in cols)])
+        return buf.getvalue()
 
     def stint_start(self, exp_id: str, run_id: str) -> dict:
         res = self._live_result(exp_id)
@@ -561,14 +610,15 @@ class LabService:
         result, top = self.live.stop_stint()
         self.active_stint = None
         tel = self.live.last_stint_telemetry
-        telemetry_path = save_telemetry_series(self.data_dir, exp_id, run_id, tel.to_records(20_000)) if tel is not None else None
-        path = save_evidence(self.data_dir, exp_id, run_id, {
+        engine = self.repo.db_engine
+        n_samples = save_telemetry_series(engine, exp_id, run_id, tel.to_records(20_000)) if tel is not None else 0
+        path = save_evidence(engine, exp_id, run_id, {
             "experiment_id": exp_id, "run_id": run_id, "target": run.configuration, "accepted": result.accepted, "reasons": result.reasons,
             "start_lap": result.start_lap, "end_lap": result.end_lap, "setups_seen": result.setups_seen, "top_speed_kph": top,
             "laps": [asdict(lap) for lap in result.laps], "raw_session": self.live_session,
             "game_session": {"uid": self.live.session_uid, "player_car": self.live.player_car, "packet_format": self.live.packet_format},
             "telemetry": tel.summary() if tel else None,
-            "telemetry_series": str(telemetry_path) if telemetry_path else None,
+            "telemetry_series": {"table": "f1_stint_telemetry", "samples": n_samples} if n_samples else None,
             "recorded_at": datetime.now(UTC).isoformat(),
         })  # fmt: skip
         if not result.accepted:
@@ -578,7 +628,7 @@ class LabService:
 
     def evidence(self, exp_id: str, run_id: str) -> dict:
         self._live_result(exp_id)
-        ev = load_evidence(self.data_dir, exp_id, run_id)
+        ev = load_evidence(self.repo.db_engine, exp_id, run_id)
         if ev is None:
             raise NotFound(f"no evidence recorded for {run_id}")
         return ev

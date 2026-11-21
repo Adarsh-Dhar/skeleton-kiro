@@ -5,18 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "f1-setup-lab"
 version = "1.0.0"
-description = "F1 SETUP LAB: design-of-experiments workstation for (synthetic) vehicle setup, built on trialforge-core"
+description = "F1 SETUP LAB: design-of-experiments workstation for F1 car setups on trialforge-core, with three separate data modes: a synthetic vehicle model, live EA SPORTS F1 25 UDP telemetry (simulator-recorded), and historical Formula 1 sessions via FastF1"
 requires-python = ">=3.11"
 dependencies = [
   "trialforge-core>=0.2.0,<0.3",   # install the wheel from ../skeleton/dist first (see README)
+  "trialforge-db>=0.1.0",          # root database package (install from the repo root: pip install -e ..)
   "fastapi>=0.110",
   "uvicorn>=0.29",
   "fastf1>=3.9.2,<4",              # historical F1 data provider (timing 2018 onwards)
-  "pyarrow>=18",                   # parquet storage for normalized historical datasets
 ]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.23", "httpx>=0.27", "playwright>=1.40"]
+migrate = ["pyarrow>=18"]   # only to read legacy Parquet sessions in scripts/migrate_to_root_db.py
 
 [project.scripts]
 f1-setup-lab = "f1lab.main:main"
@@ -36,3 +37,13 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["f1lab", "db"]
+
+[tool.ruff.lint.per-file-ignores]
+# compact one-line struct decoders (existing style, kept unchanged)
+"backend/f1lab/integrations/game_udp/protocols/*.py" = ["E702"]
+"backend/f1lab/integrations/game_udp/capture.py" = ["E702"]
+# explicit == True/False on pandas nullable booleans is intentional in the tests
+"tests/*.py" = ["E712"]

@@ -1,30 +1,11 @@
 #!/bin/bash
+# Start / stop WATTWISE LAB (default port 8002, override with WATTWISE_PORT).
+# Usage: scripts/start-wattwise.sh [start|stop|status|check]
+# Env:   PYTHON_BIN (interpreter, must be >= 3.11), WATTWISE_PORT, TRIALFORGE_DB (default: <repo>/data/trialforge.db)
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/wattwise-lab"
-VENV="$APP/.venv"
-WHEEL="$ROOT/skeleton/dist/trialforge_core-0.2.1-py3-none-any.whl"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-PORT="${WATTWISE_PORT:-8002}"
-PYTHON_BIN="${PYTHON_BIN:-python3.12}"
-
-# Install dependencies on first launch
-if [[ ! -x "$VENV/bin/wattwise-lab" ]]; then
-    echo "Setting up WATTWISE LAB..."
-
-    "$PYTHON_BIN" -m venv "$VENV"
-    "$VENV/bin/python" -m pip install --upgrade pip
-    "$VENV/bin/python" -m pip install "$WHEEL"
-    "$VENV/bin/python" -m pip install -e "$APP"
-fi
-
-mkdir -p "$APP/data"
-cd "$APP"
-
-echo "Starting WATTWISE LAB on port $PORT"
-
-exec "$VENV/bin/wattwise-lab" \
-    --host 127.0.0.1 \
-    --port "$PORT" \
-    --db "$APP/data/wattwise.db"
+run_app "wattwise" "WATTWISE LAB" "$ROOT/wattwise-lab" WATTWISE_PORT 8002 wattwise-lab "${1:-start}"

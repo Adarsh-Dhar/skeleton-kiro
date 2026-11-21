@@ -1,12 +1,11 @@
 """Tests for live telemetry exposure and the historical (FastF1) integration.
 
 FastF1 itself is never hit here: the importer/normalizer are exercised against a fake session object,
-and repository round-trips use real parquet files in tmp_path.
+and repository round-trips use a real root database (SQLite file) in tmp_path.
 """
 
 from __future__ import annotations
 
-import gzip
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -15,12 +14,28 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from f1lab.integrations.game_udp.telemetry import TelemetryBuffer
 from f1lab.integrations.game_udp.protocols import Header
+from f1lab.integrations.game_udp.telemetry import TelemetryBuffer
 from f1lab.integrations.historical import normalizer as N
 from f1lab.integrations.historical.importer import _session_code, import_session, resolve_event
-from f1lab.integrations.historical.repository import HistoricalRepository, session_id, slug
+from f1lab.integrations.historical.repository import HistoricalRepository, session_id
 from f1lab.integrations.historical.service import HistoricalService
+
+
+def _engine(tmp_path):
+    from db import create_db_engine, migrate
+
+    e = create_db_engine(tmp_path / "trialforge.db")
+    migrate(e)
+    return e
+
+
+def _repo(tmp_path):
+    return HistoricalRepository(_engine(tmp_path), tmp_path / "fastf1-cache")
+
+
+def _svc(tmp_path, **kw):
+    return HistoricalService(_engine(tmp_path), tmp_path / "fastf1-cache", **kw)
 
 
 def _header(t=0.0):
@@ -55,13 +70,18 @@ def test_stint_telemetry_series_roundtrip(client, tmp_path):
     buf = TelemetryBuffer()
     for i in range(5):
         buf.add(_header(float(i)), {"speed_kph": 50 + i, "throttle": 1, "steer": 0, "brake": 0, "gear": 4, "rpm": 9000})
-    p = save_telemetry_series(tmp_path, "exp", "run-1", buf.to_records(100))
-    assert p.exists() and p.suffixes[-2:] == [".jsonl", ".gz"]
-    with gzip.open(p, "rt") as fh:
-        assert len(fh.readlines()) == 5
-    back = load_telemetry_series(tmp_path, "exp", "run-1")
+    engine = _engine(tmp_path)
+    assert save_telemetry_series(engine, "exp", "run-1", buf.to_records(100)) == 5
+    from sqlalchemy import text
+
+    with engine.connect() as c:  # one row per measured sample in the root database, no files
+        assert c.execute(text("SELECT COUNT(*) FROM f1_stint_telemetry WHERE run_id='run-1'")).scalar() == 5
+    assert not list(tmp_path.rglob("*.gz"))
+    back = load_telemetry_series(engine, "exp", "run-1")
     assert len(back) == 5 and back[0]["speed_kph"] == 50.0 and back[-1]["session_time"] == 4.0
-    assert load_telemetry_series(tmp_path, "exp", "missing") is None
+    assert load_telemetry_series(engine, "exp", "missing") is None
+    assert save_telemetry_series(engine, "exp", "run-1", buf.to_records(2)) == 2  # replace, not append
+    assert len(load_telemetry_series(engine, "exp", "run-1")) == 2
 
 
 # ---------------------------------------------------------------- historical: repository
@@ -69,13 +89,13 @@ def test_session_id_safe_and_deterministic():
     sid = session_id(2024, "Italian Grand Prix", "Q")
     assert sid == "fastf1-2024-italian-grand-prix-q"
     assert "/" not in sid and ".." not in sid
-    repo = HistoricalRepository("/tmp/x")
+    repo = HistoricalRepository(None, "/tmp/x")
     with pytest.raises(ValueError):
         repo.manifest("../etc")
 
 
 def test_repository_roundtrip(tmp_path):
-    repo = HistoricalRepository(tmp_path / "hist")
+    repo = _repo(tmp_path)
     sid = session_id(2024, "Monza", "Q")
     manifest = {"session_id": sid, "provider": "fastf1", "year": 2024, "event": "Italian Grand Prix",
                 "circuit": "Monza", "session": "Qualifying", "session_type": "Q", "drivers": [{"code": "VER"}],
@@ -94,9 +114,9 @@ def test_repository_roundtrip(tmp_path):
     assert repo.weather(sid).iloc[0]["air_temp_c"] == 25.0
     assert repo.position(sid, "VER").iloc[0]["x_m"] == 1.0
     assert [s["session_id"] for s in repo.list_sessions()] == [sid]
-    # parquet files exist on disk
-    assert (repo.sessions_dir / sid / "laps.parquet").exists()
-    assert (repo.sessions_dir / sid / "telemetry" / "ver.parquet").exists()
+    # stored in the root database, no parquet files anywhere
+    assert {(f["kind"], f["driver"]) for f in repo.frame_info(sid)} == {("laps", None), ("weather", None), ("telemetry", "VER"), ("position", "VER")}
+    assert not list(tmp_path.rglob("*.parquet"))
 
 
 # ---------------------------------------------------------------- historical: normalizer
@@ -256,7 +276,7 @@ class _FakeClient:
 
 
 def test_import_session_end_to_end(tmp_path):
-    repo = HistoricalRepository(tmp_path / "hist")
+    repo = _repo(tmp_path)
     manifest = import_session(_FakeClient(), repo, {"year": 2024, "event": "Monza", "session": "Q",
                                                    "drivers": ["VER"], "include_weather": True,
                                                    "include_telemetry": True, "include_position": True})
@@ -270,15 +290,14 @@ def test_import_session_end_to_end(tmp_path):
 
 
 def test_import_bad_driver_rejected(tmp_path):
-    repo = HistoricalRepository(tmp_path / "hist")
+    repo = _repo(tmp_path)
     with pytest.raises(ValueError, match="not in this session"):
         import_session(_FakeClient(), repo, {"year": 2024, "event": "Monza", "session": "Q",
                                              "drivers": ["XYZ"]})
 
 
 def test_service_queries(tmp_path):
-    repo_root = tmp_path / "data"
-    svc = HistoricalService(repo_root)
+    svc = _svc(tmp_path)
     repo = svc.repo
     sid = session_id(2024, "Monza", "Q")
     manifest = {"session_id": sid, "provider": "fastf1", "year": 2024, "event": "Italian Grand Prix",
@@ -318,10 +337,10 @@ def test_service_queries(tmp_path):
 def test_service_import_job_lifecycle(tmp_path, monkeypatch):
     import asyncio
 
-    svc = HistoricalService(tmp_path / "data")
+    svc = _svc(tmp_path)
     calls = []
 
-    def fake_import(client, repo, payload, progress):
+    def fake_import(client, repo, payload, progress, **kw):
         calls.append(payload["event"])
         progress("DOWNLOADING", "fake")
         progress("COMPLETED", "done")
@@ -330,6 +349,8 @@ def test_service_import_job_lifecycle(tmp_path, monkeypatch):
     monkeypatch.setattr("f1lab.integrations.historical.service.import_session", fake_import)
     from f1lab.integrations.historical.schemas import HistoricalImportRequest
     req = HistoricalImportRequest(year=2024, event="Monza", session="Q", drivers=["VER"])
+
+    svc._client = _FakeClient()
 
     async def go():
         r = await svc.start_import(req)

@@ -8,13 +8,14 @@ import time
 
 import pytest
 import uvicorn
-from f1lab.api.app import create_app
 from fastapi.testclient import TestClient
+
+from f1lab.api.app import create_app
 
 
 @pytest.fixture
 def db_path(tmp_path):
-    return str(tmp_path / "f1lab.db")
+    return str(tmp_path / "trialforge.db")  # a per-test root database
 
 
 @pytest.fixture
@@ -68,6 +69,7 @@ class LiveServer:
         self.port = s.getsockname()[1]
         s.close()
         self.url = f"http://127.0.0.1:{self.port}"
+        self.db_path = db_path
         cfg = uvicorn.Config(create_app(db_path), host="127.0.0.1", port=self.port, log_level="error")
         self.server = uvicorn.Server(cfg)
         self.thread = threading.Thread(target=self.server.run, daemon=True)

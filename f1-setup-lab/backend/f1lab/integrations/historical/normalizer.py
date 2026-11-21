@@ -300,7 +300,7 @@ def _car_frame(car: pd.DataFrame) -> pd.DataFrame:
     for col in ("brake_applied", "brake_pct"):
         if out[col].isna().all():
             out = out.drop(columns=[col])
-    # canonical telemetry columns are all numeric; coerce so parquet storage gets real dtypes
+    # canonical telemetry columns are all numeric; coerce so the database stores real numbers
     for col in out.columns:
         out[col] = pd.to_numeric(out[col], errors="coerce")
     # keep only rows with at least one real measurement

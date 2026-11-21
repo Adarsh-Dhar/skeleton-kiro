@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+
 from f1lab.integrations.game_udp.capture import StintResult
 from f1lab.integrations.game_udp.measurements import stint_to_measurements
 from f1lab.integrations.game_udp.protocols.f1_25 import LapRecord

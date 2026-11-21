@@ -6,7 +6,7 @@ import socket
 import time
 
 import pytest
-from udp_packets import BASE_SETUP, history_packet, setup_packet, stint_laps, telemetry_packet
+from udp_packets import history_packet, setup_packet, stint_laps, telemetry_packet
 
 FOUR = {
     "front_wing": {"values": [20, 25, 30], "baseline": 25},
@@ -225,6 +225,7 @@ def test_full_live_experiment_analysis_and_report_are_labelled_as_sim_recorded(c
 
 def test_live_runs_and_evidence_survive_a_restart(db_path, make_live, game, client):
     from fastapi.testclient import TestClient
+
     from f1lab.api.app import create_app
 
     d = make_live()

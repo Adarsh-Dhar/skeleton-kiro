@@ -54,27 +54,39 @@ function openModal(html, mount) {
   return close;
 }
 
-/* ------------------------------------------------------------ household (kept in the browser; sent with every request) */
-const HH_KEY = 'wattwise.household';
-function defaultHousehold() {
-  return { tariff_id: 'time-of-use', ev: { ...META.default_ev }, appliances: META.default_appliances.map((a) => ({ ...a })), base_load_kw: 0.35 };
-}
-function loadHousehold() {
-  const d = defaultHousehold();
+/* ------------------------------------------------------------ household (stored on the server: GET/PUT /api/household) */
+const LEGACY_HH_KEY = 'wattwise.household'; // read once to migrate settings saved by older versions, then removed
+function legacyHousehold() {
   try {
-    const s = JSON.parse(localStorage.getItem(HH_KEY) || 'null');
-    if (s && s.ev && Array.isArray(s.appliances)) {
-      d.tariff_id = META.tariffs.some((t) => t.id === s.tariff_id) ? s.tariff_id : (META.tariffs[0]?.id || d.tariff_id);
-      d.ev = { ...d.ev, ...s.ev }; d.appliances = s.appliances.slice(0, 6); d.base_load_kw = Number.isFinite(s.base_load_kw) ? s.base_load_kw : d.base_load_kw;
+    const s = JSON.parse(localStorage.getItem(LEGACY_HH_KEY) || 'null');
+    return s && s.ev && Array.isArray(s.appliances) ? s : null;
+  } catch (_) { return null; }
+}
+async function loadHousehold() {
+  let state = await api('GET', '/api/household');
+  const legacy = legacyHousehold();
+  if (legacy) {
+    if (!state.saved) {
+      const body = { ...state.settings, ...legacy, ev: { ...state.settings.ev, ...legacy.ev }, appliances: legacy.appliances.slice(0, 6), migrated_from: 'localStorage' };
+      if (!META.tariffs.some((t) => t.id === body.tariff_id)) body.tariff_id = state.settings.tariff_id;
+      try { state = await api('PUT', '/api/household', body); toast('Household settings moved from this browser to the server', true); }
+      catch (e) { console.warn('legacy household settings were not accepted', e); }
     }
-  } catch (_) { /* storage unavailable or corrupt: fall back to defaults */ }
+    try { localStorage.removeItem(LEGACY_HH_KEY); } catch (_) { /* storage unavailable */ }
+  }
+  const d = state.settings;
   if (!META.tariffs.some((t) => t.id === d.tariff_id)) d.tariff_id = META.tariffs[0]?.id;
   return d;
 }
-function saveHousehold() { try { localStorage.setItem(HH_KEY, JSON.stringify(HH)); } catch (_) { /* private mode: keep in memory only */ } }
-const hhBody = (extra = {}) => ({ tariff_id: HH.tariff_id, ev: HH.ev, appliances: HH.appliances, base_load_kw: HH.base_load_kw, ...extra });
+async function saveHousehold(next = HH) {
+  const state = await api('PUT', '/api/household', next); // the server validates; nothing is stored unless it accepts the settings
+  HH = state.settings;
+  return HH;
+}
+const hhBody = (extra = {}) => ({ tariff_id: HH.tariff_id, ev: HH.ev, appliances: HH.appliances, base_load_kw: HH.base_load_kw,
+  ...(HH.baseline_import_id ? { baseline_import_id: HH.baseline_import_id } : {}), ...extra });
 const tariffOf = (id) => META.tariffs.find((t) => t.id === id);
-async function refreshTariffs() { META.tariffs = await api('GET', '/api/tariffs'); if (!tariffOf(HH.tariff_id)) { HH.tariff_id = META.tariffs[0]?.id; saveHousehold(); } }
+async function refreshTariffs() { META.tariffs = await api('GET', '/api/tariffs'); if (!tariffOf(HH.tariff_id)) { HH.tariff_id = META.tariffs[0]?.id; await saveHousehold(); } }
 const inlineTariff = (t) => ({ name: t.name, demand_charge_per_kw: t.demand_charge_per_kw || 0, periods: t.periods.map((p) => ({ label: p.label || '', start: p.start, end: p.end, price: p.price })) });
 const tariffSelect = (id, sel) => `<select id="${id}">${META.tariffs.map((t) => `<option value="${esc(t.id)}" ${t.id === sel ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>`;
 function bandBar(t) {
@@ -90,12 +102,13 @@ async function route() {
   clearInterval(pollTimer);
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   try {
-    if (!META) { META = await api('GET', '/api/meta'); HH = loadHousehold(); }
+    if (!META) { META = await api('GET', '/api/meta'); HH = await loadHousehold(); }
     if (!parts.length) { setNav('dash'); return await viewDashboard(); }
     if (parts[0] === 'household') { setNav('household'); return await viewHousehold(); }
     if (parts[0] === 'new') { setNav('new'); return await viewNew(); }
     if (parts[0] === 'simulator') { setNav('simulator'); return await viewSimulator(); }
     if (parts[0] === 'meter') { setNav('meter'); return await viewMeter(); }
+    if (parts[0] === 'usage') { setNav('usage'); return await viewUsage(); }
     if (['analysis', 'optimise', 'reports'].includes(parts[0])) { setNav(parts[0]); return await viewPicker(parts[0]); }
     if (parts[0] === 'e' && parts[1]) {
       const tab = parts[2] || 'design';
@@ -182,6 +195,7 @@ async function viewHousehold() {
     <div class="panel"><h2>Electric vehicle</h2><div class="grid g2">
       <div class="field"><label for="ev-bat">Battery size (kWh)</label><input id="ev-bat" type="number" step="0.5" min="10" max="200" value="${HH.ev.battery_kwh}"></div>
       <div class="field"><label for="ev-eff">Charging efficiency (0.5&ndash;1)</label><input id="ev-eff" type="number" step="0.01" min="0.51" max="1" value="${HH.ev.efficiency}"></div>
+      <div class="field"><label for="ev-charger">Home charger power, kW (optional)</label><input id="ev-charger" type="number" step="0.1" min="0.1" max="22" value="${HH.charger_power_kw ?? ''}"></div>
       <div class="field"><label for="ev-init">Charge when you plug in (%)</label><input id="ev-init" type="number" step="1" min="0" max="100" value="${HH.ev.initial_soc_pct}"></div>
       <div class="field"><label for="ev-want">Charge needed at departure (%)</label><input id="ev-want" type="number" step="1" min="1" max="100" value="${HH.ev.desired_charge_pct}"></div>
       <div class="field"><label for="ev-dep">Departure time</label><input id="ev-dep" type="time" value="${toTime(HH.ev.departure_hour)}"></div></div>
@@ -189,9 +203,11 @@ async function viewHousehold() {
     <div class="panel"><h2>Appliances</h2><div class="scroll"><table><thead><tr><th>Name</th><th>kW</th><th>Hours</th><th>Movable</th><th>Fixed start</th><th></th></tr></thead><tbody id="apps">${apps()}</tbody></table></div>
       <div class="row" style="margin:8px 0"><button type="button" class="btn small" id="adda">Add appliance</button><span class="hint">Movable appliances start at the scheduled time; the others always run at their fixed start.</span></div>
       <div class="field"><label for="base">Always-on base load (kW)</label><input id="base" type="number" step="0.05" min="0" max="5" value="${HH.base_load_kw}"></div></div>
-    <button type="button" class="btn primary" id="hsave" style="width:100%;padding:12px">Save household settings</button></div></div>`;
+    <button type="button" class="btn primary" id="hsave" style="width:100%;padding:12px">Save household settings</button>
+    <button type="button" class="btn" id="hreset" style="width:100%;margin-top:8px">Reset to example household</button>
+    <p class="hint">Saved on the server (available in every browser on this installation). These are the values you enter, not measurements.</p></div></div>`;
   renderPeriods(); validate();
-  $('#tsel').addEventListener('change', () => { HH.tariff_id = $('#tsel').value; saveHousehold(); viewHousehold(); });
+  $('#tsel').addEventListener('change', async () => { HH.tariff_id = $('#tsel').value; try { await saveHousehold(); } catch (e) { toast(e.message); } viewHousehold(); });
   $('#addp').addEventListener('click', () => { editing = { ...editing, ...readTariff() }; editing.periods.push({ label: '', start: 0, end: 24, price: 0.25 }); renderPeriods(); validate(); });
   $('#periods').addEventListener('click', (e) => { const b = e.target.closest('[data-del]'); if (!b) return; editing = { ...editing, ...readTariff() }; editing.periods.splice(+b.dataset.del, 1); renderPeriods(); validate(); });
   $('#periods').addEventListener('input', validate); $('#tdemand').addEventListener('input', validate); $('#tname').addEventListener('input', validate);
@@ -200,7 +216,7 @@ async function viewHousehold() {
     try {
       const t = readTariff();
       const saved = asNew ? await api('POST', '/api/tariffs', t) : await api('PUT', `/api/tariffs/${encodeURIComponent(HH.tariff_id)}`, t);
-      await refreshTariffs(); HH.tariff_id = saved.id; saveHousehold(); toast(asNew ? 'Tariff added' : 'Tariff saved', true); viewHousehold();
+      await refreshTariffs(); HH.tariff_id = saved.id; await saveHousehold(); toast(asNew ? 'Tariff added' : 'Tariff saved', true); viewHousehold();
     } catch (e) { $('#err').innerHTML = errorsBox(e); window.scrollTo(0, 0); }
   };
   $('#tsave').addEventListener('click', () => saveTariff(false)); $('#tnew').addEventListener('click', () => saveTariff(true));
@@ -216,8 +232,14 @@ async function viewHousehold() {
     $('#err').innerHTML = '';
     const next = { tariff_id: HH.tariff_id, base_load_kw: num('#base'), appliances: readApps(),
       ev: { battery_kwh: num('#ev-bat'), efficiency: num('#ev-eff'), initial_soc_pct: num('#ev-init'), desired_charge_pct: num('#ev-want'), departure_hour: toHours($('#ev-dep').value) } };
-    try { await api('POST', '/api/simulate/day', next); HH = next; saveHousehold(); toast('Household settings saved', true); } // the server validates; nothing is stored unless it accepts them
+    const charger = num('#ev-charger');
+    const extra = { charger_power_kw: Number.isFinite(charger) ? charger : null };
+    try { await api('POST', '/api/simulate/day', next); await saveHousehold({ ...HH, ...next, ...extra }); toast('Household settings saved', true); } // validated by the server; stored on the server
     catch (e) { $('#err').innerHTML = errorsBox(e); window.scrollTo(0, 0); }
+  });
+  $('#hreset').addEventListener('click', async () => {
+    if (!confirm('Replace your saved household settings with the example household?')) return;
+    try { HH = (await api('POST', '/api/household/reset')).settings; toast('Household reset', true); viewHousehold(); } catch (e) { $('#err').innerHTML = errorsBox(e); }
   });
 }
 

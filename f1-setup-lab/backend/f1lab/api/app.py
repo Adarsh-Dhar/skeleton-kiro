@@ -24,7 +24,6 @@ from trialforge import (
 from trialforge import ValidationError as TFValidationError
 
 from f1lab import HISTORICAL_NOTICE, SIM_RECORDED_NOTICE, SYNTHETIC_NOTICE, __version__
-from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
 from f1lab.adapters.vehicle_model import FACTORS
 from f1lab.api.schemas import (
     METHODS,
@@ -35,6 +34,10 @@ from f1lab.api.schemas import (
     TelemetryRequest,
     default_factors,
 )
+from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
+from f1lab.catalogs.verification import get_probe_report, list_probe_reports
+from f1lab.catalogs.verification import status as verification_status
+from f1lab.integrations.game_udp.probe import VARIANT_LABELS
 from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest
 from f1lab.integrations.historical.service import HistoricalService
 from f1lab.services.lab import Conflict, LabService, NotFound
@@ -54,17 +57,17 @@ def _issue(field: str, message: str) -> dict:
     return {"field": field, "message": message}
 
 
-def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> FastAPI:
-    db = db_path or os.environ.get("F1LAB_DB", "data/f1lab.db")
-    if "://" not in db:
-        Path(db).parent.mkdir(parents=True, exist_ok=True)
-    lab = LabService(db)
-    hist = HistoricalService(lab.data_dir)
+def create_app(db_path: str | None = None, frontend_dir: str | None = None, fastf1_client_factory=None) -> FastAPI:
+    """``db_path`` and ``fastf1_client_factory`` are for tests; production uses the root database (TRIALFORGE_DB) and FastF1."""
+    lab = LabService(db_path)
+    hist = HistoricalService(lab.repo.db_engine, lab.data_dir / "fastf1-cache", client_factory=fastf1_client_factory)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        app.state.interrupted_imports = hist.recover()
         app.state.recovered = await lab.startup()
         yield
+        await hist.shutdown()
         await lab.shutdown()
 
     app = FastAPI(title="F1 SETUP LAB", version=__version__, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -117,11 +120,15 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
 
     @app.get("/api/meta")
     def meta():
+        ver = verification_status(lab.repo.db_engine)
         return {
             "notice": SYNTHETIC_NOTICE, "notices": {"synthetic": SYNTHETIC_NOTICE, "live_simulator": SIM_RECORDED_NOTICE,
                                                   "historical": HISTORICAL_NOTICE},
             "modes": [{"id": "synthetic", "label": "Synthetic simulator"}, {"id": "live_simulator", "label": "Live simulator (EA SPORTS F1 25)"}],
-            "game": {"id": GAME_ID, "factors": {k: {**v} for k, v in GAME_FACTORS.items()}, "default_port": 20777,
+            "game": {"id": GAME_ID, "default_port": 20777, "variants": VARIANT_LABELS,
+                     # 'verified' = manually confirmed for every game variant; per-variant status and its source in 'verification'
+                     "factors": {k: {**v, "verified": all(ver[var][k]["verified"] for var in ver),
+                                     "verification": {var: ver[var][k] for var in ver}} for k, v in GAME_FACTORS.items()},
                      "unsupported_methods": ["central_composite", "box_behnken"]},
             "version": __version__, "trialforge_version": trialforge.__version__,
             "factors": {k: {**v} for k, v in FACTORS.items()},
@@ -209,6 +216,15 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
     def evidence(exp_id: str, run_id: str):
         return lab.evidence(exp_id, run_id)
 
+    @app.get("/api/experiments/{exp_id}/telemetry/series-index")
+    def telemetry_series_index(exp_id: str):
+        return lab.telemetry_series_index(exp_id)
+
+    @app.get("/api/experiments/{exp_id}/runs/{run_id}/telemetry/series.csv")
+    def run_telemetry_series_csv(exp_id: str, run_id: str):
+        return PlainTextResponse(lab.telemetry_series_csv(exp_id, run_id), media_type="text/csv",
+                                 headers={"Content-Disposition": f'attachment; filename="{exp_id}-{run_id}-telemetry.csv"'})
+
     @app.get("/api/experiments/{exp_id}/runs/{run_id}/telemetry/series")
     def run_telemetry_series(exp_id: str, run_id: str, limit: int = Query(5000, ge=1, le=20000)):
         return lab.run_telemetry_series(exp_id, run_id, limit)
@@ -222,17 +238,50 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None) -> F
     async def hist_event_sessions(year: int = Query(2024, ge=2018, le=2100), event: str = Query(..., min_length=1)):
         return await asyncio.to_thread(hist.sessions_for_event, year, event)
 
+    # ------------------------------------------------------------ setup-mapping verification (read-only; confirm with the script)
+    @app.get("/api/game/verification")
+    def game_verification():
+        return {"variants": VARIANT_LABELS, "status": verification_status(lab.repo.db_engine),
+                "how_to_confirm": "python scripts/probe_setup.py --guided, then python scripts/verify_setup_mapping.py confirm ..."}
+
+    @app.get("/api/game/probe-reports")
+    def game_probe_reports(limit: int = Query(50, ge=1, le=500)):
+        return list_probe_reports(lab.repo.db_engine, limit)
+
+    @app.get("/api/game/probe-reports/{report_id}")
+    def game_probe_report(report_id: str):
+        rep = get_probe_report(lab.repo.db_engine, report_id)
+        if rep is None:
+            raise NotFound(report_id)
+        return rep
+
     @app.get("/api/historical/drivers")
     async def hist_drivers(year: int = Query(..., ge=2018, le=2100), event: str = Query(..., min_length=1), session: str = Query(..., min_length=1)):
         return await hist.drivers_preview(year, event, session)
 
     @app.post("/api/historical/import", status_code=202)
-    async def hist_import(req: HistoricalImportRequest):
-        return await hist.start_import(req)
+    async def hist_import(req: HistoricalImportRequest, force: bool = Query(False, description="re-download even if this session is already stored")):
+        return await hist.start_import(req, force=force)
+
+    @app.get("/api/historical/imports")
+    def hist_imports(limit: int = Query(50, ge=1, le=500)):
+        return hist.list_imports(limit)
 
     @app.get("/api/historical/imports/{import_id}")
     def hist_import_status(import_id: str):
         return hist.import_status(import_id)
+
+    @app.post("/api/historical/imports/{import_id}/cancel")
+    def hist_import_cancel(import_id: str):
+        return hist.cancel_import(import_id)
+
+    @app.post("/api/historical/imports/{import_id}/retry", status_code=202)
+    async def hist_import_retry(import_id: str):
+        return await hist.retry_import(import_id)
+
+    @app.delete("/api/historical/sessions/{session_id}")
+    def hist_delete_session(session_id: str):
+        return hist.delete_session(session_id)
 
     @app.get("/api/historical/sessions")
     def hist_list_sessions():

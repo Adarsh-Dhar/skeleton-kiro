@@ -1,6 +1,7 @@
 """Unit tests for the application-owned simulator model and telemetry parser."""
 
 import pytest
+
 from f1lab.adapters.telemetry import MAX_ROWS, parse_telemetry_csv, to_measurements
 from f1lab.adapters.vehicle_model import BASELINE, FACTORS, rng_for, run_level, stint, vehicle_model
 

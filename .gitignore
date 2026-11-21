@@ -11,4 +11,8 @@ node_modules/
 *.db-shm
 !skeleton/dist/
 f1-setup-lab/data/historical/
+.run/
+data/trialforge.db*
+data/backups/
+data/fastf1-cache/
 .DS_Store

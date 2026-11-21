@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import statistics
 import uuid
-from pathlib import Path
 from typing import Any
 
 from trialforge import (
@@ -27,16 +26,20 @@ from trialforge import (
     Objective,
     ReportEngine,
     RunStatus,
-    SQLiteExperimentRepository,
 )
 
+from db.config import resolve_db_url
+from db.models.common import APP_WATTWISE
+from db.scoped import ScopedExperimentRepository
 from wattwise import SIMULATED_NOTICE
 from wattwise.adapters.household_model import BASELINE, FACTORS, METRIC_UNITS, clock, simulate, summarise
 from wattwise.adapters.meter_adapter import MeterSimulatorAdapter
 from wattwise.adapters.meter_csv import parse_meter_csv, to_series
 from wattwise.api.schemas import DayRequest, ExperimentRequest, MeterAttachRequest, MeterRequest
-from wattwise.services import narrative, report_html
-from wattwise.services.tariffs import TariffError, TariffStore
+from wattwise.services import baseline, narrative, report_html
+from wattwise.services.household import HouseholdStore
+from wattwise.services.meter_library import MeterLibrary
+from wattwise.services.tariffs import TariffError, TariffStore  # noqa: F401  (TariffError re-exported)
 
 ADAPTER_PREFIX = "wattwise-sim/"
 GENERATORS = {3: ["C=AB"]}
@@ -59,14 +62,17 @@ def measurement_definitions() -> list[MeasurementDefinition]:
 
 
 class LabService:
-    def __init__(self, db_path: str, tariff_path: str | None = None) -> None:
+    def __init__(self, db_path: str | None = None) -> None:
+        """``db_path`` is for tests only; production uses the root database (``TRIALFORGE_DB`` / ``data/trialforge.db``)."""
         self.registry = AdapterRegistry()
-        url = f"sqlite:///{db_path}" if "://" not in db_path else db_path
-        self.repo = SQLiteExperimentRepository(url)
+        url = resolve_db_url(db_path)
+        self.repo = ScopedExperimentRepository(APP_WATTWISE, url)
+        self.engine = self.repo.db_engine
         self.svc = ExperimentService(registry=self.registry, repository=self.repo)
         self.runner = LocalBackgroundRunner(self.svc)
-        base = Path(db_path).parent if "://" not in db_path else Path("data")
-        self.tariffs = TariffStore(tariff_path or base / "tariffs.json")
+        self.tariffs = TariffStore(self.engine)
+        self.households = HouseholdStore(self.engine)
+        self.meters = MeterLibrary(self.engine)
 
     # ------------------------------------------------------------------ lifecycle
     async def startup(self) -> list[dict]:
@@ -100,8 +106,31 @@ class LabService:
             raise NotFound(f"tariff {tariff_id}") from None
 
     def household(self, req: Any) -> dict[str, Any]:
-        return {"ev": req.ev.model_dump(), "tariff": self.resolve_tariff(req.tariff_id, req.tariff), "base_load_kw": req.base_load_kw,
-                "appliances": [a.model_dump() for a in req.appliances]}  # fmt: skip
+        hh = {"ev": req.ev.model_dump(), "tariff": self.resolve_tariff(req.tariff_id, req.tariff), "base_load_kw": req.base_load_kw,
+              "appliances": [a.model_dump() for a in req.appliances]}  # fmt: skip
+        if getattr(req, "baseline_import_id", None):
+            cal = self.calibration(req.baseline_import_id)
+            hh["base_profile_kw"] = cal["base_profile_kw"]
+            hh["baseline_source"] = {k: v for k, v in cal.items() if k != "base_profile_kw"}
+        return hh
+
+    # ------------------------------------------------------------------ historical meter library + baseline
+    def meter_baseline(self, import_id: str, tariff_id: str | None = None) -> dict:
+        meta = self.meters.get(import_id)
+        tariff = self.resolve_tariff(tariff_id, None) if tariff_id else None
+        out = baseline.analyse(self.meters.readings(import_id), meta["timezone"], tariff)
+        out["import"] = {k: meta[k] for k in ("import_id", "file_name", "timezone", "reading_kind", "interval_minutes", "first_utc", "last_utc")}
+        return out
+
+    def calibration(self, import_id: str) -> dict:
+        meta = self.meters.get(import_id)
+        a = baseline.analyse(self.meters.readings(import_id), meta["timezone"])
+        charger = self.households.get()["settings"].get("charger_power_kw")
+        try:
+            cal = baseline.calibration(a, ev_charger_kw=charger)
+        except ValueError as exc:
+            raise ValueError(f"meter import {import_id} cannot be used as a baseline: {exc}") from exc
+        return {**cal, "import_id": import_id, "file_name": meta["file_name"]}
 
     # ------------------------------------------------------------------ creation
     def build_spec(self, req: ExperimentRequest, exp_id: str, household: dict[str, Any]) -> ExperimentSpec:
@@ -137,12 +166,13 @@ class LabService:
             adapter_name=ADAPTER_PREFIX + exp_id, run_budget=d.run_budget, random_seed=d.seed,
             execution=ExecutionPolicy(max_retries=req.simulator.max_retries, max_concurrency=4, run_timeout_seconds=120),
             metadata={"app": "wattwise-lab", "simulated": True, "desired_charge_pct": req.ev.desired_charge_pct,
+                      "baseline": "calibrated" if household.get("base_profile_kw") else "synthetic",
                       "lab": {"household": household, **req.simulator.model_dump()}},
         )  # fmt: skip
 
     def create(self, req: ExperimentRequest) -> dict:
         exp_id = req.experiment_id or "ww-" + uuid.uuid4().hex[:8]
-        if self.repo.has_experiment(exp_id):
+        if self.repo.has_experiment(exp_id) or self.repo.exists_anywhere(exp_id):
             raise Conflict(f"an experiment with id '{exp_id}' already exists")
         household = self.household(req)
         spec = self.build_spec(req, exp_id, household)
@@ -233,7 +263,7 @@ class LabService:
                 "cost_by_period": {k: {a: round(b, 4) for a, b in v.items()} for k, v in m["cost_by_period"].items()}}  # fmt: skip
 
     def day(self, req: DayRequest) -> dict:
-        hh = {"ev": req.ev.model_dump(), "tariff": self.resolve_tariff(req.tariff_id, req.tariff), "base_load_kw": req.base_load_kw, "appliances": [a.model_dump() for a in req.appliances]}
+        hh = self.household(req)
         for k, v in req.setup.items():
             if k not in FACTORS or not (FACTORS[k]["low"] <= v <= FACTORS[k]["high"]):
                 raise ValueError(f"setup.{k} is not a valid schedule parameter value")

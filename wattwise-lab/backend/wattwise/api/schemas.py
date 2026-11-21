@@ -16,12 +16,37 @@ class Period(BaseModel):
     start: float = Field(ge=0, le=24)
     end: float = Field(ge=0, le=24)
     price: float = Field(ge=0, le=10)
+    days: Literal["all", "weekday", "weekend"] = "all"
+    months: list[int] | None = Field(None, description="Months (1-12) this price applies to; default all (seasonal rates)")
+
+
+class Tier(BaseModel):
+    up_to_kwh: float | None = Field(None, gt=0, description="Upper bound of this tier; null for the last tier")
+    adder_per_kwh: float = Field(0.0, ge=-10, le=10, description="Added to the time-of-use price inside this tier")
+
+
+class SimulationDay(BaseModel):
+    month: int = Field(1, ge=1, le=12)
+    day_type: Literal["weekday", "weekend"] = "weekday"
 
 
 class TariffIn(BaseModel):
+    """Original fields plus optional generic extensions (see wattwise.adapters.tariff_model). Leave them empty unless
+    your own tariff/bill has them; nothing here is a real utility's tariff."""
+
     name: str = Field(min_length=1, max_length=60)
     demand_charge_per_kw: float = Field(0.0, ge=0, le=100)
-    periods: list[Period] = Field(min_length=1, max_length=12)
+    periods: list[Period] = Field(min_length=1, max_length=48)
+    fixed_daily_charge: float | None = Field(None, ge=0, le=1000)
+    fixed_monthly_charge: float | None = Field(None, ge=0, le=10000)
+    tiers: list[Tier] | None = Field(None, max_length=10)
+    tier_basis: Literal["daily", "billing_period"] | None = None
+    surcharge_per_kwh: float | None = Field(None, ge=0, le=10)
+    tax_pct: float | None = Field(None, ge=0, le=100)
+    export_credit_per_kwh: float | None = Field(None, ge=0, le=10)
+    demand_basis: Literal["daily", "billing_period"] | None = None
+    billing_days: int | None = Field(None, ge=1, le=366)
+    simulation_day: SimulationDay | None = None
 
 
 class EVSettings(BaseModel):
@@ -44,6 +69,21 @@ class ApplianceIn(BaseModel):
     duration_h: float = Field(gt=0, le=8)
     flexible: bool = True
     fixed_start: float = Field(19.0, ge=16, lt=40, description="Absolute hour (16-40) used when the appliance is not flexible")
+
+
+class HouseholdSettings(BaseModel):
+    """The household configuration persisted on the server (``/api/household``). Values are the user's, not measured."""
+
+    tariff_id: str = Field("time-of-use", min_length=1, max_length=60)
+    base_load_kw: float = Field(0.35, ge=0, le=5)
+    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=6)
+    ev: EVSettings = Field(default_factory=EVSettings)
+    charger_power_kw: float | None = Field(None, gt=0, le=22, description="Maximum power of the home charger (kW); informational")
+    baseline_import_id: str | None = Field(None, max_length=40, description="Historical meter import used as the calibrated baseline")
+
+
+class HouseholdPut(HouseholdSettings):
+    migrated_from: Literal["localStorage"] | None = Field(None, description="Set once by the browser when it uploads legacy settings")
 
 
 class FactorSetting(BaseModel):
@@ -85,6 +125,8 @@ class ExperimentRequest(BaseModel):
     ev: EVSettings = Field(default_factory=EVSettings)
     appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=6)
     base_load_kw: float = Field(0.35, ge=0, le=5)
+    baseline_import_id: str | None = Field(None, max_length=40, description="Start from the background load measured in this historical meter import "
+                                                                          "(otherwise the synthetic profile is used)")
     factors: dict[str, FactorSetting] = Field(default_factory=default_factors)
     also_minimise_peak: bool = False
     design: DesignSettings = Field(default_factory=DesignSettings)
@@ -121,6 +163,7 @@ class DayRequest(BaseModel):
     ev: EVSettings = Field(default_factory=EVSettings)
     appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=6)
     base_load_kw: float = Field(0.35, ge=0, le=5)
+    baseline_import_id: str | None = Field(None, max_length=40, description="Use the profile measured in this meter import as background load")
     setup: dict[str, float] = Field(default_factory=dict)
 
 
@@ -130,6 +173,16 @@ class MeterRequest(BaseModel):
     tariff_id: str | None = "time-of-use"
     tariff: TariffIn | None = None
     filename: str = "meter.csv"
+
+
+class MeterImportRequest(BaseModel):
+    """A historical meter file for the library. ``options`` maps to wattwise.adapters.meter_import.ImportOptions."""
+
+    csv: str = Field(min_length=1)
+    file_name: str = Field("meter.csv", min_length=1, max_length=300)
+    source: str = Field("csv upload", max_length=120, description="Where the file came from, e.g. the supplier's portal")
+    options: dict = Field(default_factory=dict)
+    force: bool = Field(False, description="import again even if the same file was imported with the same options")
 
 
 class MeterAttachRequest(MeterRequest):

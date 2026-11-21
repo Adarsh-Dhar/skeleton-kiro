@@ -17,6 +17,7 @@ SKELETON = Path(__file__).resolve().parents[2] / "skeleton"
 # ------------------------------------------------------------------ persistence
 def test_experiments_and_tariffs_survive_restart_and_reanalysis_is_identical(db_path):
     from fastapi.testclient import TestClient
+
     from wattwise.api.app import create_app
 
     t = {"name": "Persisted", "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.3}]}
@@ -72,12 +73,13 @@ def test_health_reports_recovery_and_app_state(client):
 # ------------------------------------------------------------------ Skeleton Crew compliance
 def test_application_runs_on_the_installed_sdk_not_a_copy(client):
     import trialforge
+
     import wattwise
 
     h = client.get("/api/health").json()
     assert h["trialforge"] == trialforge.__version__ and trialforge.__version__.startswith("0.2.") and "site-packages" in h["trialforge_path"]
     lab = client.app.state.lab
-    assert type(lab.svc) is trialforge.ExperimentService and type(lab.repo) is trialforge.SQLiteExperimentRepository and type(lab.runner) is trialforge.LocalBackgroundRunner
+    assert type(lab.svc) is trialforge.ExperimentService and isinstance(lab.repo, trialforge.SQLiteExperimentRepository) and type(lab.repo).__mro__[1] is trialforge.SQLiteExperimentRepository  # app-scoped subclass of the unmodified SDK repository and type(lab.runner) is trialforge.LocalBackgroundRunner
     assert not hasattr(wattwise, "ExperimentService") and "examples" not in sys.modules
     assert not any(Path(p).resolve() == SKELETON / "packages" / "trialforge-core" / "src" for p in sys.path if p)
 

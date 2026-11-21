@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from trialforge import (
@@ -20,7 +20,7 @@ from trialforge import (
 from wattwise.adapters.household_model import FACTORS, METRIC_UNITS, STEP_H, rng_for, simulate
 
 SOURCE = "wattwise-simulated-meter v1"
-T0 = datetime(2026, 1, 12, 16, 0, tzinfo=timezone.utc)  # reference calendar day (simulated)
+T0 = datetime(2026, 1, 12, 16, 0, tzinfo=UTC)  # reference calendar day (simulated)
 
 
 class MeterSimulatorAdapter:

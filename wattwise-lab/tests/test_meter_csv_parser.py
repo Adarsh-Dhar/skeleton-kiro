@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+
 from wattwise.adapters.meter_csv import MAX_ROWS, parse_meter_csv
 
 
