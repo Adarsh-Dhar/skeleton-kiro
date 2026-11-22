@@ -1,0 +1,94 @@
+{
+  "_comment": "Single source of truth for agent file ownership in the TRIALFORGE SDK. Paths are globs relative to the SDK root (skeleton/). Every SDK file is owned by exactly one agent. It lives outside agents/ because Kiro reads every agents/*.json as an agent. The agent JSON files in skeleton/.kiro/agents and the repository-root .kiro/agents are generated from this file by scripts/sync_kiro_config.py in the repository root (one level above skeleton/); edit this file, then run that script.",
+  "agents": {
+    "contracts-owner": {
+      "description": "Sole owner of shared models, public adapter contracts, errors, the public API and the architecture rules",
+      "owns": [
+        "packages/trialforge-core/src/trialforge/__init__.py",
+        "packages/trialforge-core/src/trialforge/py.typed",
+        "packages/trialforge-core/src/trialforge/models/**",
+        "packages/trialforge-core/src/trialforge/adapters/**",
+        "packages/trialforge-core/src/trialforge/errors/**",
+        "packages/trialforge-core/src/trialforge/definitions/**",
+        "packages/trialforge-core/pyproject.toml",
+        "packages/trialforge-core/README.md",
+        "packages/trialforge-core/LICENSE",
+        "packages/trialforge-core/tests/conftest.py",
+        "packages/trialforge-core/tests/helpers.py",
+        "packages/trialforge-core/tests/unit/test_models.py",
+        "packages/trialforge-core/tests/regression/test_contracts.py",
+        "tests/public_api_snapshot.txt",
+        "tests/test_architecture.py",
+        "pyproject.toml",
+        ".gitignore",
+        "CHANGELOG.md"
+      ],
+      "duties": "Make only additive, backward-compatible changes to shared types; deprecate before removing. Update tests/public_api_snapshot.txt for additions and bump versions per .kiro/steering/public-api-stability.md. You are the only agent that may change a shared type: when another agent sends a contract-change request, implement it (or reject it with a reason), then tell the requester which names to import.",
+      "verify": ["python -m pytest tests/test_architecture.py -q", "python scripts/check_imports.py", "python -m pytest packages/trialforge-core/tests/unit/test_models.py packages/trialforge-core/tests/regression/test_contracts.py -q"]
+    },
+    "statistics-owner": {
+      "description": "Owner of the statistical engine, outcome evaluation, reporting and their independent verification",
+      "owns": [
+        "packages/trialforge-core/src/trialforge/analysis/**",
+        "packages/trialforge-core/src/trialforge/evaluation/**",
+        "packages/trialforge-core/src/trialforge/reporting/**",
+        "packages/trialforge-core/tests/unit/test_statistics.py",
+        "packages/trialforge-core/tests/regression/test_analysis.py",
+        "packages/trialforge-core/tests/regression/test_audit_defects.py",
+        "packages/trialforge-core/tests/regression/test_constraints.py"
+      ],
+      "duties": "Follow .kiro/steering/statistical-correctness.md. Every new statistic needs a test against an independent reference (scipy, statsmodels, closed form or simulation). Never pool treatments; never report inference the data cannot support.",
+      "verify": ["python -m pytest packages/trialforge-core/tests/unit/test_statistics.py packages/trialforge-core/tests/regression -q"]
+    },
+    "execution-owner": {
+      "description": "Owner of the execution lifecycle, recovery, persistence, history and events",
+      "owns": [
+        "packages/trialforge-core/src/trialforge/execution/**",
+        "packages/trialforge-core/src/trialforge/persistence/**",
+        "packages/trialforge-core/src/trialforge/history/**",
+        "packages/trialforge-core/src/trialforge/events/**",
+        "packages/trialforge-core/tests/integration/**",
+        "packages/trialforge-core/tests/regression/test_lifecycle.py",
+        "packages/trialforge-core/tests/regression/test_workflow.py"
+      ],
+      "duties": "Persist state before acting, commit runs and measurements atomically, never silently complete or duplicate interrupted runs. Add crash/restart tests against a file database for every recovery change, and mutation-check concurrency tests.",
+      "verify": ["python -m pytest packages/trialforge-core/tests/integration packages/trialforge-core/tests/contracts -q"]
+    },
+    "designer-measurements-owner": {
+      "description": "Owner of experiment designs, the measurement engine and expression utilities",
+      "owns": [
+        "packages/trialforge-core/src/trialforge/designer/**",
+        "packages/trialforge-core/src/trialforge/measurements/**",
+        "packages/trialforge-core/src/trialforge/utilities/**",
+        "packages/trialforge-core/tests/unit/test_designs.py",
+        "packages/trialforge-core/tests/unit/test_measurements_engine.py",
+        "packages/trialforge-core/tests/regression/test_measurements.py"
+      ],
+      "duties": "Designs report their real properties (aliasing, resolution, run counts) computed, not looked up. Raw measurements are never mutated; every conversion or quality flag is recorded. Expression utilities stay free of eval/exec.",
+      "verify": ["python -m pytest packages/trialforge-core/tests/unit/test_designs.py packages/trialforge-core/tests/unit/test_measurements_engine.py packages/trialforge-core/tests/regression/test_measurements.py -q"]
+    },
+    "optimisation-owner": {
+      "description": "Owner of the optimiser (Gaussian process + expected improvement, constraints, stopping)",
+      "owns": [
+        "packages/trialforge-core/src/trialforge/optimization/**",
+        "packages/trialforge-core/tests/unit/test_optimization.py"
+      ],
+      "duties": "Use trialforge.evaluation for feasibility and outcomes; never reimplement it. Proposals are labelled with the method that produced them (model-based vs heuristic). Tests check behaviour against Monte Carlo or closed forms, not just that code runs.",
+      "verify": ["python -m pytest packages/trialforge-core/tests/unit/test_optimization.py packages/trialforge-core/tests/integration/test_workflows.py -q"]
+    },
+    "examples-docs-owner": {
+      "description": "Owner of the example adapters, documentation, developer scripts and the adapter contract suite",
+      "owns": [
+        "examples/**",
+        "docs/**",
+        "README.md",
+        "scripts/**",
+        "tests/test_docs.py",
+        "packages/trialforge-core/tests/contracts/**"
+      ],
+      "duties": "Examples use only `from trialforge import ...` and label synthetic data (.kiro/steering/domain-independence.md). Docs snippets marked `# docs-test` must run. Regenerate docs/api_reference/index.md with scripts/gen_api_reference.py instead of editing it.",
+      "verify": ["python -m pytest tests/test_docs.py packages/trialforge-core/tests/contracts -q", "python scripts/gen_api_reference.py"]
+    }
+  },
+  "unowned_by_design": [".kiro/**"]
+}

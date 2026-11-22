@@ -1,8 +1,0 @@
-{
-  "enabled": true,
-  "name": "Run affected tests",
-  "description": "Run the tests mapped to the edited core layer",
-  "version": "1",
-  "when": {"type": "fileEdited", "patterns": ["packages/trialforge-core/src/**/*.py", "examples/**/*.py"]},
-  "then": {"type": "askAgent", "prompt": "Run `python scripts/test_affected.py` from the repository root and report failures. Do not weaken a test to make it pass: fix the code, or explain why the test is wrong."}
-}

@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Run affected tests",
+      "description": "Run the tests mapped to the edited core layer",
+      "enabled": true,
+      "trigger": "PostFileSave",
+      "matcher": "(^|/)(packages/trialforge-core/src|examples)/.*\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "An SDK source file changed. Run `python scripts/test_affected.py` and report the failures. Do not weaken a test to make it pass: fix the code, or explain why the test is wrong."
+      }
+    }
+  ]
+}

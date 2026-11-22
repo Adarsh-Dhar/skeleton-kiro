@@ -1,0 +1,222 @@
+{
+  "name": "contracts-owner",
+  "description": "Sole owner of shared models, public adapter contracts, errors, the public API and the architecture rules",
+  "prompt": "You are contracts-owner for the TRIALFORGE SDK. Run every command from the `skeleton/` directory (the SDK inside this repository).\nYou may edit ONLY these paths (relative to the workspace root): skeleton/packages/trialforge-core/src/trialforge/__init__.py, skeleton/packages/trialforge-core/src/trialforge/py.typed, skeleton/packages/trialforge-core/src/trialforge/models/**, skeleton/packages/trialforge-core/src/trialforge/adapters/**, skeleton/packages/trialforge-core/src/trialforge/errors/**, skeleton/packages/trialforge-core/src/trialforge/definitions/**, skeleton/packages/trialforge-core/pyproject.toml, skeleton/packages/trialforge-core/README.md, skeleton/packages/trialforge-core/LICENSE, skeleton/packages/trialforge-core/tests/conftest.py, skeleton/packages/trialforge-core/tests/helpers.py, skeleton/packages/trialforge-core/tests/unit/test_models.py, skeleton/packages/trialforge-core/tests/regression/test_contracts.py, skeleton/tests/public_api_snapshot.txt, skeleton/tests/test_architecture.py, skeleton/pyproject.toml, skeleton/.gitignore, skeleton/CHANGELOG.md.\nMake only additive, backward-compatible changes to shared types; deprecate before removing. Update tests/public_api_snapshot.txt for additions and bump versions per skeleton/.kiro/steering/public-api-stability.md. You are the only agent that may change a shared type: when another agent sends a contract-change request, implement it (or reject it with a reason), then tell the requester which names to import.\nRules:\n- The SDK is frozen for the current release: change code only when the user explicitly asks; report a suspected defect instead of fixing it unasked.\n- Never edit a file you do not own. If your task needs a change elsewhere, stop and send a handoff request to the owner listed in skeleton/.kiro/agents/README.md: the file, the exact change, why it is needed, and what you will do once it lands. Shared types are changed only by contracts-owner; never redefine one locally.\n- The steering files in your resources apply to all of your work.\n- Before reporting done, run `python -m pytest tests/test_architecture.py -q`; `python scripts/check_imports.py`; `python -m pytest packages/trialforge-core/tests/unit/test_models.py packages/trialforge-core/tests/regression/test_contracts.py -q`; `./scripts/lint.sh`; `python -m pytest`; `python scripts/check_imports.py`, and report the real pass/fail/skip counts.",
+  "tools": [
+    "read",
+    "write",
+    "shell"
+  ],
+  "resources": [
+    "file://skeleton/.kiro/steering/*.md",
+    "file://skeleton/.kiro/agents/README.md"
+  ],
+  "permissions": {
+    "rules": [
+      {
+        "capability": "fs_write",
+        "match": [
+          "skeleton/packages/trialforge-core/src/trialforge/__init__.py",
+          "skeleton/packages/trialforge-core/src/trialforge/py.typed",
+          "skeleton/packages/trialforge-core/src/trialforge/models/**",
+          "skeleton/packages/trialforge-core/src/trialforge/adapters/**",
+          "skeleton/packages/trialforge-core/src/trialforge/errors/**",
+          "skeleton/packages/trialforge-core/src/trialforge/definitions/**",
+          "skeleton/packages/trialforge-core/pyproject.toml",
+          "skeleton/packages/trialforge-core/README.md",
+          "skeleton/packages/trialforge-core/LICENSE",
+          "skeleton/packages/trialforge-core/tests/conftest.py",
+          "skeleton/packages/trialforge-core/tests/helpers.py",
+          "skeleton/packages/trialforge-core/tests/unit/test_models.py",
+          "skeleton/packages/trialforge-core/tests/regression/test_contracts.py",
+          "skeleton/tests/public_api_snapshot.txt",
+          "skeleton/tests/test_architecture.py",
+          "skeleton/pyproject.toml",
+          "skeleton/.gitignore",
+          "skeleton/CHANGELOG.md"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "fs_write",
+        "match": [
+          "**"
+        ],
+        "exclude": [
+          "skeleton/packages/trialforge-core/src/trialforge/__init__.py",
+          "skeleton/packages/trialforge-core/src/trialforge/py.typed",
+          "skeleton/packages/trialforge-core/src/trialforge/models/**",
+          "skeleton/packages/trialforge-core/src/trialforge/adapters/**",
+          "skeleton/packages/trialforge-core/src/trialforge/errors/**",
+          "skeleton/packages/trialforge-core/src/trialforge/definitions/**",
+          "skeleton/packages/trialforge-core/pyproject.toml",
+          "skeleton/packages/trialforge-core/README.md",
+          "skeleton/packages/trialforge-core/LICENSE",
+          "skeleton/packages/trialforge-core/tests/conftest.py",
+          "skeleton/packages/trialforge-core/tests/helpers.py",
+          "skeleton/packages/trialforge-core/tests/unit/test_models.py",
+          "skeleton/packages/trialforge-core/tests/regression/test_contracts.py",
+          "skeleton/tests/public_api_snapshot.txt",
+          "skeleton/tests/test_architecture.py",
+          "skeleton/pyproject.toml",
+          "skeleton/.gitignore",
+          "skeleton/CHANGELOG.md"
+        ],
+        "effect": "deny"
+      },
+      {
+        "capability": "fs_append",
+        "match": [
+          "skeleton/packages/trialforge-core/src/trialforge/__init__.py",
+          "skeleton/packages/trialforge-core/src/trialforge/py.typed",
+          "skeleton/packages/trialforge-core/src/trialforge/models/**",
+          "skeleton/packages/trialforge-core/src/trialforge/adapters/**",
+          "skeleton/packages/trialforge-core/src/trialforge/errors/**",
+          "skeleton/packages/trialforge-core/src/trialforge/definitions/**",
+          "skeleton/packages/trialforge-core/pyproject.toml",
+          "skeleton/packages/trialforge-core/README.md",
+          "skeleton/packages/trialforge-core/LICENSE",
+          "skeleton/packages/trialforge-core/tests/conftest.py",
+          "skeleton/packages/trialforge-core/tests/helpers.py",
+          "skeleton/packages/trialforge-core/tests/unit/test_models.py",
+          "skeleton/packages/trialforge-core/tests/regression/test_contracts.py",
+          "skeleton/tests/public_api_snapshot.txt",
+          "skeleton/tests/test_architecture.py",
+          "skeleton/pyproject.toml",
+          "skeleton/.gitignore",
+          "skeleton/CHANGELOG.md"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "fs_append",
+        "match": [
+          "**"
+        ],
+        "exclude": [
+          "skeleton/packages/trialforge-core/src/trialforge/__init__.py",
+          "skeleton/packages/trialforge-core/src/trialforge/py.typed",
+          "skeleton/packages/trialforge-core/src/trialforge/models/**",
+          "skeleton/packages/trialforge-core/src/trialforge/adapters/**",
+          "skeleton/packages/trialforge-core/src/trialforge/errors/**",
+          "skeleton/packages/trialforge-core/src/trialforge/definitions/**",
+          "skeleton/packages/trialforge-core/pyproject.toml",
+          "skeleton/packages/trialforge-core/README.md",
+          "skeleton/packages/trialforge-core/LICENSE",
+          "skeleton/packages/trialforge-core/tests/conftest.py",
+          "skeleton/packages/trialforge-core/tests/helpers.py",
+          "skeleton/packages/trialforge-core/tests/unit/test_models.py",
+          "skeleton/packages/trialforge-core/tests/regression/test_contracts.py",
+          "skeleton/tests/public_api_snapshot.txt",
+          "skeleton/tests/test_architecture.py",
+          "skeleton/pyproject.toml",
+          "skeleton/.gitignore",
+          "skeleton/CHANGELOG.md"
+        ],
+        "effect": "deny"
+      },
+      {
+        "capability": "str_replace",
+        "match": [
+          "skeleton/packages/trialforge-core/src/trialforge/__init__.py",
+          "skeleton/packages/trialforge-core/src/trialforge/py.typed",
+          "skeleton/packages/trialforge-core/src/trialforge/models/**",
+          "skeleton/packages/trialforge-core/src/trialforge/adapters/**",
+          "skeleton/packages/trialforge-core/src/trialforge/errors/**",
+          "skeleton/packages/trialforge-core/src/trialforge/definitions/**",
+          "skeleton/packages/trialforge-core/pyproject.toml",
+          "skeleton/packages/trialforge-core/README.md",
+          "skeleton/packages/trialforge-core/LICENSE",
+          "skeleton/packages/trialforge-core/tests/conftest.py",
+          "skeleton/packages/trialforge-core/tests/helpers.py",
+          "skeleton/packages/trialforge-core/tests/unit/test_models.py",
+          "skeleton/packages/trialforge-core/tests/regression/test_contracts.py",
+          "skeleton/tests/public_api_snapshot.txt",
+          "skeleton/tests/test_architecture.py",
+          "skeleton/pyproject.toml",
+          "skeleton/.gitignore",
+          "skeleton/CHANGELOG.md"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "str_replace",
+        "match": [
+          "**"
+        ],
+        "exclude": [
+          "skeleton/packages/trialforge-core/src/trialforge/__init__.py",
+          "skeleton/packages/trialforge-core/src/trialforge/py.typed",
+          "skeleton/packages/trialforge-core/src/trialforge/models/**",
+          "skeleton/packages/trialforge-core/src/trialforge/adapters/**",
+          "skeleton/packages/trialforge-core/src/trialforge/errors/**",
+          "skeleton/packages/trialforge-core/src/trialforge/definitions/**",
+          "skeleton/packages/trialforge-core/pyproject.toml",
+          "skeleton/packages/trialforge-core/README.md",
+          "skeleton/packages/trialforge-core/LICENSE",
+          "skeleton/packages/trialforge-core/tests/conftest.py",
+          "skeleton/packages/trialforge-core/tests/helpers.py",
+          "skeleton/packages/trialforge-core/tests/unit/test_models.py",
+          "skeleton/packages/trialforge-core/tests/regression/test_contracts.py",
+          "skeleton/tests/public_api_snapshot.txt",
+          "skeleton/tests/test_architecture.py",
+          "skeleton/pyproject.toml",
+          "skeleton/.gitignore",
+          "skeleton/CHANGELOG.md"
+        ],
+        "effect": "deny"
+      },
+      {
+        "capability": "delete_file",
+        "match": [
+          "skeleton/packages/trialforge-core/src/trialforge/__init__.py",
+          "skeleton/packages/trialforge-core/src/trialforge/py.typed",
+          "skeleton/packages/trialforge-core/src/trialforge/models/**",
+          "skeleton/packages/trialforge-core/src/trialforge/adapters/**",
+          "skeleton/packages/trialforge-core/src/trialforge/errors/**",
+          "skeleton/packages/trialforge-core/src/trialforge/definitions/**",
+          "skeleton/packages/trialforge-core/pyproject.toml",
+          "skeleton/packages/trialforge-core/README.md",
+          "skeleton/packages/trialforge-core/LICENSE",
+          "skeleton/packages/trialforge-core/tests/conftest.py",
+          "skeleton/packages/trialforge-core/tests/helpers.py",
+          "skeleton/packages/trialforge-core/tests/unit/test_models.py",
+          "skeleton/packages/trialforge-core/tests/regression/test_contracts.py",
+          "skeleton/tests/public_api_snapshot.txt",
+          "skeleton/tests/test_architecture.py",
+          "skeleton/pyproject.toml",
+          "skeleton/.gitignore",
+          "skeleton/CHANGELOG.md"
+        ],
+        "effect": "allow"
+      },
+      {
+        "capability": "delete_file",
+        "match": [
+          "**"
+        ],
+        "exclude": [
+          "skeleton/packages/trialforge-core/src/trialforge/__init__.py",
+          "skeleton/packages/trialforge-core/src/trialforge/py.typed",
+          "skeleton/packages/trialforge-core/src/trialforge/models/**",
+          "skeleton/packages/trialforge-core/src/trialforge/adapters/**",
+          "skeleton/packages/trialforge-core/src/trialforge/errors/**",
+          "skeleton/packages/trialforge-core/src/trialforge/definitions/**",
+          "skeleton/packages/trialforge-core/pyproject.toml",
+          "skeleton/packages/trialforge-core/README.md",
+          "skeleton/packages/trialforge-core/LICENSE",
+          "skeleton/packages/trialforge-core/tests/conftest.py",
+          "skeleton/packages/trialforge-core/tests/helpers.py",
+          "skeleton/packages/trialforge-core/tests/unit/test_models.py",
+          "skeleton/packages/trialforge-core/tests/regression/test_contracts.py",
+          "skeleton/tests/public_api_snapshot.txt",
+          "skeleton/tests/test_architecture.py",
+          "skeleton/pyproject.toml",
+          "skeleton/.gitignore",
+          "skeleton/CHANGELOG.md"
+        ],
+        "effect": "deny"
+      }
+    ]
+  }
+}

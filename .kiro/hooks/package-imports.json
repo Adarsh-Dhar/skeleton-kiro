@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Check package imports",
+      "description": "Verify every public name and example module imports after changes to package __init__ files",
+      "enabled": true,
+      "trigger": "PostFileSave",
+      "matcher": "(^|/)skeleton/packages/trialforge-core/src/trialforge/(.*/)?__init__\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "A package __init__ changed. Run `cd skeleton && python scripts/check_imports.py` and `cd skeleton && python scripts/gen_api_reference.py`; if the API reference changed, keep the regenerated file."
+      }
+    }
+  ]
+}

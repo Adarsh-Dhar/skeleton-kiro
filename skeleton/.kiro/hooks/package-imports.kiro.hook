@@ -1,8 +1,0 @@
-{
-  "enabled": true,
-  "name": "Check package imports",
-  "description": "Verify every public name and example module imports after core changes",
-  "version": "1",
-  "when": {"type": "fileEdited", "patterns": ["packages/trialforge-core/src/trialforge/__init__.py", "packages/trialforge-core/src/trialforge/**/__init__.py"]},
-  "then": {"type": "askAgent", "prompt": "Run `python scripts/check_imports.py` and `python scripts/gen_api_reference.py` from the repository root; if the API reference changed, keep the regenerated file."}
-}

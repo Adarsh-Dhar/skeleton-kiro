@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Run integration and contract tests",
+      "description": "Full lifecycle, persistence/recovery and adapter contract tests when execution, persistence or adapters change",
+      "enabled": true,
+      "trigger": "PostFileSave",
+      "matcher": "(^|/)skeleton/(packages/trialforge-core/src/trialforge/(execution|persistence|adapters)/.*|examples/(.*/)?adapter\\.py)$",
+      "action": {
+        "type": "agent",
+        "prompt": "Execution, persistence or adapter code changed. Run `cd skeleton && python -m pytest packages/trialforge-core/tests/integration packages/trialforge-core/tests/contracts -q` and report the counts."
+      }
+    }
+  ]
+}

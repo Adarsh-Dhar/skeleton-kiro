@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Lint and format check",
+      "description": "Run ruff lint + format check when SDK Python sources change",
+      "enabled": true,
+      "trigger": "PostFileSave",
+      "matcher": "(^|/)skeleton/(packages|examples|tests|scripts)/.*\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "An SDK Python file changed. Run `cd skeleton && ./scripts/lint.sh`. If it fails, fix the reported problems without changing behaviour and run it again."
+      }
+    }
+  ]
+}

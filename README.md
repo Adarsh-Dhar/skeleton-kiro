@@ -106,6 +106,20 @@ RUN_START_SMOKE=1 scripts/check-release.sh                                      
 RUN_START_SMOKE=1 F1_PORT=18001 WATTWISE_PORT=18002 scripts/check-release.sh       # if you keep the apps running
 ```
 
+## Kiro configuration
+
+The SDK's spec, six steering files, five hooks and six owner agents live in `skeleton/.kiro/`. Kiro reads `.kiro` only at the workspace
+root, so the repository root has a generated `.kiro/` too:
+
+* **Hooks:** the same five hooks, matching only files under `skeleton/`.
+* **Agents:** the same six agents, with `skeleton/`-prefixed paths. They load the SDK steering through `resources`.
+* **Steering:** one file, `trialforge-sdk.md`, that pulls in the SDK steering only when you work on `skeleton/` files.
+
+Ownership is defined once, in `skeleton/.kiro/ownership.json`. After editing it, run `python scripts/sync_kiro_config.py`.
+`tests/test_kiro_config.py` fails if either copy drifts, if an SDK file has no owner or two owners, or if a hook matcher stops matching the
+legacy patterns. [`skeleton/.kiro/agents/README.md`](skeleton/.kiro/agents/README.md) has the ownership map, the handoff protocol and the
+multi-agent test results, including what can only be confirmed inside the Kiro IDE.
+
 ## Manual acceptance gates
 
 These need you, your game, your data or your bill. The code prepares them but cannot complete them truthfully:

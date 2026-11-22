@@ -1,0 +1,16 @@
+{
+  "version": "v1",
+  "hooks": [
+    {
+      "name": "Check architecture boundaries",
+      "description": "Layering, domain independence, public API stability, no dynamic code execution",
+      "enabled": true,
+      "trigger": "PostFileSave",
+      "matcher": "(^|/)skeleton/(packages/trialforge-core/src|examples)/.*\\.py$",
+      "action": {
+        "type": "agent",
+        "prompt": "An SDK source file changed. Run `cd skeleton && python -m pytest tests/test_architecture.py -q` and fix any violation by changing the code, not the rules."
+      }
+    }
+  ]
+}
