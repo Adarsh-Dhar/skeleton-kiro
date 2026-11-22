@@ -44,7 +44,8 @@ async def run(args: argparse.Namespace) -> int:
     svc.recover()
     req = HistoricalImportRequest(provider=args.provider, year=args.year, event=args.event, session=args.session, drivers=args.drivers or [],
                                   include_telemetry=not args.no_telemetry, include_position=not args.no_position,
-                                  include_weather=not args.no_weather)
+                                  include_weather=not args.no_weather, include_race_data=not args.no_race_data,
+                                  refresh_cache=args.refresh_cache)
     job = await svc.start_import(req, force=args.force)
     jid = job["import_id"]
     if job.get("duplicate") and job["state"] == "COMPLETED":
@@ -70,6 +71,8 @@ async def run(args: argparse.Namespace) -> int:
     if j["state"] == "COMPLETED":
         m = svc.get_session(j["session_id"])
         print(f"stored session {m['session_id']}: {m['event']} {m['session_type']}, drivers {', '.join(d['code'] for d in m['drivers'])}")
+        for name, e in (m.get("coverage") or {}).get("endpoints", {}).items():
+            print(f"  {name:22s} {e['status']:15s} rows={e['rows']} requests={e.get('requests', 0)} cache_hits={e.get('cache_hits', 0)}")
         for w in m.get("warnings", []):
             print(f"warning: {w}")
         return 0
@@ -98,6 +101,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-telemetry", action="store_true")
     ap.add_argument("--no-position", action="store_true")
     ap.add_argument("--no-weather", action="store_true")
+    ap.add_argument("--no-race-data", action="store_true", help="openf1: skip running order, results, grid, gaps, overtakes, radio, championships")
+    ap.add_argument("--refresh-cache", action="store_true", help="openf1: ignore cached answers and download everything again")
     ap.add_argument("--db", default=None, help="database path/URL (default: TRIALFORGE_DB or <repo>/data/trialforge.db)")
     args = ap.parse_args(argv)
     t0 = time.time()

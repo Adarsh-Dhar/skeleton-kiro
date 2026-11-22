@@ -49,6 +49,10 @@ def _m006_ww_meter_library(conn: Connection) -> None:
     create_tables(conn, "ww_meter_import", "ww_meter_reading")
 
 
+def _m007_f1_hist_datasets(conn: Connection) -> None:
+    create_tables(conn, "f1_hist_dataset")
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "experiment owner table", _m001_owner),
     Migration(2, "f1 historical sessions", _m002_f1_historical),
@@ -56,4 +60,5 @@ MIGRATIONS: list[Migration] = [
     Migration(4, "f1 udp recordings, stint evidence, probe reports", _m004_f1_udp_and_probe),
     Migration(5, "wattwise household settings and tariff library", _m005_ww_household_tariffs),
     Migration(6, "wattwise historical meter-data library", _m006_ww_meter_library),
+    Migration(7, "f1 historical per-session datasets (race position, results, grid, intervals, ...)", _m007_f1_hist_datasets),
 ]

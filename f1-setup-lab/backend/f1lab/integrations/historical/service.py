@@ -35,6 +35,9 @@ from f1lab.integrations.historical.schemas import HistoricalCompareRequest, Hist
 
 TELEMETRY_CHANNELS = ("distance_m", "session_time_s", "speed_kph", "throttle_pct", "brake_applied", "brake_pct",
                       "steer_pct", "gear", "rpm", "drs")
+DATASETS = ("race_position", "session_result", "starting_grid", "intervals", "overtakes", "team_radio",
+            "drivers_championship", "teams_championship")
+MANIFEST_DATASETS = ("pit_stops", "race_control")  # small lists kept in the session manifest
 POSITION_CHANNELS = ("distance_m", "session_time_s", "x_m", "y_m", "z_m", "speed_kph")
 
 # FastF1 schedule session names -> session type codes accepted by get_session()
@@ -177,6 +180,7 @@ class HistoricalService:
         """Queue an import. A request identical to one already running, or one already completed whose session is
         still stored, returns that job (``duplicate: true``) instead of downloading again, unless ``force``."""
         payload = req.model_dump()
+        force = force or req.refresh_cache  # a cache refresh always runs again
         key = dedupe_key(payload)
         active = self.jobs.find_active(key)
         if active is not None:
@@ -297,6 +301,38 @@ class HistoricalService:
 
     def get_session(self, sid: str) -> dict:
         return self._manifest(sid)
+
+    def dataset(self, sid: str, name: str, driver: str | None = None, limit: int = 4000) -> dict:
+        """One stored per-session dataset (running order, results, grid, gaps, overtakes, radio, championships, pit stops, race control)
+        with its coverage entry, so an empty list can be told apart from "never requested" or "failed"."""
+        m = self._manifest(sid)
+        if name not in DATASETS + MANIFEST_DATASETS:
+            raise ValueError(f"unknown dataset '{name}'; choose one of {', '.join(DATASETS + MANIFEST_DATASETS)}")
+        rows = list(m.get(name, [])) if name in MANIFEST_DATASETS else self.repo.dataset(sid, name)
+        cov_key = {"pit_stops": "pit", "race_control": "race_control"}.get(name, name)
+        entry = (m.get("coverage") or {}).get("endpoints", {}).get(cov_key)
+        if driver:
+            want = driver.strip().upper()
+            by_number = {str(d.get("number", "")).upper(): str(d.get("code", "")).upper() for d in m.get("drivers", [])}
+            want = by_number.get(want, want)
+            rows = [r for r in rows if want in {str(r.get(k) or "").upper() for k in ("driver", "overtaking", "overtaken")}]
+        total = len(rows)
+        if limit and total > limit:  # evenly thin each driver's series so charts stay light
+            groups: dict[str, list[dict]] = {}
+            for r in rows:
+                groups.setdefault(str(r.get("driver")), []).append(r)
+            per = max(50, limit // max(len(groups), 1))
+            rows = sorted((r for g in groups.values() for r in (g if len(g) <= per else [g[i] for i in np.unique(np.linspace(0, len(g) - 1, per).round().astype(int))])),
+                          key=lambda r: (r.get("date") or "", str(r.get("driver"))))
+        available = bool(total) or (entry is not None and entry.get("status") in ("ok",))
+        return {"name": name, "rows": rows, "count": total, "returned": len(rows), "thinned": len(rows) < total, "available": available,
+                "coverage": entry, "provider": m.get("provider")}
+
+    def openf1_cache(self) -> dict:
+        return {**openf1_cache_stats(self.openf1_cache_dir), "ttl_days": self.openf1.ttl_s / 86400.0}
+
+    def clear_openf1_cache(self) -> dict:
+        return {"cleared": self.openf1.clear_cache(), **openf1_cache_stats(self.openf1_cache_dir)}
 
     def drivers(self, sid: str) -> list[dict]:
         return self._manifest(sid).get("drivers", [])

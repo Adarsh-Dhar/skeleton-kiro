@@ -18,7 +18,7 @@ const Charts = (() => {
     const xd = [Math.min(...xs), Math.max(...xs)], yd = [Math.min(...ys), Math.max(...ys)];
     const px = (xd[1] - xd[0]) * 0.06 || 1, py = (yd[1] - yd[0]) * 0.08 || 1;
     const x0 = o.xmin ?? xd[0] - px, x1 = o.xmax ?? xd[1] + px, y0 = o.ymin ?? yd[0] - py, y1 = o.ymax ?? yd[1] + py;
-    const X = scale(x0, x1, m.l, W - m.r), Y = scale(y0, y1, H - m.b, m.t);
+    const X = scale(x0, x1, m.l, W - m.r), Y = o.reverseY ? scale(y0, y1, m.t, H - m.b) : scale(y0, y1, H - m.b, m.t);  // reverseY: small values on top (running order)
     let g = '';
     niceTicks(y0, y1, 5).forEach((t) => { g += `<line class="grid" x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}"/><text x="${m.l - 8}" y="${Y(t) + 4}" text-anchor="end">${f(t, Math.abs(t) < 10 ? 2 : 1)}</text>`; });
     niceTicks(x0, x1, 7).forEach((t) => { g += `<line class="grid" y1="${m.t}" y2="${H - m.b}" x1="${X(t)}" x2="${X(t)}"/><text x="${X(t)}" y="${H - m.b + 16}" text-anchor="middle">${f(t, Number.isInteger(t) ? 0 : 1)}</text>`; });
@@ -78,8 +78,9 @@ const Charts = (() => {
     const fr = frame(o, all.map((p) => p.x), all.map((p) => p.y)), { X, Y } = fr;
     let b = fr.g;
     o.series.forEach((s) => {
-      b += `<polyline fill="none" stroke="${s.color}" stroke-width="2" points="${s.pts.map((p) => `${X(p.x)},${Y(p.y)}`).join(' ')}"/>`;
-      s.pts.forEach((p) => { b += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${p.flag ? 6 : 3.5}" fill="${p.flag ? '#ff4d4d' : s.color}"><title>${esc(s.name)} ${f(p.x, 2)}: ${f(p.y, 3)}${p.flag ? ' (flagged)' : ''}</title></circle>`; });
+      const path = o.stepped ? s.pts.flatMap((p, i) => (i ? [`${X(p.x)},${Y(s.pts[i - 1].y)}`, `${X(p.x)},${Y(p.y)}`] : [`${X(p.x)},${Y(p.y)}`])) : s.pts.map((p) => `${X(p.x)},${Y(p.y)}`);
+      b += `<polyline fill="none" stroke="${s.color}" stroke-width="2" points="${path.join(' ')}"/>`;
+      if (!o.noDots) s.pts.forEach((p) => { b += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${p.flag ? 6 : 3.5}" fill="${p.flag ? '#ff4d4d' : s.color}"><title>${esc(s.name)} ${f(p.x, 2)}: ${f(p.y, 3)}${p.flag ? ' (flagged)' : ''}</title></circle>`; });
     });
     return wrap(fr.W, fr.H, b, o.label) + `<div class="legend">${o.series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')}</div>`;
   }

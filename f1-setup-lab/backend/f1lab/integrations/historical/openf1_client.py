@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import ssl
 import threading
 import time
@@ -17,6 +18,7 @@ import urllib.error
 import urllib.request
 from collections import deque
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
@@ -34,6 +36,7 @@ MIN_YEAR = 2023  # OpenF1 historical coverage starts with the 2023 season
 USER_AGENT = "f1-setup-lab (historical analysis; +https://openf1.org)"
 RETRY_STATUSES = (429, 500, 502, 503, 504)
 MAX_RETRY_AFTER_S = 60.0
+DEFAULT_TTL_DAYS = 30.0  # cached answers older than this are fetched again (env OPENF1_CACHE_TTL_DAYS; 0 disables the cache)
 
 Fetch = Callable[[str, float], "tuple[int, dict[str, str], bytes]"]  # (url, timeout) -> (status, headers, body)
 
@@ -105,17 +108,40 @@ def build_url(endpoint: str, filters: dict[str, object], ranges: Sequence[tuple[
 def cache_stats(cache_dir: str | Path) -> dict:
     root = Path(cache_dir)
     files = n = 0
+    oldest = newest = None
     if root.is_dir():
         for p in root.rglob("*.json"):
+            st = p.stat()
             files += 1
-            n += p.stat().st_size
-    return {"files": files, "bytes": n, "dir": str(root)}
+            n += st.st_size
+            oldest = st.st_mtime if oldest is None else min(oldest, st.st_mtime)
+            newest = st.st_mtime if newest is None else max(newest, st.st_mtime)
+    iso = lambda t: None if t is None else datetime.fromtimestamp(t, UTC).isoformat(timespec="seconds")  # noqa: E731
+    return {"files": files, "bytes": n, "dir": str(root), "oldest": iso(oldest), "newest": iso(newest)}
+
+
+def default_ttl_s() -> float | None:
+    """Cache lifetime in seconds from OPENF1_CACHE_TTL_DAYS (default 30 days; ``0`` = never use the cache)."""
+    raw = os.environ.get("OPENF1_CACHE_TTL_DAYS", "").strip()
+    try:
+        days = float(raw) if raw else DEFAULT_TTL_DAYS
+    except ValueError:
+        days = DEFAULT_TTL_DAYS
+    return max(days, 0.0) * 86400.0
+
+
+def _iso(ts: float) -> str:
+    return datetime.fromtimestamp(ts, UTC).isoformat(timespec="seconds")
 
 
 class OpenF1Client:
     def __init__(self, cache_dir: str | Path, fetch: Fetch | None = None, limiter: RateLimiter | None = None, retries: int = 4,
-                 backoff_s: float = 2.0, timeout_s: float = 30.0, sleep: Callable[[float], None] = time.sleep) -> None:
+                 backoff_s: float = 2.0, timeout_s: float = 30.0, sleep: Callable[[float], None] = time.sleep,
+                 ttl_s: float | None = None, now: Callable[[], float] = time.time) -> None:
         self.cache_dir = Path(cache_dir)
+        self.ttl_s = default_ttl_s() if ttl_s is None else ttl_s
+        self._now = now
+        self.last_meta: dict = {}
         self._fetch = fetch or _urllib_fetch
         self.limiter = limiter or RateLimiter()
         self.retries, self.backoff_s, self.timeout_s, self._sleep = retries, backoff_s, timeout_s, sleep
@@ -127,23 +153,39 @@ class OpenF1Client:
         h = hashlib.sha256(url.encode()).hexdigest()
         return self.cache_dir / h[:2] / f"{h}.json"
 
-    def _cache_read(self, url: str) -> list | None:
+    def _cache_read(self, url: str) -> tuple[list, float] | None:
+        """(rows, fetched_at epoch seconds) from the disk cache. Files written by older versions are a bare list (age = file time)."""
         p = self._cache_path(url)
         try:
             data = json.loads(p.read_text())
-        except (OSError, ValueError):
+            if isinstance(data, list):
+                return data, p.stat().st_mtime
+            ts = datetime.fromisoformat(data["fetched_at"]).timestamp()
+            return (data["rows"], ts) if isinstance(data.get("rows"), list) else None
+        except (OSError, ValueError, KeyError, TypeError):
             return None
-        return data if isinstance(data, list) else None
 
-    def _cache_write(self, url: str, rows: list) -> None:
+    def _cache_write(self, url: str, rows: list, fetched_at: str) -> None:
         p = self._cache_path(url)
         try:
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_suffix(".tmp")
-            tmp.write_text(json.dumps(rows))
+            tmp.write_text(json.dumps({"url": url, "fetched_at": fetched_at, "rows": rows}))
             tmp.replace(p)
         except OSError:
             pass  # a cache that cannot be written only costs a repeat download
+
+    def clear_cache(self) -> int:
+        """Delete every cached answer; returns how many files were removed."""
+        n = 0
+        if self.cache_dir.is_dir():
+            for p in list(self.cache_dir.rglob("*.json")) + list(self.cache_dir.rglob("*.tmp")):
+                try:
+                    p.unlink()
+                    n += 1
+                except OSError:
+                    pass
+        return n
 
     # ------------------------------------------------------------------ requests
     def _pause(self, seconds: float, cancel: Callable[[], bool] | None) -> None:
@@ -156,13 +198,19 @@ class OpenF1Client:
             left -= nap
 
     def get(self, endpoint: str, filters: dict[str, object], ranges: Sequence[tuple[str, str, str]] = (),
-            cancel: Callable[[], bool] | None = None) -> list[dict]:
-        """GET one endpoint and return its rows. Empty answers (also HTTP 404 "no results") return ``[]``."""
+            cancel: Callable[[], bool] | None = None, *, refresh: bool = False, max_age_s: float | None = None) -> list[dict]:
+        """GET one endpoint and return its rows. Empty answers (also HTTP 404 "no results") return ``[]``.
+
+        A cached answer is used while it is younger than ``max_age_s`` (default: the client's TTL). ``refresh=True`` skips the
+        cache read and replaces the cached answer. ``last_meta`` describes the answer: ``fetched_at`` and ``from_cache``.
+        """
         url = build_url(endpoint, filters, ranges)
-        cached = self._cache_read(url)
-        if cached is not None:
+        limit = self.ttl_s if max_age_s is None else max_age_s
+        cached = None if refresh or limit <= 0 else self._cache_read(url)
+        if cached is not None and self._now() - cached[1] <= limit:
             self.cache_hits += 1
-            return cached
+            self.last_meta = {"fetched_at": datetime.fromtimestamp(cached[1], UTC).isoformat(timespec="seconds"), "from_cache": True}
+            return cached[0]
         last: OpenF1Error | None = None
         for attempt in range(self.retries + 1):
             self.limiter.acquire(cancel)
@@ -176,10 +224,12 @@ class OpenF1Client:
             else:
                 if status == 200:
                     rows = self._rows(endpoint, body)
-                    if rows:  # empty results are not cached: the data may simply not be published yet
-                        self._cache_write(url, rows)
+                    self.last_meta = {"fetched_at": _iso(self._now()), "from_cache": False}
+                    if rows and limit > 0:  # empty results are not cached: the data may simply not be published yet
+                        self._cache_write(url, rows, self.last_meta["fetched_at"])
                     return rows
                 if status == 404 and b"no results" in body.lower():
+                    self.last_meta = {"fetched_at": _iso(self._now()), "from_cache": False}
                     return []
                 if status not in RETRY_STATUSES:
                     raise OpenF1Error(f"OpenF1 {endpoint} returned HTTP {status}: {body[:200].decode('utf-8', 'replace')}", SESSION_UNAVAILABLE)

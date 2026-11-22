@@ -206,9 +206,10 @@ def test_import_stores_provider_labelled_partial_session(tmp_path):
     assert m["corners"] == [] and m["derived"] and m["not_provided"]
     assert m["channels"]["telemetry"] == {"HAM": True, "VER": True}
     assert m["channels"]["position"] == {"HAM": True, "VER": False}
-    assert m["partial"] is True and any("VER" in w and "track position" in w for w in m["warnings"])
+    assert m["partial"] is True and any("VER" in w and "track location" in w for w in m["warnings"])
     assert m["coverage"]["drivers_empty"] == {"car_data": [], "location": ["VER"]}
-    assert m["coverage"]["endpoints"]["laps"] == {"rows": 6, "status": "ok"}
+    laps_cov = m["coverage"]["endpoints"]["laps"]
+    assert (laps_cov["rows"], laps_cov["status"], laps_cov["requests"], laps_cov["cache_hits"]) == (6, "ok", 1, 0) and laps_cov["fetched_at"]
     assert m["upstream"]["session_key"] == 99
     # stored data
     laps = repo.laps(SID)
@@ -376,14 +377,248 @@ def test_default_provider_is_fastf1_and_keys_are_unchanged():
     req = HistoricalImportRequest(year=2024, event="Monza", session="Q")
     assert req.provider == "fastf1"
     assert dedupe_key(req.model_dump()) == "2024|monza|Q|*|111"
-    assert dedupe_key({**req.model_dump(), "provider": "openf1"}) == "openf1|2024|monza|Q|*|111"
+    assert dedupe_key({**req.model_dump(), "provider": "openf1"}) == "openf1|2024|monza|Q|*|111|race1"
 
 
 # ------------------------------------------------------------------------------------------- live (opt-in)
+LIVE_SESSIONS = [  # year, event, session: a race, a qualifying session and a sprint from every season OpenF1 covers
+    (2023, "Bahrain", "R"), (2024, "Monza", "Q"), (2024, "Miami", "S"), (2025, "Abu Dhabi", "R"), (2026, "Paulo", "R"),
+]
+
+
+@pytest.fixture(scope="module")
+def live_cache(tmp_path_factory):
+    return tmp_path_factory.mktemp("openf1-live")
+
+
 @pytest.mark.skipif(not os.environ.get("RUN_NETWORK_TESTS"), reason="set RUN_NETWORK_TESTS=1 to contact api.openf1.org")
-def test_live_openf1_one_driver_one_race(tmp_path):
+@pytest.mark.parametrize(("year", "event", "session"), LIVE_SESSIONS)
+def test_live_openf1_import(live_cache, year, event, session):
+    """Real api.openf1.org, one driver per session (kept small for the 3/s, 30/min limits)."""
+    repo = _repo(live_cache / f"{year}{session}")
+    client = OpenF1Client(live_cache / "openf1-cache")
+    m = import_session_openf1(client, repo, {"year": year, "event": event, "session": session, "drivers": ["VER"], "include_position": False})
+    eps = m["coverage"]["endpoints"]
+    assert m["provider"] == "openf1" and m["channels"]["laps"] is True and not repo.laps(m["session_id"]).empty
+    assert m["round"] and eps["laps"]["rows"] > 0 and eps["session_result"]["status"] == "ok" and eps["race_position"]["status"] == "ok"
+    assert not [n for n, e in eps.items() if e["status"] == "error"], m["warnings"]  # an upstream error is a failure of this suite
+    if session in ("R", "S"):
+        assert eps["starting_grid"]["status"] == "ok" and eps["overtakes"]["status"] == "ok" and repo.dataset(m["session_id"], "starting_grid")
+        assert eps["drivers_championship"]["status"] in ("ok", "empty") and eps["teams_championship"]["status"] in ("ok", "empty")
+        winner = repo.dataset(m["session_id"], "session_result")[0]
+        assert winner["position"] == 1 and winner["points"] is not None
+    else:
+        assert eps["starting_grid"]["status"] == "not_applicable" and eps["intervals"]["status"] == "not_applicable"
+        assert isinstance(repo.dataset(m["session_id"], "session_result")[0]["duration"], list)  # qualifying: one time per phase
+    tel = repo.telemetry(m["session_id"], "VER")
+    assert len(tel) > 1000 and (tel["distance_m"].max() > 3000) and set(tel["drs"].dropna().astype(int)) <= set(N.DRS_STATES)
+
+
+# ------------------------------------------------------------------------------------------- race data, provenance, cache
+def test_race_datasets_are_stored_with_provenance(tmp_path):
     repo = _repo(tmp_path)
-    client = OpenF1Client(tmp_path / "openf1-cache")
-    m = import_session_openf1(client, repo, {"year": 2024, "event": "Monza", "session": "Q", "drivers": ["VER"]})
-    assert m["provider"] == "openf1" and m["channels"]["laps"] is True
-    assert not repo.laps(m["session_id"]).empty
+    client, fake = fake_client(tmp_path / "c")
+    m = import_session_openf1(client, repo, PAYLOAD)
+    eps = m["coverage"]["endpoints"]
+    assert m["race_data_included"] is True and m["round"] == 2  # Bahrain is round 1, testing is skipped
+    for name, rows in (("race_position", 6), ("session_result", 2), ("starting_grid", 2), ("intervals", 5), ("overtakes", 2), ("team_radio", 2)):  # coverage counts the rows OpenF1 returned (one radio clip is dropped below)
+        assert eps[name]["rows"] == rows and eps[name]["status"] == "ok" and eps[name]["fetched_at"], name
+    assert m["datasets"]["race_position"]["rows"] == 6 and m["datasets"]["drivers_championship"]["rows"] == 0 and m["datasets"]["team_radio"]["rows"] == 1
+    pos = repo.dataset(SID, "race_position")
+    assert [(p["driver"], p["position"]) for p in pos][:2] == [("VER", 1), ("HAM", 2)]
+    res = {r["driver"]: r for r in repo.dataset(SID, "session_result")}
+    assert res["HAM"]["dnf"] is True and res["HAM"]["gap_to_leader_text"] == "+1 LAP" and res["VER"]["points"] == 25.0
+    # the grid lives under the qualifying session (98), not the race session (99)
+    assert any("/starting_grid?session_key=98" in u for u in fake.calls) and not any("/starting_grid?session_key=99" in u for u in fake.calls)
+    assert [(g["driver"], g["position"]) for g in repo.dataset(SID, "starting_grid")] == [("HAM", 1), ("VER", 2)]
+    gaps = repo.dataset(SID, "intervals")
+    assert any(g["gap_to_leader_text"] == "+1 LAP" for g in gaps) and any(g["gap_to_leader_s"] == 1.5 for g in gaps)
+    assert [r["recording_url"] for r in repo.dataset(SID, "team_radio")] == ["https://livetiming.formula1.com/static/x/TeamRadio/a.mp3"]  # non-https dropped
+
+
+def test_empty_beta_endpoints_are_reported_honestly_and_are_not_a_failure(tmp_path):
+    m = import_session_openf1(fake_client(tmp_path / "c")[0], _repo(tmp_path), {**PAYLOAD, "include_position": False, "include_telemetry": False})
+    for name in ("drivers_championship", "teams_championship"):
+        e = m["coverage"]["endpoints"][name]
+        assert e["status"] == "empty" and "beta" in e["note"] and m["datasets"][name]["rows"] == 0
+    assert m["partial"] is False and not any("championship" in w for w in m["warnings"])
+
+
+def test_non_race_sessions_mark_race_only_endpoints_not_applicable_and_do_not_request_them(tmp_path):
+    client, fake = fake_client(tmp_path / "c")
+    m = import_session_openf1(client, _repo(tmp_path), {**PAYLOAD, "session": "Q", "include_position": False, "include_telemetry": False})
+    eps = m["coverage"]["endpoints"]
+    for name in ("starting_grid", "intervals", "overtakes", "drivers_championship", "teams_championship"):
+        assert eps[name]["status"] == "not_applicable" and eps[name]["requests"] == 0
+    assert not any(f"/{e}?" in u for u in fake.calls for e in ("intervals", "overtakes", "drivers_championship", "starting_grid"))
+    assert eps["session_result"]["status"] == "empty"  # asked for, nothing published in the fixture
+
+
+def test_race_data_can_be_switched_off(tmp_path):
+    client, fake = fake_client(tmp_path / "c")
+    m = import_session_openf1(client, _repo(tmp_path), {**PAYLOAD, "include_race_data": False, "include_position": False, "include_telemetry": False})
+    assert m["race_data_included"] is False and "race_position" not in m["coverage"]["endpoints"] and m["datasets"] == {}
+    assert not any("/position?" in u or "/session_result?" in u for u in fake.calls)
+
+
+def test_failed_race_endpoint_is_partial_but_keeps_the_session(tmp_path):
+    client, fake = fake_client(tmp_path / "c", retries=0)
+    fake.fail_endpoint["intervals"] = (500, b"boom")
+    repo = _repo(tmp_path)
+    m = import_session_openf1(client, repo, {**PAYLOAD, "include_position": False, "include_telemetry": False})
+    assert m["partial"] is True and m["coverage"]["endpoints"]["intervals"]["status"] == "error" and any("intervals unavailable" in w for w in m["warnings"])
+    assert repo.exists(SID) and repo.dataset(SID, "race_position")
+
+
+def test_laps_carry_speed_trap_columns_and_lap_validity_stays_absent(tmp_path):
+    repo = _repo(tmp_path)
+    import_session_openf1(fake_client(tmp_path / "c")[0], repo, PAYLOAD)
+    cols = set(repo.laps(SID).columns)
+    assert {"i1_speed_kph", "i2_speed_kph", "st_speed_kph"} <= cols and not ({"is_valid", "is_deleted", "is_accurate"} & cols)
+
+
+def test_manifest_labels_estimates_units_and_drs_codes(tmp_path):
+    m = import_session_openf1(fake_client(tmp_path / "c")[0], _repo(tmp_path), {**PAYLOAD, "include_race_data": False})
+    assert "not verified as metres" in m["units"]["x_m"] and m["units"]["distance_m"].startswith("estimate")
+    assert any(d.startswith("distance_m (estimate)") for d in m["derived"]) and any("lap validity" in n for n in m["not_provided"])
+    assert m["drs_states"]["8"].startswith("detected") and m["drs_states"]["14"] == "on" and m["drs_states"]["2"] is None
+
+
+def test_reimport_with_race_data_is_not_satisfied_by_a_session_stored_without_it(tmp_path):
+    repo = _repo(tmp_path)
+    client, _ = fake_client(tmp_path / "c")
+    import_session_openf1(client, repo, {**PAYLOAD, "include_race_data": False})
+    assert import_session_openf1(client, repo, {**PAYLOAD, "include_race_data": False}, force=False)["reused"] is True
+    again = import_session_openf1(client, repo, PAYLOAD, force=False)
+    assert "reused" not in again and again["race_data_included"] is True
+
+
+# --- cache expiry and refresh
+def test_cache_entries_expire_after_the_ttl(tmp_path):
+    clock = [1_000_000.0]
+    client, fake = fake_client(tmp_path / "c", ttl_s=100.0, now=lambda: clock[0])
+    client.get("meetings", {"year": 2025})
+    clock[0] += 50
+    client.get("meetings", {"year": 2025})
+    assert len(fake.calls) == 1 and client.last_meta["from_cache"] is True
+    clock[0] += 200
+    client.get("meetings", {"year": 2025})
+    assert len(fake.calls) == 2 and client.last_meta["from_cache"] is False
+
+
+def test_refresh_bypasses_and_replaces_the_cache_entry(tmp_path):
+    client, fake = fake_client(tmp_path / "c")
+    client.get("meetings", {"year": 2025})
+    client.get("meetings", {"year": 2025}, refresh=True)
+    assert len(fake.calls) == 2
+    client.get("meetings", {"year": 2025})
+    assert len(fake.calls) == 2  # the refreshed answer is cached again
+
+
+def test_ttl_zero_disables_the_cache_and_clear_cache_removes_files(tmp_path):
+    off, fake = fake_client(tmp_path / "off", ttl_s=0.0)
+    off.get("meetings", {"year": 2025})
+    off.get("meetings", {"year": 2025})
+    assert len(fake.calls) == 2 and not list((tmp_path / "off").rglob("*.json"))
+    on, _ = fake_client(tmp_path / "on")
+    on.get("meetings", {"year": 2025})
+    on.get("sessions", {"year": 2025})
+    assert on.clear_cache() == 2 and not list((tmp_path / "on").rglob("*.json"))
+
+
+def test_old_bare_list_cache_files_are_still_read(tmp_path):
+    import json
+
+    client, fake = fake_client(tmp_path / "c")
+    url = build_url("meetings", {"year": 2025})
+    path = client._cache_path(url)
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps([{"meeting_key": 1}]))
+    assert client.get("meetings", {"year": 2025}) == [{"meeting_key": 1}] and fake.calls == []
+
+
+def test_ttl_comes_from_the_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENF1_CACHE_TTL_DAYS", "2")
+    assert OpenF1Client(tmp_path).ttl_s == 2 * 86400
+    monkeypatch.setenv("OPENF1_CACHE_TTL_DAYS", "junk")
+    assert OpenF1Client(tmp_path).ttl_s == 30 * 86400
+
+
+def test_refresh_cache_import_downloads_again_and_a_plain_import_does_not(tmp_path):
+    repo = _repo(tmp_path)
+    first, _ = fake_client(tmp_path / "c")
+    import_session_openf1(first, repo, PAYLOAD)
+    plain, fake_plain = fake_client(tmp_path / "c")
+    m_plain = import_session_openf1(plain, repo, PAYLOAD, force=True)
+    assert len(fake_plain.calls) <= 3 and m_plain["coverage"]["endpoints"]["laps"]["cache_hits"] == 1
+    fresh, fake_fresh = fake_client(tmp_path / "c")
+    m = import_session_openf1(fresh, repo, {**PAYLOAD, "refresh_cache": True}, force=True)
+    assert len(fake_fresh.calls) >= 15 and m["coverage"]["refresh_cache"] is True
+    assert m["coverage"]["endpoints"]["laps"]["cache_hits"] == 0 and m["coverage"]["endpoints"]["laps"]["requests"] == 1
+
+
+def test_a_session_that_just_finished_does_not_trust_old_cached_answers(tmp_path, monkeypatch):
+    from datetime import UTC, datetime, timedelta
+
+    import openf1_fakes
+
+    now = datetime.now(UTC)
+    sessions = [{**s, "date_start": (now - timedelta(hours=3)).isoformat(), "date_end": (now - timedelta(hours=1)).isoformat()} if s["session_key"] == 99 else s
+                for s in openf1_fakes.SESSIONS]
+    monkeypatch.setitem(openf1_fakes.DATA, "sessions", sessions)
+    repo = _repo(tmp_path)
+    m = import_session_openf1(fake_client(tmp_path / "c")[0], repo, {**PAYLOAD, "include_position": False, "include_telemetry": False})
+    assert any("finished within the last 48 hours" in w for w in m["warnings"])
+
+
+# --- API
+def test_dataset_endpoint_returns_rows_coverage_and_filters(api):
+    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"})
+    assert _wait(api, r.json()["import_id"])["state"] == "COMPLETED"
+    res = api.get(f"/api/historical/sessions/{SID}/datasets/session_result").json()
+    assert res["count"] == 2 and res["available"] is True and res["coverage"]["status"] == "ok" and res["provider"] == "openf1"
+    over = api.get(f"/api/historical/sessions/{SID}/datasets/overtakes", params={"driver": "1"}).json()
+    assert over["count"] == 2  # driver number 1 = VER took part in both
+    champ = api.get(f"/api/historical/sessions/{SID}/datasets/drivers_championship").json()
+    assert champ["rows"] == [] and champ["available"] is False and champ["coverage"]["status"] == "empty" and "beta" in champ["coverage"]["note"]
+    pit = api.get(f"/api/historical/sessions/{SID}/datasets/pit_stops").json()
+    assert pit["count"] == 1 and pit["rows"][0]["lane_duration_s"] == 22.5
+    assert api.get(f"/api/historical/sessions/{SID}/datasets/race_control").json()["count"] == 1
+    assert api.get(f"/api/historical/sessions/{SID}/datasets/nonsense").status_code == 422
+    assert api.get("/api/historical/sessions/missing/datasets/intervals").status_code == 404
+
+
+def test_intervals_are_thinned_per_driver_when_over_the_limit(api):
+    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"})
+    _wait(api, r.json()["import_id"])
+    full = api.get(f"/api/historical/sessions/{SID}/datasets/intervals", params={"limit": 0}).json()
+    assert full["count"] == 5 and not full["thinned"]
+    thin = api.get(f"/api/historical/sessions/{SID}/datasets/intervals", params={"limit": 2}).json()
+    assert thin["count"] == 5 and thin["returned"] <= 5
+
+
+def test_cache_endpoints_report_and_clear(api):
+    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"})
+    _wait(api, r.json()["import_id"])
+    info = api.get("/api/historical/openf1/cache").json()
+    assert info["files"] > 5 and info["bytes"] > 0 and info["ttl_days"] == pytest.approx(30)
+    cleared = api.delete("/api/historical/openf1/cache").json()
+    assert cleared["cleared"] == info["files"] and cleared["files"] == 0
+    assert api.get(f"/api/historical/sessions/{SID}").status_code == 200  # stored sessions are untouched
+
+
+def test_refresh_cache_request_is_never_deduplicated_against_a_finished_job(api):
+    first = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"}).json()
+    _wait(api, first["import_id"])
+    again = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1", "refresh_cache": True}).json()
+    assert again["duplicate"] is False and again["import_id"] != first["import_id"]
+    assert _wait(api, again["import_id"])["state"] == "COMPLETED"
+
+
+def test_race_data_flag_changes_the_dedupe_key():
+    from f1lab.integrations.historical.jobs import dedupe_key
+
+    a = dedupe_key({"provider": "openf1", "year": 2025, "event": "x", "session": "R", "include_race_data": True})
+    b = dedupe_key({"provider": "openf1", "year": 2025, "event": "x", "session": "R", "include_race_data": False})
+    assert a != b and a.endswith("|race1") and b.endswith("|race0")
+    assert dedupe_key({"year": 2025, "event": "x", "session": "R", "include_race_data": False}) == "2025|x|R|*|111"  # FastF1 unchanged

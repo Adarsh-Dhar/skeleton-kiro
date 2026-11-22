@@ -91,7 +91,7 @@ package and both apps with their test dependencies, and checks that both apps us
 source tree). It then builds the other packages, lints, compiles every Python file, checks JavaScript and shell syntax, runs the SDK, root,
 F1 and WATTWISE test suites and the browser tests (when Playwright's Chromium is installed; `INSTALL_CHROMIUM=1` downloads it), and prints
 PASSED / FAILED / SKIPPED / UNAVAILABLE separately. Opt-in: `RUN_NETWORK_TESTS=1` (real FastF1 download, needs `F1_USERNAME` /
-`F1_PASSWORD` of an account with an active F1TV Access, Pro or Premium subscription; plus one real OpenF1 import, no account), `RUN_START_SMOKE=1` (startup smoke, below). The real-game and real-household checks are always listed as SKIPPED manual
+`F1_PASSWORD` of an account with an active F1TV Access, Pro or Premium subscription; plus real OpenF1 imports of five sessions from 2023 to 2026, no account; takes several minutes), `RUN_START_SMOKE=1` (startup smoke, below). The real-game and real-household checks are always listed as SKIPPED manual
 gates. Skipped and unavailable checks are not passes.
 
 **Startup smoke (`RUN_START_SMOKE=1`).** Starts F1 SETUP LAB and WATTWISE LAB with the official `scripts/start-f1.sh` and

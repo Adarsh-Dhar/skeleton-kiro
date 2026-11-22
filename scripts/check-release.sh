@@ -10,7 +10,7 @@
 # Usage:  scripts/check-release.sh [--reuse]      --reuse keeps an existing release venv (faster, not a clean run)
 # Env:    PYTHON_BIN (interpreter >= 3.11 used to create the venv), RELEASE_VENV (venv path)
 # Opt-in: RUN_NETWORK_TESTS=1 (real FastF1 download, FASTF1_TIMEOUT seconds, default 600; needs F1_USERNAME/F1_PASSWORD of an
-#         F1TV Access/Pro/Premium account; plus one real OpenF1 import, no account), RUN_START_SMOKE=1 (start both apps with
+#         F1TV Access/Pro/Premium account; plus real OpenF1 imports of five sessions (2023-2026, no account; several minutes)), RUN_START_SMOKE=1 (start both apps with
 #         scripts/start-*.sh on F1_PORT/WATTWISE_PORT, default 8001/8002, against a throw-away database; occupied ports are
 #         reported UNAVAILABLE and never touched; STARTUP_TIMEOUT seconds per app, default 900), INSTALL_CHROMIUM=1 (download Playwright's Chromium if missing; otherwise browser tests are UNAVAILABLE)
 # Needs network access to PyPI to install dependencies.
@@ -274,7 +274,7 @@ if [[ -n "${RUN_NETWORK_TESTS:-}" ]]; then
         3) SKIPPED+=("real FastF1 import: $(tail -1 "$LOG/smoke.log")"); echo "SKIPPED ($(tail -1 "$LOG/smoke.log"))" ;;
         *) FAILED+=("real FastF1 import"); echo "FAILED  (log: $LOG/smoke.log)" ;;
     esac
-    printf '%-58s ' "real OpenF1 import (one driver, no account)"
+    printf '%-58s ' "real OpenF1 imports (5 sessions, 2023-2026)"
     (cd f1-setup-lab && RUN_NETWORK_TESTS=1 "$PY" -m pytest -q -p no:cacheprovider -rs tests/test_openf1.py -k live </dev/null) >"$LOG/openf1-live.log" 2>&1
     case $? in
         0) PASSED+=("real OpenF1 import"); echo "PASSED" ;;
@@ -282,7 +282,7 @@ if [[ -n "${RUN_NETWORK_TESTS:-}" ]]; then
     esac
 else
     skip "real FastF1 import (smoke_fastf1_import.py)" "opt-in: RUN_NETWORK_TESTS=1; needs an F1TV Access/Pro/Premium login in F1_USERNAME/F1_PASSWORD"
-    skip "real OpenF1 import (one driver, no account)" "opt-in: RUN_NETWORK_TESTS=1"
+    skip "real OpenF1 imports (5 sessions, 2023-2026)" "opt-in: RUN_NETWORK_TESTS=1"
 fi
 if [[ -n "${RUN_START_SMOKE:-}" ]]; then
     start_smoke

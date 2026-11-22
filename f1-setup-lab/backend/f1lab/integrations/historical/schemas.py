@@ -24,6 +24,8 @@ class HistoricalImportRequest(BaseModel):
     include_telemetry: bool = True
     include_position: bool = True
     include_weather: bool = True
+    include_race_data: bool = Field(True, description="OpenF1 only: also fetch running order, results, grid, gaps, overtakes, team radio and championships")
+    refresh_cache: bool = Field(False, description="OpenF1 only: ignore cached answers and download everything again")
 
     @model_validator(mode="after")
     def _provider_years(self):

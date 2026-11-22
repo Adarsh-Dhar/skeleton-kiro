@@ -26,8 +26,10 @@ MEETINGS = [
     MEETING,
 ]
 SESSIONS = [
-    {"session_key": 98, "meeting_key": 1001, "session_name": "Qualifying", "session_type": "Qualifying", "date_start": "2025-12-06T14:00:00+00:00", "year": 2025},
-    {"session_key": 99, "meeting_key": 1001, "session_name": "Race", "session_type": "Race", "date_start": T0.isoformat(), "year": 2025},
+    {"session_key": 98, "meeting_key": 1001, "session_name": "Qualifying", "session_type": "Qualifying", "date_start": "2025-12-06T14:00:00+00:00",
+     "date_end": "2025-12-06T15:00:00+00:00", "year": 2025},
+    {"session_key": 99, "meeting_key": 1001, "session_name": "Race", "session_type": "Race", "date_start": T0.isoformat(),
+     "date_end": (T0 + timedelta(hours=2)).isoformat(), "year": 2025},
     {"session_key": 50, "meeting_key": 1000, "session_name": "Race", "session_type": "Race", "date_start": "2025-04-13T15:00:00+00:00", "year": 2025},
 ]
 DRIVERS = [
@@ -71,6 +73,26 @@ DATA = {
     "race_control": [{"session_key": 99, "date": (T0 + timedelta(seconds=300)).isoformat(), "category": "Flag", "flag": "GREEN", "scope": "Track",
                       "lap_number": 1, "message": "GREEN LIGHT - PIT EXIT OPEN"}],
 }
+def _at(seconds: float) -> str:
+    return (LAP1 + timedelta(seconds=seconds)).isoformat()
+
+
+DATA.update({
+    "position": [{"session_key": 99, "driver_number": n, "position": p, "date": _at(t)}
+                 for t, n, p in ((0, 1, 1), (0, 44, 2), (100, 44, 1), (100, 1, 2), (200, 1, 1), (200, 44, 2))],
+    "session_result": [{"session_key": 99, "driver_number": 1, "position": 1, "dnf": False, "dns": False, "dsq": False, "number_of_laps": 3,
+                        "duration": 270.5, "gap_to_leader": 0, "points": 25.0},
+                       {"session_key": 99, "driver_number": 44, "position": 2, "dnf": True, "dns": False, "dsq": False, "number_of_laps": 2,
+                        "duration": None, "gap_to_leader": "+1 LAP", "points": 0.0}],
+    "starting_grid": [{"session_key": 98, "driver_number": 44, "position": 1, "lap_duration": 85.1},
+                      {"session_key": 98, "driver_number": 1, "position": 2, "lap_duration": 85.4}],
+    "intervals": [{"session_key": 99, "driver_number": n, "date": _at(t), "gap_to_leader": g, "interval": i}
+                  for t, n, g, i in ((10, 1, 0.0, 0.0), (10, 44, 1.5, 1.5), (60, 1, 0.0, 0.0), (60, 44, "+1 LAP", "+1 LAP"), (110, 44, None, None))],
+    "overtakes": [{"session_key": 99, "date": _at(100), "overtaking_driver_number": 44, "overtaken_driver_number": 1, "position": 1},
+                  {"session_key": 99, "date": _at(200), "overtaking_driver_number": 1, "overtaken_driver_number": 44, "position": 1}],
+    "team_radio": [{"session_key": 99, "driver_number": 44, "date": _at(50), "recording_url": "https://livetiming.formula1.com/static/x/TeamRadio/a.mp3"},
+                   {"session_key": 99, "driver_number": 1, "date": _at(60), "recording_url": "javascript:alert(1)"}],
+})  # drivers_championship / teams_championship stay absent: OpenF1 answers 404 "No results found" for them
 _COND = re.compile(r"^(\w+)(>=|<=|>|<|=)(.*)$")
 
 
@@ -103,6 +125,8 @@ class FakeOpenF1:
                     rows = [r for r in rows if (datetime.fromisoformat(r["date"]) >= cut if op == ">=" else datetime.fromisoformat(r["date"]) < cut)]
         elif endpoint == "laps" and self.drop_laps:
             rows = []
+        elif endpoint in ("laps", "drivers") and eq.get("session_key") == "98":  # the qualifying session shares the race's cars and laps
+            rows = DATA[endpoint]
         else:
             rows = [r for r in DATA.get(endpoint, []) if all(str(r.get(k)) == v for k, v in eq.items() if k in r)]
         if not rows:

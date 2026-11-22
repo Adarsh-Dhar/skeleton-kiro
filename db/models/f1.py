@@ -67,6 +67,18 @@ class HistFrame(Base):
     rows: Mapped[int] = mapped_column(Integer, default=0)
 
 
+class HistDataset(Base):
+    """A small per-session dataset that is not a frame (running order, results, grid, intervals, ...), stored as JSON rows with
+    the time it was fetched. Deleted with its session."""
+
+    __tablename__ = "f1_hist_dataset"
+    session_id: Mapped[str] = mapped_column(String(200), ForeignKey("f1_hist_session.session_id", ondelete="CASCADE"), primary_key=True)
+    name: Mapped[str] = mapped_column(String(40), primary_key=True)
+    rows_json: Mapped[str] = mapped_column(Text)
+    rows: Mapped[int] = mapped_column(Integer, default=0)
+    fetched_at: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
+
 def _frame_table(name: str, columns: dict[str, type], per_driver: bool) -> type:
     attrs: dict = {
         "__tablename__": name,

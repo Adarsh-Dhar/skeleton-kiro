@@ -65,7 +65,41 @@ def test_openf1_import_and_coverage_panel(server):
         text = page.inner_text("#hist-body").lower()  # headings are upper-cased by CSS
         assert "import coverage" in text and "partial" in text and "location missing for" in text and "ver" in text
         page.click("#hist-body details summary")
-        assert "not provided by openf1: steering angle" in page.inner_text("#hist-body details").lower()
+        details = page.inner_text("#hist-body details").lower()
+        assert "not provided by openf1" in details and "steering angle" in details and "lap validity" in details and "distance_m (estimate)" in details
+        # honest "not provided" state for lap validity (OpenF1 publishes none)
+        assert "not provided by this source" in text and "running order" in text
+        page.click("#hist-body a:has-text('open')")
+        page.wait_for_selector("#hrchart svg")
+        assert page.locator("#hrchart polyline").count() >= 1
+        race = page.inner_text("#view").lower()
+        assert "starting grid vs final classification" in race and "dnf" in race and "+1 lap" in race
+        assert page.locator(".hrp").count() == 2 and "overtakes" in race
+        page.wait_for_selector("#hgapout svg")
+        page.select_option("#hgapdrv", "HAM")
+        page.wait_for_function("document.querySelector('#hgapout').innerText.includes('HAM:')")
+        assert "while lapped" in page.inner_text("#hgapout")
+        assert "ham" in page.inner_text("#view").lower() and page.locator("#view table").count() >= 3
+        # pit, flags and radio
+        page.click(".tabs a:has-text('Pit, flags')")
+        page.wait_for_selector("#hrcbody tr")
+        pit = page.inner_text("#view").lower()
+        assert "22.5" in pit and "green light" in pit and "open recording" in pit and page.locator("#view a:has-text('open recording')").count() == 1
+        assert page.get_attribute("#view a:has-text('open recording')", "rel") == "noopener noreferrer"
+        assert page.locator("#view svg rect").count() >= 2  # tyre stints
+        # championship: beta endpoints returned nothing, and the page says so
+        page.click(".tabs a:has-text('Championship')")
+        page.wait_for_selector("#view .note")
+        champ = page.inner_text("#view").lower()
+        assert "beta" in champ and "no driver standings" in champ and "no constructor standings" in champ
+        # lap analysis shows validity as not provided, not as zero
+        page.click(".tabs a:has-text('Lap analysis')")
+        page.wait_for_selector("#hlapout .kpis")
+        assert "n/a" in page.inner_text("#hlapout .kpis").lower() and "not provided" in page.inner_text("#hlapout .kpis").lower()
+        # DRS: raw codes on a 0-14 axis
+        page.click(".tabs a:has-text('Telemetry')")
+        page.wait_for_selector("#htrkout svg")
+        assert "raw state codes" in page.inner_text("#htrkout").lower() and "estimate" in page.inner_text("#htrkout").lower()
         # switching to FastF1 restores its year range
         page.goto(server + "/#/hist")
         page.reload()

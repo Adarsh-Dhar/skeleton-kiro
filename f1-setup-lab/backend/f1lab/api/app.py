@@ -262,6 +262,15 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, fast
             raise NotFound(report_id)
         return rep
 
+    @app.get("/api/historical/openf1/cache")
+    def hist_openf1_cache():
+        return hist.openf1_cache()
+
+    @app.delete("/api/historical/openf1/cache")
+    def hist_openf1_cache_clear():
+        """Forget every cached OpenF1 answer (stored sessions are not touched); the next import downloads again."""
+        return hist.clear_openf1_cache()
+
     @app.get("/api/historical/drivers")
     async def hist_drivers(year: int = Query(..., ge=2018, le=2100), event: str = Query(..., min_length=1), session: str = Query(..., min_length=1),
                            provider: Provider = "fastf1"):
@@ -314,6 +323,10 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, fast
     @app.get("/api/historical/sessions/{session_id}/position")
     def hist_position(session_id: str, driver: str = Query(..., min_length=1), lap: int | None = None, limit: int = Query(3000, ge=1, le=10000)):
         return hist.position(session_id, driver, lap, limit)
+
+    @app.get("/api/historical/sessions/{session_id}/datasets/{name}")
+    def hist_dataset(session_id: str, name: str, driver: str | None = None, limit: int = Query(4000, ge=0, le=20000)):
+        return hist.dataset(session_id, name, driver, limit)
 
     @app.get("/api/historical/sessions/{session_id}/weather")
     def hist_weather(session_id: str):

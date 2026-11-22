@@ -157,34 +157,91 @@ times, not how a real car behaves. `HISTORICAL F1` values are real race-weekend 
 enter a setup experiment. `SYNTHETIC` values come from an invented model. The three never mix.
 
 ## Historical F1 mode: OpenF1 provider
-[OpenF1](https://openf1.org) serves historical Formula 1 data **from 2023 onwards, free and without an account**. In **Historical F1** the *Data
-source* selector defaults to OpenF1; FastF1 stays available (it is the API and CLI default, and the only source before 2023).
-From the command line: `python scripts/import_historical.py --provider openf1 --year 2025 --event "Abu Dhabi" --session R --drivers VER HAM`.
+[OpenF1](https://openf1.org) serves historical Formula 1 data **from the 2023 season onwards, free and without an account**. In **Historical F1**
+the *Data source* selector defaults to OpenF1; FastF1 stays available (it is the API and CLI default, and the only source before 2023). From the
+command line:
+`python scripts/import_historical.py --provider openf1 --year 2025 --event "Abu Dhabi" --session R --drivers VER HAM`
+(`--no-race-data` skips the race datasets, `--refresh-cache` downloads everything again). Inspect what was stored with
+`python scripts/inspect_historical_session.py openf1-2025-abu-dhabi-grand-prix-r`.
 
 | | OpenF1 | FastF1 |
 |---|---|---|
-| Seasons | 2023 onwards | 2018 onwards |
+| Seasons | 2023 onwards (what exists depends on what you import; nothing is bundled) | 2018 onwards |
 | Account | none | F1TV Access/Pro/Premium |
 | Session id | `openf1-<year>-<event>-<session>` | `fastf1-<year>-<event>-<session>` |
 | Brake | on/off, stored as `brake_applied` (0/100) | on/off, stored as `brake_applied` |
 | Not provided | steering, corner positions, steward lap deletions/validity | corner positions need circuit info |
 
-* **Throttle and cache.** Requests are limited to 3 per second and 30 per minute, retried with back-off on HTTP 429 and 5xx (honouring
-  `Retry-After`) and can be cancelled between requests. Every non-empty answer is cached on disk in `data/openf1-cache/`, so a repeated
-  import sends no request for data it already has. OpenF1 publishes no quota; these limits are deliberately conservative, so a full
-  20-driver race (car data and position in 30-minute windows) takes several minutes the first time.
-* **Partial imports.** Laps are required. Weather, stints, pit stops, race control and each driver's car/position data are optional: when
-  one is empty or fails the session is stored with `partial: true`, and the session overview shows an *Import coverage* panel with the rows
-  and status of every endpoint and the drivers that had no car or position data.
-* **Derived values, listed in the manifest.** `distance_m` is speed integrated over time within each lap (OpenF1 has no distance channel);
-  the lap of each car/position sample comes from OpenF1 lap start times (samples outside every lap are dropped); `session_time_s` counts from the
-  session start OpenF1 publishes; `tyre_life` is tyre age at stint start plus laps in the stint. Position coordinates are OpenF1's raw units
-  (not verified as metres) and `(0, 0, 0)` "no signal" samples are dropped. `rainfall` is an on/off flag (stored as `rainfall_flag`, not mm).
-* **Tests.** `tests/test_openf1.py` runs the client, importer and API against a fake OpenF1 server (`tests/openf1_fakes.py`): rate limiter,
-  retries, cache, windows, partial coverage, cancel, dedupe. `tests/test_ui_openf1.py` drives the page. A real-network check is opt-in:
-  `RUN_NETWORK_TESTS=1 pytest tests/test_openf1.py -k live`. OpenF1 has not been contacted by the default test run.
-* **Attribution.** Data from OpenF1, an unofficial open-source API, not affiliated with Formula 1. OpenF1 data is not EA SPORTS F1 game data and
-  never enters a setup experiment.
+### Which OpenF1 endpoints are used
+All 18 documented endpoints are integrated except the per-lap mini-sector arrays (`segments_sector_*`) and the driver headshots/team colours.
+
+| OpenF1 endpoint | Stored as | Shown in |
+|---|---|---|
+| `meetings`, `sessions`, `drivers` | event list, session list, driver list | import form, overview |
+| `laps` | lap table incl. sector times and `i1_speed_kph`, `i2_speed_kph`, `st_speed_kph` | Lap analysis |
+| `stints`, `pit` | compound, stint, tyre life; pit stops (manifest) | Lap analysis, Pit, flags & radio |
+| `car_data` | per-driver telemetry (speed, throttle, brake on/off, gear, rpm, raw DRS code) | Telemetry, Compare |
+| `location` | per-driver x/y/z track location | Track map |
+| `weather` | air/track temperature, humidity, wind, pressure, `rainfall_flag` | Weather & tyres |
+| `race_control` | flags, safety car, messages (manifest) | Pit, flags & radio |
+| `position` | **running order** over time (`race_position` dataset) | Race & results |
+| `session_result` | classification, DNF/DNS/DSQ, points, times | Race & results |
+| `starting_grid` | grid (filed by OpenF1 under the *qualifying* session; the importer looks it up there) | Race & results |
+| `intervals`, `overtakes` | gaps to leader and car ahead; overtake events (race and sprint only) | Race & results |
+| `team_radio` | clip links (https only; the audio stays on Formula 1's server) | Pit, flags & radio |
+| `drivers_championship`, `teams_championship` | standings (beta endpoints, race sessions only) | Championship |
+
+`location` (where the car is on the circuit) and `position` (P1, P2, ...) are different datasets and are never mixed: the UI says *track location*
+for the first and *running order* for the second. Per-session datasets live in `f1_hist_dataset` (migration 7) and are served by
+`GET /api/historical/sessions/{id}/datasets/{name}` (`race_position`, `session_result`, `starting_grid`, `intervals`, `overtakes`, `team_radio`,
+`drivers_championship`, `teams_championship`, `pit_stops`, `race_control`; optional `driver` and `limit`).
+
+### What the real API turned out to do (checked against api.openf1.org, November 2026)
+* The starting grid is not under the race's session key. It is under the qualifying-type session (Qualifying for a race, Sprint Qualifying or the
+  2023 "Sprint Shootout" for a sprint).
+* Both championship endpoints returned no rows for every race and sprint tried (2023 to 2026). They are imported and reported as `empty` with a
+  "beta endpoint" note, never filled in.
+* A driver who retires has `position: null` with `dnf: true`; the UI shows the status, not a blank. Qualifying results carry one time per phase (Q1, Q2, Q3).
+* The 2023 Bahrain Grand Prix has no `pit` rows although its stints show tyre changes. Pit stops are not reconstructed from stints.
+* `stop_duration` is only published from the 2024 United States GP onwards. Lapped drivers have a text gap such as `+1 LAP`, not seconds.
+* Team radio is a limited selection of clips and is thinner in 2026.
+
+### Throttling, cache and refresh
+* Requests are limited to 3 per second and 30 per minute, retried with back-off on HTTP 429 and 5xx (honouring `Retry-After`), and can be cancelled
+  between requests. OpenF1 publishes no quota; the limits are deliberately conservative, so a full 20-driver race with car data and location
+  (30-minute windows) takes several minutes the first time. Tick off *race data*, telemetry or location in the form to import less.
+* Every non-empty answer is cached in `data/openf1-cache/` with the time it was fetched. Answers expire after **30 days** (`OPENF1_CACHE_TTL_DAYS`;
+  `0` disables the cache). A session that finished within the last 48 hours may still be gaining data, so its cached answers are only trusted for
+  an hour and the import warns you. Empty answers are never cached.
+* **Refresh:** tick *download again, ignoring the OpenF1 cache* (API field `refresh_cache`, CLI `--refresh-cache`) to re-download one session.
+  *Clear cache* in the form (or `DELETE /api/historical/openf1/cache`) removes every cached answer; stored sessions are kept. A normal
+  re-import of a stored session reuses the cache and sends no request for data it already holds.
+* **Provenance:** the session overview's *Import coverage* panel lists, per dataset, the status (`ok`, `empty`, `error`, `not applicable`), rows,
+  downloads and cache hits, and the oldest answer's fetch time.
+
+### Partial imports
+Laps are required. Everything else is optional. `partial: true` means an endpoint failed or a driver is missing car or location data. An empty
+beta endpoint, or one that does not apply to the session type (grid, gaps and overtakes for practice or qualifying), is reported but is not a failure.
+
+### Estimated and missing values (also listed in each manifest)
+* **Estimated here:** `distance_m` is speed integrated over time within each lap (OpenF1 has no distance channel) and lap numbers of samples come
+  from OpenF1's lap start times, which OpenF1 calls approximate. `session_time_s` counts from the session start OpenF1 publishes. `tyre_life` is
+  tyre age at stint start plus laps in the stint. `round` is the meeting's place in the season order.
+* **Raw, not converted:** x/y/z are OpenF1 location values in its own units with an arbitrary origin (not verified as metres, although the stored
+  columns keep the canonical names `x_m`, `y_m`, `z_m`). DRS is the raw state code: 0 and 1 off, 8 detected, 10, 12 and 14 on, 2, 3 and 9 undocumented.
+  `rainfall` is an on/off flag (`rainfall_flag`), not millimetres.
+* **Not provided:** steering, corner positions, brake pressure, and lap validity. The UI shows lap validity as "not provided", never as zero invalid laps.
+
+### Tests
+* `tests/test_openf1.py`: the client, importer, cache expiry/refresh and API against a fake server (`tests/openf1_fakes.py`).
+* `tests/test_openf1_fixtures.py`: every endpoint's field names and the normalizers against **real downloaded responses** in
+  `tests/fixtures/openf1/` (2023 race, 2024 qualifying, 2024 sprint, 2025 race, 2026 race; refresh them with `scripts/refresh_openf1_fixtures.py`).
+* `tests/test_ui_openf1.py`: the browser flow through every OpenF1 tab.
+* Opt-in real-network suite: `RUN_NETWORK_TESTS=1 pytest tests/test_openf1.py -k live` imports one driver from each of the five sessions above
+  (it takes several minutes because of the throttle). The default test run never contacts OpenF1.
+
+**Attribution.** Data from OpenF1, an unofficial open-source API, not affiliated with Formula 1. OpenF1 data is not EA SPORTS F1 game data and
+never enters a setup experiment.
 
 ## Reading the results honestly
 

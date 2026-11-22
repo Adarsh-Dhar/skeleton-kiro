@@ -30,16 +30,28 @@ MAX_GAP_S = 2.0  # samples further apart than this are not bridged when integrat
 LAP_END_TOLERANCE_S = 2.0
 MAX_RACE_CONTROL = 1000
 
+# DRS values as documented by OpenF1 (interpretation from FastF1); None = documented as unknown ("?").
+DRS_STATES = {0: "off", 1: "off", 2: None, 3: None, 8: "detected, eligible in the activation zone", 9: None, 10: "on", 12: "on", 14: "on"}
+COORDINATE_NOTE = ("x, y, z are OpenF1 'location' values: approximate positions in OpenF1's own units with an arbitrary origin. They are not "
+                   "verified as metres, even though the stored columns keep the canonical names x_m, y_m and z_m.")
+# OpenF1 files each dataset under the session type it belongs to (checked against the live API):
+RACE_ONLY = ("intervals", "overtakes", "drivers_championship", "teams_championship")
+GRID_SESSION_NAMES = {"R": ("qualifying",), "S": ("sprint qualifying", "sprint shootout")}
+BETA_ENDPOINTS = ("drivers_championship", "teams_championship")
+
 DERIVED = [
-    "distance_m: speed integrated over time within each lap (OpenF1 provides no distance channel)",
-    "lap_number of car and position samples: assigned from OpenF1 lap start times",
+    "distance_m (estimate): speed integrated over time within each lap (OpenF1 provides no distance channel)",
+    "lap_number of car and location samples (estimate): assigned from OpenF1 lap start times, which OpenF1 calls approximate",
     "session_time_s: seconds since the session start time published by OpenF1",
+    "round: position of the meeting in the season's schedule (OpenF1 publishes no round number)",
     "tyre_life: tyre age at stint start plus laps completed in the stint",
     "pits: true for pit-out laps and laps in which OpenF1 logged a pit stop",
 ]
 NOT_PROVIDED = [
     "steering angle", "circuit corner positions", "stewards' lap deletions and lap validity",
     "brake pressure (OpenF1 reports only brake on/off; stored as brake_applied 0/100)",
+    "lap validity (OpenF1 does not say which laps were deleted or invalid, so none is marked invalid)",
+    "distance and speed channels beyond car_data (distance is estimated, see derived)",
 ]
 
 
@@ -129,9 +141,15 @@ def driver_list(rows: list[dict]) -> list[dict]:
     return list(seen.values())
 
 
-def session_info(meeting: dict, session: dict, year: int, session_type: str) -> dict:
+def round_number(meetings: list[dict], meeting: dict) -> int | None:
+    """Position of a meeting in the season order (derived: OpenF1 has no round number)."""
+    order = [m.get("meeting_key") for m in _meetings_sorted(meetings)]
+    return order.index(meeting.get("meeting_key")) + 1 if meeting.get("meeting_key") in order else None
+
+
+def session_info(meeting: dict, session: dict, year: int, session_type: str, round_: int | None = None) -> dict:
     return {"year": year, "event": meeting.get("meeting_name"), "event_official": meeting.get("meeting_official_name"),
-            "location": meeting.get("location"), "round": None, "circuit": meeting.get("circuit_short_name") or meeting.get("location"),
+            "location": meeting.get("location"), "round": round_, "circuit": meeting.get("circuit_short_name") or meeting.get("location"),
             "session_type": session_type, "session_name": session.get("session_name") or session_type,
             "session_date": session.get("date_start"), "session_url": None}
 
@@ -182,6 +200,7 @@ def normalize_laps(laps: list[dict], stints: list[dict], pit: list[dict], driver
             "lap_time_s": _num(lap.get("lap_duration")),
             "sector_1_s": _num(lap.get("duration_sector_1")), "sector_2_s": _num(lap.get("duration_sector_2")),
             "sector_3_s": _num(lap.get("duration_sector_3")),
+            "i1_speed_kph": _num(lap.get("i1_speed")), "i2_speed_kph": _num(lap.get("i2_speed")), "st_speed_kph": _num(lap.get("st_speed")),
             "compound": stint.get("compound") if stint else None,
             "tyre_life": age + (n - start) if age is not None and start is not None else None,
             "pits": bool(lap.get("is_pit_out_lap")) or (number, n) in pit_laps,
@@ -191,7 +210,7 @@ def normalize_laps(laps: list[dict], stints: list[dict], pit: list[dict], driver
         return df
     for c in ("driver_number", "lap_number", "stint", "tyre_life"):
         df[c] = pd.to_numeric(df[c], errors="coerce").astype("Int64")
-    for c in ("lap_time_s", "sector_1_s", "sector_2_s", "sector_3_s"):
+    for c in ("lap_time_s", "sector_1_s", "sector_2_s", "sector_3_s", "i1_speed_kph", "i2_speed_kph", "st_speed_kph"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     df["pits"] = df["pits"].astype("boolean")
     return df
@@ -305,6 +324,97 @@ def pit_stops(rows: list[dict], drivers: list[dict]) -> list[dict]:
     return out
 
 
+def grid_session(sessions: list[dict], code: str) -> dict | None:
+    """The session OpenF1 files the starting grid under: the qualifying-type session before a race or sprint."""
+    names = GRID_SESSION_NAMES.get(code, ())
+    return next((s for s in sessions if str(s.get("session_name", "")).strip().lower() in names and not s.get("is_cancelled")), None)
+
+
+def _codes(drivers: list[dict]) -> dict[str, str]:
+    return {str(d["number"]): d["code"] for d in drivers}
+
+
+def _driver(codes: dict[str, str], number: Any) -> str | None:
+    return None if number is None else codes.get(str(number), str(number))
+
+
+def _gap(v: Any) -> tuple[float | None, str | None]:
+    """OpenF1 gaps are seconds, a text such as '+1 LAP', a list (qualifying, one per phase) or null."""
+    if isinstance(v, bool) or v is None or isinstance(v, list):
+        return None, None
+    if isinstance(v, (int, float)):
+        return float(v), None
+    try:
+        return float(v), None
+    except (TypeError, ValueError):
+        return None, str(v)
+
+
+def race_position(rows: list[dict], drivers: list[dict], t0: datetime | None) -> list[dict]:
+    """Running order over time (OpenF1 'position' endpoint: P1, P2, ...). Not the same thing as track location."""
+    codes = _codes(drivers)
+    out = [{"driver": _driver(codes, r.get("driver_number")), "date": r.get("date"), "time_s": _rel_s(parse_dt(r.get("date")), t0),
+            "position": _int(r.get("position"))} for r in rows if _int(r.get("position")) is not None and r.get("driver_number") is not None]
+    return sorted(out, key=lambda r: (r["date"] or "", r["position"]))
+
+
+def session_result(rows: list[dict], drivers: list[dict]) -> list[dict]:
+    codes = _codes(drivers)
+    out = []
+    for r in rows:
+        gap_s, gap_text = _gap(r.get("gap_to_leader"))
+        out.append({"driver": _driver(codes, r.get("driver_number")), "position": _int(r.get("position")), "dnf": bool(r.get("dnf")),
+                    "dns": bool(r.get("dns")), "dsq": bool(r.get("dsq")), "laps": _int(r.get("number_of_laps")), "points": _num(r.get("points")),
+                    "duration": r.get("duration"), "gap_to_leader": r.get("gap_to_leader"), "gap_to_leader_s": gap_s, "gap_to_leader_text": gap_text})
+    return sorted(out, key=lambda r: (r["position"] is None, r["position"] or 0))
+
+
+def starting_grid(rows: list[dict], drivers: list[dict]) -> list[dict]:
+    codes = _codes(drivers)
+    return sorted(({"driver": _driver(codes, r.get("driver_number")), "position": _int(r.get("position")), "lap_duration_s": _num(r.get("lap_duration"))}
+                   for r in rows), key=lambda r: (r["position"] is None, r["position"] or 0))
+
+
+def intervals(rows: list[dict], drivers: list[dict], t0: datetime | None) -> list[dict]:
+    """Gaps to the leader and to the car ahead. Lapped cars have a text gap ('+1 LAP') instead of seconds."""
+    codes = _codes(drivers)
+    out = []
+    for r in sorted(rows, key=lambda r: str(r.get("date") or "")):
+        gap_s, gap_text = _gap(r.get("gap_to_leader"))
+        int_s, int_text = _gap(r.get("interval"))
+        out.append({"driver": _driver(codes, r.get("driver_number")), "date": r.get("date"), "time_s": _rel_s(parse_dt(r.get("date")), t0),
+                    "gap_to_leader_s": gap_s, "gap_to_leader_text": gap_text, "interval_s": int_s, "interval_text": int_text})
+    return out
+
+
+def overtakes(rows: list[dict], drivers: list[dict], t0: datetime | None) -> list[dict]:
+    codes = _codes(drivers)
+    return [{"date": r.get("date"), "time_s": _rel_s(parse_dt(r.get("date")), t0), "overtaking": _driver(codes, r.get("overtaking_driver_number")),
+             "overtaken": _driver(codes, r.get("overtaken_driver_number")), "position": _int(r.get("position"))}
+            for r in sorted(rows, key=lambda r: str(r.get("date") or ""))]
+
+
+def team_radio(rows: list[dict], drivers: list[dict], t0: datetime | None) -> list[dict]:
+    """Radio clips (a limited selection, not the full record). Only https links are kept."""
+    codes = _codes(drivers)
+    return [{"driver": _driver(codes, r.get("driver_number")), "date": r.get("date"), "time_s": _rel_s(parse_dt(r.get("date")), t0),
+             "recording_url": r["recording_url"]}
+            for r in sorted(rows, key=lambda r: str(r.get("date") or "")) if str(r.get("recording_url") or "").startswith("https://")]
+
+
+def drivers_championship(rows: list[dict], drivers: list[dict]) -> list[dict]:
+    codes = _codes(drivers)
+    out = [{"driver": _driver(codes, r.get("driver_number")), "points_start": _num(r.get("points_start")), "points_current": _num(r.get("points_current")),
+            "position_start": _int(r.get("position_start")), "position_current": _int(r.get("position_current"))} for r in rows]
+    return sorted(out, key=lambda r: (r["position_current"] is None, r["position_current"] or 0))
+
+
+def teams_championship(rows: list[dict]) -> list[dict]:
+    out = [{"team": r.get("team_name"), "points_start": _num(r.get("points_start")), "points_current": _num(r.get("points_current")),
+            "position_start": _int(r.get("position_start")), "position_current": _int(r.get("position_current"))} for r in rows]
+    return sorted(out, key=lambda r: (r["position_current"] is None, r["position_current"] or 0))
+
+
 def build_manifest(info: dict, drivers: list[dict], channels: dict, session_slug: str) -> dict:
     return {
         "provider": PROVIDER, "source_label": SOURCE_LABEL, "session_id": session_slug, "year": info["year"],
@@ -313,4 +423,7 @@ def build_manifest(info: dict, drivers: list[dict], channels: dict, session_slug
         "session_type": info["session_type"], "session_date": info.get("session_date"), "session_url": info.get("session_url"),
         "imported_at": datetime.now(UTC).isoformat(), "drivers": drivers, "channels": channels,
         "derived": DERIVED, "not_provided": NOT_PROVIDED, "attribution": ATTRIBUTION, "import_status": "COMPLETED",
+        "units": {"x_m": COORDINATE_NOTE, "y_m": COORDINATE_NOTE, "z_m": COORDINATE_NOTE, "distance_m": "estimate: speed integrated within each lap",
+                  "drs": "raw OpenF1 DRS state code (see drs_states)"},
+        "drs_states": {str(k): v for k, v in DRS_STATES.items()},
     }

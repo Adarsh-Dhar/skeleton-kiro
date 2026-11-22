@@ -573,23 +573,10 @@ async function viewReport(id) {
 
 /* ------------------------------------------------------------- historical F1 */
 const HIST_TABS = [['overview', 'Overview'], ['laps', 'Lap analysis'], ['telemetry', 'Telemetry'], ['track', 'Track map'], ['compare', 'Compare'], ['weather', 'Weather & tyres']];
+const OPENF1_TABS = [['race', 'Race & results'], ['strategy', 'Pit, flags & radio'], ['championship', 'Championship']];
+const histTabs = (m) => (m.provider === 'openf1' ? HIST_TABS.concat(OPENF1_TABS) : HIST_TABS);
 const PROVIDER_LABEL = { fastf1: 'FASTF1', openf1: 'OPENF1' };
 const histChipFor = (m) => `<span class="chip hist">${esc(m.source_label || `HISTORICAL F1 · ${PROVIDER_LABEL[m.provider] || String(m.provider || '').toUpperCase()}`)}</span>`;
-/* Per-endpoint coverage of an OpenF1 import: what each endpoint returned and which drivers had no car/position data. */
-const histCoverage = (m) => {
-  const c = m.coverage;
-  if (!c) return '';
-  const eps = Object.entries(c.endpoints || {});
-  const empty = c.drivers_empty || {};
-  const cls = (st) => (st === 'ok' ? 'good' : st === 'error' ? 'badc' : 'dim');
-  const missing = Object.entries(empty).filter(([, v]) => (v || []).length)
-    .map(([k, v]) => `<tr><td class="dim">${esc(k)} missing for</td><td class="mono">${v.map(esc).join(', ')}</td></tr>`).join('');
-  const rows = eps.map(([k, v]) => `<tr><td class="dim">${esc(k)}</td><td><span class="${cls(v.status)}">${esc(v.status)}</span> &middot; ${esc(v.rows)} rows${v.note ? ` <span class="dim">${esc(v.note)}</span>` : ''}</td></tr>`).join('');
-  const notes = [...(m.not_provided || []).map((x) => `not provided by ${esc(m.provider)}: ${esc(x)}`), ...(m.derived || []).map((x) => `derived here: ${esc(x)}`)];
-  return `<div class="panel"><h2>Import coverage ${m.partial ? '<span class="tag">partial</span>' : ''}</h2><table><tbody>${rows}${missing}</tbody></table>
-    ${(m.warnings || []).length ? `<p class="hint">${m.warnings.map(esc).join('<br>')}</p>` : ''}
-    ${notes.length ? `<details><summary class="hint">What is derived or missing</summary><ul class="hint">${notes.map((n) => `<li>${n}</li>`).join('')}</ul></details>` : ''}</div>`;
-};
 /* FastF1 brake data is an on/off flag stored as brake_applied (0/100); brake_pct is a fallback. */
 const brakeOf = (pts) => (pts.some((p) => p.brake_applied != null) ? 'brake_applied' : 'brake_pct');
 
@@ -602,12 +589,13 @@ async function viewHist() {
     <div class="field"><label for="hsession">Session</label><select id="hsession"><option>&mdash;</option></select></div>
     <div class="field"><label>&nbsp;</label><button class="btn" id="hloaddrv" type="button">Load drivers</button></div></div>
     <div class="field"><label>Drivers</label><div id="hdrivers"><span class="dim">Pick a session and press "Load drivers" (leave all checked = whole field, or uncheck to select).</span></div></div>
-    <div class="field"><label>Include</label><div class="row"><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="htele" checked> telemetry</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hpos" checked> position</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hwx" checked> weather</label></div></div>
+    <div class="field"><label>Include</label><div class="row"><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="htele" checked> telemetry</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hpos" checked> position</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hwx" checked> weather</label><label style="text-transform:none;letter-spacing:0" class="hopen"><input type="checkbox" id="hrace" checked> race data (order, results, grid, gaps, overtakes, radio)</label></div></div>
+    <div class="field hopen"><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hfresh"> download again, ignoring the OpenF1 cache</label></div>
     <button class="btn primary" id="himport">Import session</button><span class="dim" id="hmsg"></span><div id="hprog"></div></div>
     <div class="note info">The first import downloads and processes the session (OpenF1 is throttled to 30 requests a minute, so a full field can take several minutes); results are cached locally and re-imports are fast. Historical data never enters your setup experiments.</div></div>
   <div><div class="panel"><h2>Imported sessions</h2><div id="hist-lib"><div class="dim">Loading&hellip;</div></div></div>
     <div class="panel"><h2>Recent imports</h2><div id="hist-jobs"><div class="dim">Loading&hellip;</div></div></div>
-    <div class="panel"><h2>About this data</h2><p class="hint">OpenF1 (free, from 2023) and FastF1 (F1TV account, from 2018) are unofficial sources of Formula 1 timing and telemetry data. Neither is affiliated with Formula 1, and coverage varies by year and session. OpenF1 supplies no steering, no corner positions and no lap deletions. Car telemetry is sampled at the timing feed's rate; weather is sampled sparsely. Historical sessions contain no car setup configuration, so they are kept separate from the TRIALFORGE setup experiments.</p></div></div></div>`;
+    <div class="panel"><h2>About this data</h2><p class="hint">OpenF1 (free, from 2023) and FastF1 (F1TV account, from 2018) are unofficial sources of Formula 1 timing and telemetry data. Neither is affiliated with Formula 1, and coverage varies by year and session. OpenF1 supplies no steering, no corner positions and no lap deletions. Car telemetry is sampled at the timing feed's rate; weather is sampled sparsely. Historical sessions contain no car setup configuration, so they are kept separate from the TRIALFORGE setup experiments.</p><p class="hint" id="hcache"></p></div></div></div>`;
   let events = [];
   const fillEvents = () => {
     $('#hevent').innerHTML = events.map((e, i) => `<option value="${i}">${esc(e.event)}${e.location ? ` (${esc(e.location)})` : ''}</option>`).join('') || '<option>No events</option>';
@@ -624,7 +612,9 @@ async function viewHist() {
     catch (e) { events = []; fillEvents(); $('#hist-err').innerHTML = errorsBox(e); }
   };
   $('#hyear').addEventListener('change', loadEvents);
+  const syncProvider = () => document.querySelectorAll('.hopen').forEach((e) => { e.hidden = provider() !== 'openf1'; });
   $('#hprov').addEventListener('change', () => {
+    syncProvider();
     const open = provider() === 'openf1', year = $('#hyear');
     year.min = open ? '2023' : '2018';
     if (open && +year.value < 2023) year.value = '2025';
@@ -646,7 +636,8 @@ async function viewHist() {
     if (!ev) { $('#hist-err').innerHTML = errorsBox(new Error('pick a Grand Prix first')); return; }
     const drivers = [...document.querySelectorAll('.hdrv:checked')].map((c) => c.value);
     const body = { provider: provider(), year: +$('#hyear').value, event: ev.event, session: $('#hsession').value, drivers,
-      include_telemetry: $('#htele').checked, include_position: $('#hpos').checked, include_weather: $('#hwx').checked };
+      include_telemetry: $('#htele').checked, include_position: $('#hpos').checked, include_weather: $('#hwx').checked,
+      include_race_data: $('#hrace').checked, refresh_cache: $('#hfresh').checked };
     try {
       const r = await api('POST', '/api/historical/import', body);
       $('#hmsg').textContent = r.duplicate ? (r.state === 'COMPLETED' ? 'already imported (no download needed)' : 'this import is already running') : 'import started';
@@ -692,16 +683,28 @@ async function viewHist() {
         : '<div class="empty">No historical sessions imported yet.</div>';
     } catch (e) { $('#hist-lib').innerHTML = errorsBox(e); }
   };
+  const loadCache = async () => {
+    try {
+      const c = await api('GET', '/api/historical/openf1/cache');
+      $('#hcache').innerHTML = `${esc(c.files)} cached OpenF1 answers (${esc((c.bytes / 1e6).toFixed(1))} MB), kept ${esc(c.ttl_days)} days${c.newest ? `, newest ${esc(c.newest.replace('T', ' ').slice(0, 16))} UTC` : ''}. <button class="btn small" id="hclear" type="button">Clear cache</button>`;
+      $('#hclear').addEventListener('click', async () => {
+        if (!window.confirm('Delete the cached OpenF1 downloads? Imported sessions are kept; the next import downloads again.')) return;
+        try { await api('DELETE', '/api/historical/openf1/cache'); toast('OpenF1 cache cleared', true); loadCache(); } catch (e) { $('#hist-err').innerHTML = errorsBox(e); }
+      });
+    } catch (e) { $('#hcache').textContent = ''; }
+  };
+  syncProvider();
   await loadEvents();
   await loadLibrary();
   await loadJobs();
+  loadCache();
 }
 
 async function viewHistSession(id, tab) {
   const m = await api('GET', `/api/historical/sessions/${id}`);
   view().innerHTML = `<div class="row"><div><h1>${esc(m.event)} ${m.round ? `<span class="dim">&middot; Round ${esc(m.round)}</span>` : ''}</h1>
     <p class="sub">${esc(m.circuit || '')} &middot; ${esc(m.session)} (${esc(m.session_type)}) &middot; ${esc(m.session_date || '')} &middot; ${histChipFor(m)}</p></div><div class="spacer"></div><a class="btn" href="#/hist">All sessions</a></div>
-    <div class="tabs">${HIST_TABS.map(([k, n]) => `<a href="#/hist/${esc(id)}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div><div id="hist-body"><div class="dim">Loading&hellip;</div></div>`;
+    <div class="tabs">${histTabs(m).map(([k, n]) => `<a href="#/hist/${esc(id)}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div><div id="hist-body"><div class="dim">Loading&hellip;</div></div>`;
   const body = $('#hist-body');
   const drivers = m.drivers || [];
   const drvOpts = (sel = drivers[0]?.code) => drivers.map((d) => `<option value="${esc(d.code)}" ${d.code === sel ? 'selected' : ''}>${esc(d.code)} &middot; ${esc(d.name)}</option>`).join('');
@@ -712,6 +715,7 @@ async function viewHistSession(id, tab) {
     const best = {};
     laps.forEach((l) => { if (l.lap_time_s != null && l.is_valid !== false && (!best[l.driver] || l.lap_time_s < best[l.driver].lap_time_s)) best[l.driver] = l; });
     const ch = m.channels || {};
+    const validity = laps.some((l) => l.is_valid != null || l.is_deleted != null);
     body.innerHTML = `<div class="grid g21"><div>
       <div class="panel"><h2>Session</h2><table><tbody>
         <tr><td class="dim">Event</td><td>${esc(m.event)}${m.event_official && m.event_official !== m.event ? ` <span class="dim">(${esc(m.event_official)})</span>` : ''}</td></tr>
@@ -726,21 +730,23 @@ async function viewHistSession(id, tab) {
         <tr><td class="dim">Lap timing</td><td>${laps.length ? `<span class="good">${laps.length} laps</span>` : '<span class="badc">none</span>'}</td></tr>
         <tr><td class="dim">Weather</td><td>${ch.weather ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}</td></tr>
         <tr><td class="dim">Telemetry</td><td>${drivers.map((d) => `${esc(d.code)}: ${ch.telemetry?.[d.code] ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}`).join(' &middot; ') || '&mdash;'}</td></tr>
-        <tr><td class="dim">Position</td><td>${drivers.map((d) => `${esc(d.code)}: ${ch.position?.[d.code] ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}`).join(' &middot; ') || '&mdash;'}</td></tr></tbody></table>
-        <p class="hint">${esc(m.attribution || '')}</p></div>${histCoverage(m)}</div></div>`;
+        <tr><td class="dim">Track location (x/y)</td><td>${drivers.map((d) => `${esc(d.code)}: ${ch.position?.[d.code] ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}`).join(' &middot; ') || '&mdash;'}</td></tr>
+        <tr><td class="dim">Lap validity</td><td>${validity ? '<span class="good">provided</span>' : '<span class="dim">not provided by this source</span>'}</td></tr>
+        ${m.provider === 'openf1' ? `<tr><td class="dim">Running order</td><td>${m.datasets?.race_position?.rows ? `<span class="good">${esc(m.datasets.race_position.rows)} changes</span> <a href="#/hist/${esc(id)}/race">open</a>` : '<span class="dim">no</span>'}</td></tr>` : ''}</tbody></table>
+        <p class="hint">${esc(m.attribution || '')}</p></div>${HistRace.coverage(m)}</div></div>`;
   } else if (tab === 'laps') {
     body.innerHTML = `<div class="panel"><div class="row"><div class="field" style="max-width:280px"><label for="hlapdrv">Driver</label><select id="hlapdrv">${drvOpts()}</select></div></div><div id="hlapout"><div class="dim">Loading&hellip;</div></div></div>`;
     const show = async () => {
       const code = $('#hlapdrv').value, laps = await lapsFor(code);
       const rows = laps.map((l) => ({ lap: l.lap_number, sector_1: l.sector_1_s, sector_2: l.sector_2_s, sector_3: l.sector_3_s, lap_time: l.lap_time_s, outlier: l.is_valid === false }));
       $('#hlapout').innerHTML = `<div class="kpis"><div class="kpi"><b>${laps.length}</b><span>laps</span></div><div class="kpi good"><b>${laps.filter((l) => l.lap_time_s != null).length ? fmt(Math.min(...laps.map((l) => l.lap_time_s).filter((v) => v != null)), 3) : '&mdash;'}</b><span>best lap (s)</span></div>
-        <div class="kpi"><b>${laps.filter((l) => l.is_valid === false).length}</b><span>invalid/deleted</span></div><div class="kpi"><b>${[...new Set(laps.map((l) => l.compound).filter(Boolean))].join(', ') || '&mdash;'}</b><span>compounds</span></div></div>
+        <div class="kpi"><b>${laps.some((l) => l.is_valid != null || l.is_deleted != null) ? laps.filter((l) => l.is_valid === false).length : 'n/a'}</b><span>${laps.some((l) => l.is_valid != null || l.is_deleted != null) ? 'invalid/deleted' : 'invalid/deleted (not provided)'}</span></div><div class="kpi"><b>${[...new Set(laps.map((l) => l.compound).filter(Boolean))].join(', ') || '&mdash;'}</b><span>compounds</span></div></div>
         <div class="grid g2"><div class="panel"><h2>Lap time</h2>${Charts.lines({ series: [{ name: `${code} lap time`, color: '#e10600', pts: laps.filter((l) => l.lap_time_s != null).map((l) => ({ x: l.lap_number, y: l.lap_time_s, flag: l.is_valid === false })) }], xLabel: 'lap', yLabel: 'seconds' })}</div>
         <div class="panel"><h2>Sector times</h2>${Charts.sectors({ laps: rows })}</div></div>
-        <div class="panel"><h2>Laps</h2><div style="overflow:auto;max-height:420px"><table><thead><tr><th>Lap</th><th>Stint</th><th>Compound</th><th class="num">Tyre life</th><th class="num">S1</th><th class="num">S2</th><th class="num">S3</th><th class="num">Lap</th><th>Flags</th></tr></thead><tbody>
+        <div class="panel"><h2>Laps</h2><div style="overflow:auto;max-height:420px"><table><thead><tr><th>Lap</th><th>Stint</th><th>Compound</th><th class="num">Tyre life</th><th class="num">S1</th><th class="num">S2</th><th class="num">S3</th><th class="num">Lap</th>${laps.some((l) => l.st_speed_kph != null) ? '<th class="num">Trap km/h</th>' : ''}<th>Flags</th></tr></thead><tbody>
         ${laps.map((l) => `<tr class="${l.is_valid === false ? 'outlier' : ''}"><td class="mono">${esc(l.lap_number)}</td><td class="mono">${esc(l.stint ?? '&mdash;')}</td><td>${esc(l.compound || '&mdash;')}</td><td class="num">${esc(l.tyre_life ?? '&mdash;')}</td>
         <td class="num">${fmt(l.sector_1_s, 3)}</td><td class="num">${fmt(l.sector_2_s, 3)}</td><td class="num">${fmt(l.sector_3_s, 3)}</td><td class="num"><b>${fmt(l.lap_time_s, 3)}</b></td>
-        <td>${l.is_valid === false ? '<span class="tag">invalid</span>' : ''}${l.is_deleted ? '<span class="tag">deleted</span>' : ''}${l.is_accurate === false ? '<span class="tag dim">timing approx.</span>' : ''}${l.is_personal_best ? '<span class="chip completed">PB</span>' : ''}${l.pits ? '<span class="tag">pit</span>' : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
+        ${laps.some((x) => x.st_speed_kph != null) ? `<td class="num">${fmt(l.st_speed_kph, 0)}</td>` : ''}<td>${l.is_valid === false ? '<span class="tag">invalid</span>' : ''}${l.is_deleted ? '<span class="tag">deleted</span>' : ''}${l.is_accurate === false ? '<span class="tag dim">timing approx.</span>' : ''}${l.is_personal_best ? '<span class="chip completed">PB</span>' : ''}${l.pits ? '<span class="tag">pit</span>' : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
     };
     $('#hlapdrv').addEventListener('change', show); show();
   } else if (tab === 'telemetry' || tab === 'track') {
@@ -755,10 +761,10 @@ async function viewHistSession(id, tab) {
       const code = $('#htrkdrv').value, lap = $('#htrklap').value ? +$('#htrklap').value : null;
       if (tab === 'telemetry') {
         const r = await api('GET', `/api/historical/sessions/${id}/telemetry?driver=${encodeURIComponent(code)}${lap ? `&lap=${lap}` : ''}&limit=1500`);
-        $('#htrkout').innerHTML = r.samples.length ? histTraceCharts(r.samples) + `<p class="hint">${r.count} samples${lap ? ` on lap ${lap}` : ''} &middot; distance on the x-axis &middot; throttle is a percentage; brake is an on/off flag (the timing feed publishes no brake pressure); DRS is a state flag.</p>` : '<div class="empty">No telemetry stored for this driver/lap.</div>';
+        $('#htrkout').innerHTML = r.samples.length ? histTraceCharts(r.samples) + `<p class="hint">${r.count} samples${lap ? ` on lap ${lap}` : ''} &middot; distance on the x-axis${m.provider === 'openf1' ? ' (an estimate: speed integrated within the lap)' : ''} &middot; throttle is a percentage; brake is an on/off flag (the timing feed publishes no brake pressure); DRS is a raw state code.</p>` : '<div class="empty">No telemetry stored for this driver/lap.</div>';
       } else {
         const r = await api('GET', `/api/historical/sessions/${id}/track-map?driver=${encodeURIComponent(code)}${lap ? `&lap=${lap}` : ''}`);
-        $('#htrkout').innerHTML = `<div class="panel">${Charts.trackMap({ points: r.points || [], corners: r.corners || [] })}</div><p class="hint">Actual X/Y position from the timing feed${lap ? `, lap ${lap}` : ', fastest available lap stream'}.</p>`;
+        $('#htrkout').innerHTML = `<div class="panel">${Charts.trackMap({ points: r.points || [], corners: r.corners || [] })}</div><p class="hint">Actual X/Y location from the timing feed${lap ? `, lap ${lap}` : ', fastest available lap stream'}.${m.provider === 'openf1' ? ' OpenF1 coordinates are approximate, in OpenF1\'s own units with an arbitrary origin (not verified as metres); no corner markers are available. Running order (P1, P2, ...) is a different dataset: see the Race tab.' : ''}</p>`;
       }
     };
     $('#htrkdrv').addEventListener('change', async () => { await fillLaps(); show(); });
@@ -787,6 +793,12 @@ async function viewHistSession(id, tab) {
           <p class="hint">Positive delta = driver B is slower than A at that point of the lap. Delta is computed on an interpolated common distance grid, not raw samples.</p></div>`;
       } catch (e) { $('#hcmpmsg').innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
     });
+  } else if (tab === 'race' && m.provider === 'openf1') {
+    await HistRace.race(body, api, id, m);
+  } else if (tab === 'strategy' && m.provider === 'openf1') {
+    await HistRace.strategy(body, api, id, m, await api('GET', `/api/historical/sessions/${id}/laps`));
+  } else if (tab === 'championship' && m.provider === 'openf1') {
+    await HistRace.championship(body, api, id, m);
   } else if (tab === 'weather') {
     const [wx, laps] = await Promise.all([api('GET', `/api/historical/sessions/${id}/weather`), api('GET', `/api/historical/sessions/${id}/laps`)]);
     const s = wx.samples || [];
@@ -815,7 +827,8 @@ function histTraceCharts(samples) {
     <div class="panel"><h2>Throttle &amp; brake</h2>${Charts.lines({ series: [s('throttle_pct', 'throttle', '#2ecc71'), s(brakeKey, brakeName, '#e10600')], xLabel: 'distance (m)', yLabel: '%' })}</div>
     <div class="panel"><h2>RPM</h2>${Charts.lines({ series: [s('rpm', 'rpm', '#ffb400')], xLabel: 'distance (m)', yLabel: 'rpm' })}</div>
     <div class="panel"><h2>Gear</h2>${Charts.lines({ series: [s('gear', 'gear', '#c99bff')], xLabel: 'distance (m)', yLabel: 'gear' })}</div>
-    <div class="panel"><h2>DRS</h2>${Charts.lines({ series: [s('drs', 'drs', '#00cec9')], xLabel: 'distance (m)', yLabel: 'drs', ymin: -0.1, ymax: 1.1 })}</div></div>`;
+    <div class="panel"><h2>DRS state</h2>${Charts.lines({ series: [s('drs', 'drs state code', '#00cec9')], stepped: true, noDots: true, xLabel: 'distance (m)', yLabel: 'raw DRS code', ymin: -0.5, ymax: 14.5 })}
+      <p class="hint">Raw state codes, not a 0/1 flag: 0 and 1 = off, 8 = detected (eligible in the activation zone), 10, 12 and 14 = on. Codes 2, 3 and 9 are undocumented.</p></div></div>`;
 }
 
 /* -------------------------------------------------------------------- boot */

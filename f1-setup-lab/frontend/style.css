@@ -70,3 +70,5 @@ svg.chart{width:100%;height:auto;display:block}svg.chart text{fill:var(--dim);fo
 label.chk{display:inline-flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);margin:0}
 label.chk.dim{color:var(--dim)}.insp-ch{gap:10px 16px;margin:10px 0}
 .insp-read{margin:8px 0 12px;height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px}  /* fixed: hovering never shifts the charts */.insp-read td,.insp-read th{padding:3px 8px}
+
+[hidden]{display:none!important}

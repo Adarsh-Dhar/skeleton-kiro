@@ -48,6 +48,10 @@ def inspect(repo: HistoricalRepository, sid: str) -> dict:
         gaps = wx["time_s"].diff().dropna()
         out["weather"].update(median_interval_s=round(float(gaps.median()), 1), max_interval_s=round(float(gaps.max()), 1))
     out["stored_frames"] = repo.frame_info(sid)
+    if m.get("coverage"):  # OpenF1: per-dataset provenance and the stored datasets
+        out["coverage"] = m["coverage"]
+        out["datasets"] = repo.dataset_info(sid)
+        out["derived"], out["not_provided"] = m.get("derived", []), m.get("not_provided", [])
     return out
 
 
@@ -76,6 +80,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     print(f"{info['event']} {info['year']} {info['session']} ({info['session_id']})")
     print(f"laps: {info['laps']}")
+    for name, e in (info.get("coverage") or {}).get("endpoints", {}).items():
+        print(f"  {name:22s} {e['status']:15s} rows={e['rows']} requests={e.get('requests', 0)} cache_hits={e.get('cache_hits', 0)} fetched={e.get('fetched_at')}")
     for d, p in info["per_driver"].items():
         print(f"  {d}: {p['telemetry_samples']} telemetry samples, {p['position_samples']} position samples; "
               f"missing channels: {', '.join(p['missing_channels']) or 'none'}")

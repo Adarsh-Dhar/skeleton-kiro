@@ -23,6 +23,7 @@ from db.models.f1 import (
     POSITION_COLUMNS,
     TELEMETRY_COLUMNS,
     WEATHER_COLUMNS,
+    HistDataset,
     HistFrame,
     HistLap,
     HistPosition,
@@ -59,8 +60,11 @@ class HistoricalRepository:
 
     # ----------------------------------------------------------------- writes
     def save_session(self, sid: str, manifest: dict, laps: pd.DataFrame, weather: pd.DataFrame,
-                     telemetry: dict[str, pd.DataFrame], position: dict[str, pd.DataFrame]) -> str:
-        """Replace session ``sid`` atomically. Returns the session id."""
+                     telemetry: dict[str, pd.DataFrame], position: dict[str, pd.DataFrame],
+                     datasets: dict[str, tuple[list[dict], str | None]] | None = None) -> str:
+        """Replace session ``sid`` atomically. Returns the session id.
+
+        ``datasets`` maps a name to ``(rows, fetched_at)``; empty datasets are not stored."""
         _check(sid)
         frames: list[tuple[str, str, pd.DataFrame]] = [("laps", "", laps), ("weather", "", weather)]
         frames += [("telemetry", str(code), df) for code, df in telemetry.items()]
@@ -78,6 +82,10 @@ class HistoricalRepository:
                 n = write_frame(conn, table.__table__, df, keys, canon)
                 conn.execute(HistFrame.__table__.insert().values(session_id=sid, kind=kind, driver=driver,
                                                                  columns_json=json.dumps(schema_of(df)), rows=n))
+            for name, (rows, fetched_at) in (datasets or {}).items():
+                if rows:
+                    conn.execute(HistDataset.__table__.insert().values(session_id=sid, name=name, rows_json=json.dumps(rows, default=str),
+                                                                      rows=len(rows), fetched_at=fetched_at))
             # marked complete last, inside the same transaction
             conn.execute(HistSession.__table__.update().where(HistSession.session_id == sid).values(status=COMPLETE))
         return sid
@@ -132,6 +140,21 @@ class HistoricalRepository:
             if kind in ("telemetry", "position"):
                 where.append(table.__table__.c.driver == stored_driver)
             return read_frame(conn, table.__table__, json.loads(cj), where)
+
+    def dataset(self, sid: str, name: str) -> list[dict]:
+        """Rows of a stored dataset ([] when the session or dataset is not stored)."""
+        _check(sid)
+        with self.engine.connect() as conn:
+            if conn.execute(select(HistSession.status).where(HistSession.session_id == sid)).scalar() != COMPLETE:
+                return []
+            raw = conn.execute(select(HistDataset.rows_json).where(HistDataset.session_id == sid, HistDataset.name == name)).scalar()
+        return json.loads(raw) if raw else []
+
+    def dataset_info(self, sid: str) -> dict[str, dict]:
+        _check(sid)
+        with self.engine.connect() as conn:
+            rows = conn.execute(select(HistDataset.name, HistDataset.rows, HistDataset.fetched_at).where(HistDataset.session_id == sid)).all()
+        return {n: {"rows": r, "fetched_at": f} for n, r, f in rows}
 
     def laps(self, sid: str) -> pd.DataFrame:
         return self._read(sid, "laps")
