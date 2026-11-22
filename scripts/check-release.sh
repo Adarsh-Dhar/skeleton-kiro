@@ -9,8 +9,9 @@
 #
 # Usage:  scripts/check-release.sh [--reuse]      --reuse keeps an existing release venv (faster, not a clean run)
 # Env:    PYTHON_BIN (interpreter >= 3.11 used to create the venv), RELEASE_VENV (venv path)
-# Opt-in: RUN_NETWORK_TESTS=1 (real FastF1 download; needs F1_USERNAME/F1_PASSWORD), RUN_START_SMOKE=1 (install + start both
-#         apps), INSTALL_CHROMIUM=1 (download Playwright's Chromium if missing; otherwise browser tests are UNAVAILABLE)
+# Opt-in: RUN_NETWORK_TESTS=1 (real FastF1 download; needs F1_USERNAME/F1_PASSWORD), RUN_START_SMOKE=1 (start both apps with
+#         scripts/start-*.sh on F1_PORT/WATTWISE_PORT, default 8001/8002, against a throw-away database; occupied ports are
+#         reported UNAVAILABLE and never touched; STARTUP_TIMEOUT seconds per app, default 900), INSTALL_CHROMIUM=1 (download Playwright's Chromium if missing; otherwise browser tests are UNAVAILABLE)
 # Needs network access to PyPI to install dependencies.
 set -uo pipefail
 
@@ -65,6 +66,120 @@ summary_and_exit() {
     [[ ${#FAILED[@]} -eq 0 ]]
     exit $?
 }
+
+# ---------------------------------------------------------------- startup smoke (RUN_START_SMOKE=1)
+# Starts both apps with the official start scripts (each installs into its own app .venv), against a throw-away
+# database, on F1_PORT/WATTWISE_PORT (default 8001/8002). Never touches a process it did not start: an occupied port
+# is reported as UNAVAILABLE. The EXIT trap stops anything this check started, on success and on failure.
+SMOKE_F1_PORT="${F1_PORT:-8001}"
+SMOKE_WW_PORT="${WATTWISE_PORT:-8002}"
+SMOKE_STARTED=()          # "name|wrapper-pid" of apps this check started
+SMOKE_TIMEOUT="${STARTUP_TIMEOUT:-900}"   # seconds per app (first start installs dependencies)
+
+smoke_stop() {  # smoke_stop NAME  -- stop one app this check started
+    local entry name pid
+    for entry in "${SMOKE_STARTED[@]+"${SMOKE_STARTED[@]}"}"; do
+        name="${entry%%|*}"; pid="${entry##*|}"
+        [[ "$name" == "$1" ]] || continue
+        "$ROOT/scripts/start-$name.sh" stop >/dev/null 2>&1
+        local i; for i in $(seq 1 40); do kill -0 "$pid" 2>/dev/null || break; sleep 0.25; done
+        kill -TERM "$pid" 2>/dev/null; sleep 0.5; kill -KILL "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null
+    done
+    local keep=() e
+    for e in "${SMOKE_STARTED[@]+"${SMOKE_STARTED[@]}"}"; do [[ "${e%%|*}" == "$1" ]] || keep+=("$e"); done
+    SMOKE_STARTED=("${keep[@]+"${keep[@]}"}")
+}
+smoke_cleanup() { smoke_stop f1; smoke_stop wattwise; }
+
+health_ok() {  # health_ok PORT APP TIMEOUT  -- poll /api/health until HTTP 200 with the expected app and SDK version
+    "$PY" - "$1" "$2" "$3" "$SDK_VERSION" <<'EOF'
+import json, sys, time, urllib.request
+port, app, timeout, sdk = int(sys.argv[1]), sys.argv[2], float(sys.argv[3]), sys.argv[4]
+end, last = time.time() + timeout, "no response"
+while time.time() < end:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=3) as r:
+            body = json.loads(r.read())
+            if r.status != 200:
+                last = f"HTTP {r.status}"
+            elif body.get("app") != app:
+                sys.exit(f"port {port} answers as {body.get('app')!r}, not {app!r}")
+            elif body.get("trialforge") != sdk:
+                sys.exit(f"{app} runs trialforge {body.get('trialforge')}, expected {sdk}")
+            else:
+                print(f"HTTP 200, {app}, trialforge {sdk}")
+                print(f"trialforge loaded from {body.get('trialforge_path')}", file=sys.stderr)
+                sys.exit(0)
+    except OSError as exc:
+        last = str(exc)
+    time.sleep(1)
+sys.exit(f"no healthy response on port {port} within {timeout:.0f}s ({last})")
+EOF
+}
+
+smoke_start() {  # smoke_start NAME PORT_VAR PORT APP_NAME
+    local name="$1" pvar="$2" port="$3" app="$4" log="$LOG/start-$1.log"
+    printf '%-58s ' "startup smoke: start $app on port $port"
+    if ! port_free "$PY" "$port"; then
+        UNAVAILABLE+=("startup smoke $app: port $port is already in use by another process (not touched); free it or set $pvar")
+        echo "UNAVAILABLE (port $port already in use; not touched)"; return 1
+    fi
+    if pid_alive "$(read_pid "$name")"; then
+        UNAVAILABLE+=("startup smoke $app: an instance from this checkout is already running (pid file .run/$name.pid)")
+        echo "UNAVAILABLE (already running from this checkout)"; return 1
+    fi
+    env "$pvar=$port" TRIALFORGE_DB="$SMOKE_DB" "$ROOT/scripts/start-$name.sh" start </dev/null >"$log" 2>&1 &
+    SMOKE_STARTED+=("$name|$!")
+    if health_ok "$port" "$app" "$SMOKE_TIMEOUT" >>"$log" 2>&1; then
+        local spid; spid="$(read_pid "$name")"
+        if ! pid_alive "$spid"; then
+            FAILED+=("startup smoke: $app (no live server pid in .run/$name.pid)"); echo "FAILED  (no server pid; log: $log)"; return 1
+        fi
+        if command -v lsof >/dev/null 2>&1 && ! lsof -nP -a -p "$spid" -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+            FAILED+=("startup smoke: $app (port $port is not served by pid $spid)"); echo "FAILED  (port not owned by the started server; log: $log)"; return 1
+        fi
+        PASSED+=("startup smoke: start $app on port $port"); echo "PASSED  (pid $spid, $(grep '^HTTP 200' "$log" | tail -1))"
+        return 0
+    fi
+    FAILED+=("startup smoke: start $app on port $port"); echo "FAILED  (log: $log)"; tail -5 "$log" | sed 's/^/    /'
+    return 1
+}
+
+both_healthy() { health_ok "$SMOKE_F1_PORT" f1-setup-lab 10 && health_ok "$SMOKE_WW_PORT" wattwise-lab 10; }
+
+start_smoke() {
+    SMOKE_DB="$TMP/startup-smoke/trialforge.db"
+    mkdir -p "$(dirname "$SMOKE_DB")"
+    local f1_ok=0 ww_ok=0
+    smoke_start f1 F1_PORT "$SMOKE_F1_PORT" f1-setup-lab && f1_ok=1
+    smoke_start wattwise WATTWISE_PORT "$SMOKE_WW_PORT" wattwise-lab && ww_ok=1
+    if [[ $f1_ok -eq 1 && $ww_ok -eq 1 ]]; then
+        run "startup smoke: both apps healthy at the same time" both_healthy
+        run "startup smoke: shared database created and migrated" "$PY" - "$SMOKE_DB" <<'EOF'
+import sys
+from sqlalchemy import inspect
+from db import create_db_engine, current_version, latest_version
+e = create_db_engine(sys.argv[1])
+assert current_version(e) == latest_version(), (current_version(e), latest_version())
+tables = set(inspect(e).get_table_names())
+missing = {"experiments", "app_experiment_owner", "f1_import_job", "ww_household", "ww_tariff"} - tables
+assert not missing, f"missing tables: {missing}"
+print("schema", current_version(e))
+EOF
+        # independence: stopping F1 must not affect WATTWISE
+        smoke_stop f1
+        run "startup smoke: WATTWISE keeps running after F1 stops" health_ok "$SMOKE_WW_PORT" wattwise-lab 10
+        run "startup smoke: F1 port $SMOKE_F1_PORT released after stop" port_free "$PY" "$SMOKE_F1_PORT"
+    fi
+    smoke_cleanup
+    if [[ $ww_ok -eq 1 ]]; then
+        run "startup smoke: WATTWISE port $SMOKE_WW_PORT released after stop" port_free "$PY" "$SMOKE_WW_PORT"
+    fi
+}
+
+trap 'smoke_cleanup; rm -rf "$TMP"' EXIT
+trap 'echo; echo "interrupted"; exit 130' INT TERM
 
 BASE_PY="$(find_python)" || exit 1
 echo "TRIALFORGE release check  ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
@@ -160,7 +275,11 @@ if [[ -n "${RUN_NETWORK_TESTS:-}" ]]; then
 else
     skip "real FastF1 import (smoke_fastf1_import.py)" "opt-in: RUN_NETWORK_TESTS=1; needs F1_USERNAME/F1_PASSWORD"
 fi
-[[ -n "${RUN_START_SMOKE:-}" ]] || skip "full install + start of both apps on 8001/8002" "opt-in: RUN_START_SMOKE=1"
+if [[ -n "${RUN_START_SMOKE:-}" ]]; then
+    start_smoke
+else
+    skip "startup smoke: both apps via start scripts on 8001/8002" "opt-in: RUN_START_SMOKE=1"
+fi
 skip "real EA SPORTS F1 25 UDP session and setup-mapping probe" "manual gate: needs the game (scripts/probe_setup.py --guided)"
 skip "real household meter export, tariff and bill reconciliation" "manual gate: needs your data"
 

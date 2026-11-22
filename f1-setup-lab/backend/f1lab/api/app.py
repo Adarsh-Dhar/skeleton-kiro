@@ -23,7 +23,7 @@ from trialforge import (
 )
 from trialforge import ValidationError as TFValidationError
 
-from f1lab import HISTORICAL_NOTICE, SIM_RECORDED_NOTICE, SYNTHETIC_NOTICE, __version__
+from f1lab import NOTICES, SYNTHETIC_NOTICE, __version__
 from f1lab.adapters.vehicle_model import FACTORS
 from f1lab.api.schemas import (
     METHODS,
@@ -122,8 +122,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, fast
     def meta():
         ver = verification_status(lab.repo.db_engine)
         return {
-            "notice": SYNTHETIC_NOTICE, "notices": {"synthetic": SYNTHETIC_NOTICE, "live_simulator": SIM_RECORDED_NOTICE,
-                                                  "historical": HISTORICAL_NOTICE},
+            "notice": SYNTHETIC_NOTICE, "notices": dict(NOTICES),
             "modes": [{"id": "synthetic", "label": "Synthetic simulator"}, {"id": "live_simulator", "label": "Live simulator (EA SPORTS F1 25)"}],
             "game": {"id": GAME_ID, "default_port": 20777, "variants": VARIANT_LABELS,
                      # 'verified' = manually confirmed for every game variant; per-variant status and its source in 'verification'

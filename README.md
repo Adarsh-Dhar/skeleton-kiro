@@ -83,8 +83,28 @@ package and both apps with their test dependencies, and checks that both apps us
 source tree). It then builds the other packages, lints, compiles every Python file, checks JavaScript and shell syntax, runs the SDK, root,
 F1 and WATTWISE test suites and the browser tests (when Playwright's Chromium is installed; `INSTALL_CHROMIUM=1` downloads it), and prints
 PASSED / FAILED / SKIPPED / UNAVAILABLE separately. Opt-in: `RUN_NETWORK_TESTS=1` (real FastF1 download, needs `F1_USERNAME` /
-`F1_PASSWORD`), `RUN_START_SMOKE=1` (full install and start of both apps). The real-game and real-household checks are always listed as
-SKIPPED manual gates. Skipped and unavailable checks are not passes.
+`F1_PASSWORD`), `RUN_START_SMOKE=1` (startup smoke, below). The real-game and real-household checks are always listed as SKIPPED manual
+gates. Skipped and unavailable checks are not passes.
+
+**Startup smoke (`RUN_START_SMOKE=1`).** Starts F1 SETUP LAB and WATTWISE LAB with the official `scripts/start-f1.sh` and
+`scripts/start-wattwise.sh` on `F1_PORT`/`WATTWISE_PORT` (default 8001/8002) against a throw-away database. It reports each step
+separately:
+
+* each app answers `/api/health` with HTTP 200, the right app name and the installed SDK version;
+* the server pid owns the port;
+* both apps are healthy together;
+* the shared database is created and migrated;
+* WATTWISE keeps running after F1 stops;
+* both ports are free afterwards.
+
+A port already in use (for example by apps you are running yourself) is reported as UNAVAILABLE and that process is never touched. An exit
+trap stops anything the check started, whether it succeeds, fails or is interrupted. The first start installs each app's `.venv`; allow a
+few minutes, or raise `STARTUP_TIMEOUT` (seconds per app, default 900).
+
+```bash
+RUN_START_SMOKE=1 scripts/check-release.sh                                         # ports 8001/8002 must be free
+RUN_START_SMOKE=1 F1_PORT=18001 WATTWISE_PORT=18002 scripts/check-release.sh       # if you keep the apps running
+```
 
 ## Manual acceptance gates
 
