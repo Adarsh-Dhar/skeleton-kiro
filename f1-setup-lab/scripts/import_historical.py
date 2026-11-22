@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 from pathlib import Path
@@ -31,7 +32,7 @@ def build_service(db: str | None) -> HistoricalService:
     migrate(engine)
     file = sqlite_file_path(url)
     cache = (file.parent if file else Path("data")) / "fastf1-cache"
-    # on a terminal FastF1 may ask for your F1 account sign-in (or set F1_USERNAME / F1_PASSWORD beforehand)
+    # on a terminal FastF1 may ask for your F1TV sign-in (or set F1_USERNAME / F1_PASSWORD beforehand; needs F1TV Access/Pro/Premium)
     return HistoricalService(engine, cache, client_factory=lambda: FastF1Client(cache, interactive=sys.stdin.isatty()))
 
 
@@ -73,6 +74,16 @@ async def run(args: argparse.Namespace) -> int:
     return 1
 
 
+
+def run_without_waiting_for_workers(coro):
+    """Like asyncio.run(), but does not wait for executor threads at the end: after an import timeout, FastF1's worker
+    thread can stay blocked on the network for a long time, and the result is already known."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--year", type=int, required=True)
@@ -87,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     t0 = time.time()
     try:
-        rc = asyncio.run(run(args))
+        rc = run_without_waiting_for_workers(run(args))
     except ValueError as exc:  # request validation
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -96,4 +107,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # FastF1's download runs in a worker thread that cannot be interrupted; after a timeout it can stay blocked on the network.
+    # The result is final at this point, so exit without waiting for that thread (sys.exit would wait for it indefinitely).
+    os._exit(code)

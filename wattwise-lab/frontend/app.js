@@ -87,7 +87,8 @@ const hhBody = (extra = {}) => ({ tariff_id: HH.tariff_id, ev: HH.ev, appliances
   ...(HH.baseline_import_id ? { baseline_import_id: HH.baseline_import_id } : {}), ...extra });
 const tariffOf = (id) => META.tariffs.find((t) => t.id === id);
 async function refreshTariffs() { META.tariffs = await api('GET', '/api/tariffs'); if (!tariffOf(HH.tariff_id)) { HH.tariff_id = META.tariffs[0]?.id; await saveHousehold(); } }
-const inlineTariff = (t) => ({ name: t.name, demand_charge_per_kw: t.demand_charge_per_kw || 0, periods: t.periods.map((p) => ({ label: p.label || '', start: p.start, end: p.end, price: p.price })) });
+// the whole tariff (incl. optional fixed charges, tiers, taxes, seasonal/day-type periods), minus its library id
+const inlineTariff = (t) => { const { id, ...rest } = JSON.parse(JSON.stringify(t)); return { ...rest, demand_charge_per_kw: rest.demand_charge_per_kw || 0 }; };
 const tariffSelect = (id, sel) => `<select id="${id}">${META.tariffs.map((t) => `<option value="${esc(t.id)}" ${t.id === sel ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}</select>`;
 function bandBar(t) {
   const steps = []; for (let k = 0; k < 96; k++) steps.push(k * 0.25);
@@ -165,11 +166,35 @@ async function viewDashboard() {
 /* ------------------------------------------------------------ 2. household configuration */
 async function viewHousehold() {
   let editing = JSON.parse(JSON.stringify(tariffOf(HH.tariff_id)));
-  const renderPeriods = () => $('#periods').innerHTML = editing.periods.map((p, i) => `<tr data-i="${i}"><td><input data-f="label" value="${esc(p.label || '')}" maxlength="30" aria-label="Period name"></td>
-    <td><input data-f="start" type="number" step="0.25" min="0" max="24" value="${p.start}" aria-label="Start hour"></td><td><input data-f="end" type="number" step="0.25" min="0" max="24" value="${p.end}" aria-label="End hour"></td>
-    <td><input data-f="price" type="number" step="0.001" min="0" max="10" value="${p.price}" aria-label="Price per kWh"></td><td><button type="button" class="btn small danger" data-del="${i}" aria-label="Remove period">Remove</button></td></tr>`).join('');
-  const readTariff = () => ({ name: $('#tname').value, demand_charge_per_kw: parseFloat($('#tdemand').value) || 0,
-    periods: $$('#periods tr').map((tr) => ({ label: $('[data-f=label]', tr).value, start: parseFloat($('[data-f=start]', tr).value), end: parseFloat($('[data-f=end]', tr).value), price: parseFloat($('[data-f=price]', tr).value) })) });
+  const renderPeriods = () => $('#periods').innerHTML = editing.periods.map((p, i) => `<tr data-i="${i}"><td><input data-f="label" value="${esc(p.label || '')}" maxlength="30" aria-label="Period name" style="width:84px"></td>
+    <td><input data-f="start" type="number" step="0.25" min="0" max="24" value="${p.start}" aria-label="Start hour" style="width:58px"></td><td><input data-f="end" type="number" step="0.25" min="0" max="24" value="${p.end}" aria-label="End hour" style="width:58px"></td>
+    <td><input data-f="price" type="number" step="0.001" min="0" max="10" value="${p.price}" aria-label="Price per kWh" style="width:70px"></td>
+    <td><select data-f="days" aria-label="Days" style="width:92px">${['all', 'weekday', 'weekend'].map((d) => `<option value="${d}" ${(p.days || 'all') === d ? 'selected' : ''}>${d}</option>`).join('')}</select></td>
+    <td><input data-f="months" value="${esc((p.months || []).join(','))}" placeholder="all" aria-label="Months (1-12, comma separated)" style="width:60px"></td>
+    <td><button type="button" class="btn small danger" data-del="${i}" aria-label="Remove period" title="Remove period">&times;</button></td></tr>`).join('');
+  const optNum = (id) => { const v = $(id).value.trim(); return v === '' ? null : parseFloat(v); };
+  const renderTiers = () => $('#tiers').innerHTML = (editing.tiers || []).map((t, i) => `<tr><td><input data-t="up" type="number" step="0.1" min="0" value="${t.up_to_kwh ?? ''}" placeholder="no limit" aria-label="Tier up to kWh"></td>
+    <td><input data-t="adder" type="number" step="0.001" value="${t.adder_per_kwh ?? 0}" aria-label="Tier price adder per kWh"></td><td><button type="button" class="btn small danger" data-tdel="${i}">Remove</button></td></tr>`).join('');
+  const readTiers = () => $$('#tiers tr').map((tr) => { const up = $('[data-t=up]', tr).value.trim(); return { up_to_kwh: up === '' ? null : parseFloat(up), adder_per_kwh: parseFloat($('[data-t=adder]', tr).value) || 0 }; });
+  // every field of the tariff model: an extended tariff is never saved without its advanced parts
+  const readTariff = () => {
+    const t = { name: $('#tname').value, demand_charge_per_kw: parseFloat($('#tdemand').value) || 0,
+      periods: $$('#periods tr').map((tr) => {
+        const p = { label: $('[data-f=label]', tr).value, start: parseFloat($('[data-f=start]', tr).value), end: parseFloat($('[data-f=end]', tr).value), price: parseFloat($('[data-f=price]', tr).value) };
+        const days = $('[data-f=days]', tr).value, months = $('[data-f=months]', tr).value.split(',').map((m) => parseInt(m, 10)).filter((m) => Number.isInteger(m));
+        if (days !== 'all') p.days = days;
+        if (months.length) p.months = months;
+        return p;
+      }) };
+    for (const [k, id] of [['fixed_daily_charge', '#tfixd'], ['fixed_monthly_charge', '#tfixm'], ['surcharge_per_kwh', '#tsur'], ['tax_pct', '#ttax'], ['export_credit_per_kwh', '#texp']]) {
+      const v = optNum(id); if (v !== null && v !== 0) t[k] = v;
+    }
+    const bd = optNum('#tbilld'); if (bd !== null) t.billing_days = Math.round(bd);
+    if ($('#tdbasis').value !== 'daily') t.demand_basis = $('#tdbasis').value;
+    const tiers = readTiers(); if (tiers.length) { t.tiers = tiers; t.tier_basis = $('#ttbasis').value; }
+    if (t.periods.some((p) => p.days || p.months)) t.simulation_day = { month: parseInt($('#tsimm').value, 10) || 1, day_type: $('#tsimd').value };
+    return t;
+  };
   const validate = async () => {
     const t = readTariff(); editing = { ...editing, ...t };
     try {
@@ -186,9 +211,27 @@ async function viewHousehold() {
     <div class="panel"><h2>Electricity tariff</h2><div class="field"><label for="tsel">Tariff</label>${tariffSelect('tsel', HH.tariff_id)}</div>
       <div class="field"><label for="tname">Name</label><input id="tname" value="${esc(editing.name)}" maxlength="60"></div>
       <div id="tband">${bandBar(editing)}</div>
-      <div class="scroll"><table><thead><tr><th>Period</th><th>From (h)</th><th>To (h)</th><th>Price / kWh</th><th></th></tr></thead><tbody id="periods"></tbody></table></div>
+      <div class="scroll" style="overflow-x:auto"><table><thead><tr><th>Period</th><th>From (h)</th><th>To (h)</th><th>Price / kWh</th><th>Days</th><th>Months</th><th></th></tr></thead><tbody id="periods"></tbody></table></div>
       <div class="row" style="margin:8px 0"><button type="button" class="btn small" id="addp">Add period</button><span class="hint">Hours run 0&ndash;24; a period such as 23 to 7 wraps past midnight.</span></div>
-      <div class="field"><label for="tdemand">Demand charge per kW of daily peak</label><input id="tdemand" type="number" step="0.01" min="0" max="100" value="${editing.demand_charge_per_kw || 0}"></div>
+      <div class="field"><label for="tdemand">Demand charge per kW of peak</label><input id="tdemand" type="number" step="0.01" min="0" max="100" value="${editing.demand_charge_per_kw || 0}"></div>
+      <details id="tadv" ${['fixed_daily_charge', 'fixed_monthly_charge', 'surcharge_per_kwh', 'tax_pct', 'export_credit_per_kwh', 'tiers', 'demand_basis'].some((k) => editing[k]) || editing.periods.some((p) => p.days || p.months) ? 'open' : ''}>
+        <summary>Advanced charges (copy them from your bill; leave empty if your bill has none)</summary>
+        <div class="grid g2">
+          <div class="field"><label for="tfixd">Fixed charge per day</label><input id="tfixd" type="number" step="0.01" min="0" max="1000" value="${editing.fixed_daily_charge ?? ''}"></div>
+          <div class="field"><label for="tfixm">Fixed charge per month</label><input id="tfixm" type="number" step="0.01" min="0" max="10000" value="${editing.fixed_monthly_charge ?? ''}"></div>
+          <div class="field"><label for="tbilld">Days per billing period</label><input id="tbilld" type="number" step="1" min="1" max="366" value="${editing.billing_days ?? ''}" placeholder="30"></div>
+          <div class="field"><label for="tdbasis">Demand charge applies to</label><select id="tdbasis"><option value="daily" ${(editing.demand_basis || 'daily') === 'daily' ? 'selected' : ''}>each day's peak</option><option value="billing_period" ${editing.demand_basis === 'billing_period' ? 'selected' : ''}>the billing period's peak</option></select></div>
+          <div class="field"><label for="tsur">Surcharge per kWh</label><input id="tsur" type="number" step="0.001" min="0" max="10" value="${editing.surcharge_per_kwh ?? ''}"></div>
+          <div class="field"><label for="ttax">Tax (% of all charges)</label><input id="ttax" type="number" step="0.01" min="0" max="100" value="${editing.tax_pct ?? ''}"></div>
+          <div class="field"><label for="texp">Export credit per kWh (solar)</label><input id="texp" type="number" step="0.001" min="0" max="10" value="${editing.export_credit_per_kwh ?? ''}"></div>
+          <div class="field"><label for="ttbasis">Tier thresholds count energy per</label><select id="ttbasis"><option value="daily" ${(editing.tier_basis || 'daily') === 'daily' ? 'selected' : ''}>day</option><option value="billing_period" ${editing.tier_basis === 'billing_period' ? 'selected' : ''}>billing period</option></select></div></div>
+        <h3>Tiered pricing (slabs)</h3><p class="hint">Each tier adds to the period price for the kWh up to its limit; the last tier has no limit. Leave empty for no tiers.</p>
+        <table><thead><tr><th>Up to kWh</th><th>Extra price / kWh</th><th></th></tr></thead><tbody id="tiers"></tbody></table>
+        <button type="button" class="btn small" id="addtier">Add tier</button>
+        <h3>Day used by the one-day simulator</h3><p class="hint">Only matters when periods are limited to weekdays/weekends or months. Historical meter data is priced on each reading's real date.</p>
+        <div class="grid g2"><div class="field"><label for="tsimm">Month</label><input id="tsimm" type="number" min="1" max="12" value="${editing.simulation_day?.month ?? 1}"></div>
+          <div class="field"><label for="tsimd">Day type</label><select id="tsimd"><option value="weekday" ${(editing.simulation_day?.day_type || 'weekday') === 'weekday' ? 'selected' : ''}>weekday</option><option value="weekend" ${editing.simulation_day?.day_type === 'weekend' ? 'selected' : ''}>weekend</option></select></div></div>
+      </details>
       <div id="tvalid"></div>
       <div class="row"><button type="button" class="btn primary" id="tsave">Save changes</button><button type="button" class="btn" id="tnew">Save as new tariff</button><button type="button" class="btn danger" id="tdel">Delete</button></div></div>
   </div><div>
@@ -206,7 +249,10 @@ async function viewHousehold() {
     <button type="button" class="btn primary" id="hsave" style="width:100%;padding:12px">Save household settings</button>
     <button type="button" class="btn" id="hreset" style="width:100%;margin-top:8px">Reset to example household</button>
     <p class="hint">Saved on the server (available in every browser on this installation). These are the values you enter, not measurements.</p></div></div>`;
-  renderPeriods(); validate();
+  renderPeriods(); renderTiers(); validate();
+  $('#addtier').addEventListener('click', () => { editing = { ...editing, ...readTariff(), tiers: [...readTiers(), { up_to_kwh: null, adder_per_kwh: 0 }] }; renderTiers(); validate(); });
+  $('#tiers').addEventListener('click', (e) => { const b = e.target.closest('[data-tdel]'); if (!b) return; const t = readTiers(); t.splice(+b.dataset.tdel, 1); editing = { ...editing, ...readTariff(), tiers: t }; renderTiers(); validate(); });
+  $('#tadv').addEventListener('input', validate); $('#tadv').addEventListener('change', validate);
   $('#tsel').addEventListener('change', async () => { HH.tariff_id = $('#tsel').value; try { await saveHousehold(); } catch (e) { toast(e.message); } viewHousehold(); });
   $('#addp').addEventListener('click', () => { editing = { ...editing, ...readTariff() }; editing.periods.push({ label: '', start: 0, end: 24, price: 0.25 }); renderPeriods(); validate(); });
   $('#periods').addEventListener('click', (e) => { const b = e.target.closest('[data-del]'); if (!b) return; editing = { ...editing, ...readTariff() }; editing.periods.splice(+b.dataset.del, 1); renderPeriods(); validate(); });
@@ -278,6 +324,8 @@ function meterSummary(p) {
   return `<div class="kpis">${kpi(money(s.energy_cost), 'cost of this period', '', p.tariff.name)}${kpi(fmt(s.energy_kwh, 1) + ' kWh', 'energy')}${kpi(fmt(s.peak_power_kw, 1) + ' kW', 'peak demand')}${kpi(fmt(s.hours_covered, 1) + ' h', 'covered', '', `${s.readings} readings every ${fmt(s.interval_minutes, 0)} min`)}</div>
     ${(p.warnings || []).length ? `<ul class="warnlist">${p.warnings.slice(0, 8).map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
     <p class="hint">Quality: ${q.duplicates} duplicate, ${q.out_of_order} out of order, ${q.unit_converted} converted from watts, ${q.invalid} rejected.</p>
+    ${q.interpretation ? `<p class="hint">Read as <b>${esc(q.interpretation.reading_kind)}</b> in <b>${esc(q.interpretation.unit)}</b> from <code>${esc(q.interpretation.timestamp_column)}</code> / <code>${esc(q.interpretation.value_column)}</code>, time zone <b>${esc(q.timezone)}</b>; ${q.summary.rows_used} of ${q.summary.rows_total} rows used, ${q.summary.rows_skipped} skipped.</p>
+      ${q.row_log.length ? `<details><summary>Skipped and transformed rows (${q.row_log.length})</summary><div class="scroll"><table><tbody>${q.row_log.map((l) => `<tr><td class="num">${l.line ?? ''}</td><td>${esc(l.action)}</td><td>${esc(l.reason)}</td></tr>`).join('')}</tbody></table></div></details>` : ''}` : ''}
     ${Charts.hourly({ profile: s.hourly_profile, tariff: p.tariff })}`;
 }
 async function viewMeter() {
@@ -411,9 +459,31 @@ function attachMeter(d, runId, done) {
     <div class="field"><label for="m-file">CSV file</label><input id="m-file" type="file" accept=".csv,text/csv"></div><div class="field"><label for="m-csv">or paste CSV</label><textarea id="m-csv" spellcheck="false"></textarea></div>
     <div class="grid g2"><div class="field"><label for="m-unit">Unit of a plain "power" column</label><select id="m-unit"><option>kW</option><option>W</option></select></div>
       <div class="field"><label for="m-soc">Car charge when it left (%)</label><input id="m-soc" type="number" min="0" max="100" step="1" value="${d.desired_charge_pct}"></div></div>
+    <details id="m-adv"><summary>Other file formats (same reader as My usage)</summary>
+      <p class="hint">Use this for your supplier's export as-is: other column names, local times, energy per interval or a cumulative meter register. Leave it closed for a plain <code>timestamp,power_kw</code> file.</p>
+      <label class="row" style="text-transform:none;letter-spacing:0"><input type="checkbox" id="m-advon" style="width:auto"> Read the file with these settings</label>
+      <div class="grid g2">
+        <div class="field"><label for="m-tscol">Timestamp column</label><input id="m-tscol" placeholder="auto"></div>
+        <div class="field"><label for="m-valcol">Value column</label><input id="m-valcol" placeholder="auto"></div>
+        <div class="field"><label for="m-kind">Readings are</label><select id="m-kind"><option value="">auto</option><option value="power">average power</option><option value="interval_energy">energy per interval</option><option value="cumulative">cumulative meter register</option></select></div>
+        <div class="field"><label for="m-aunit">Unit</label><select id="m-aunit"><option value="">auto</option><option>kW</option><option>W</option><option>kWh</option><option>Wh</option></select></div>
+        <div class="field"><label for="m-tz">Time zone of timestamps without an offset</label><input id="m-tz" value="UTC" placeholder="e.g. Asia/Kolkata"></div>
+        <div class="field"><label for="m-marks">Timestamp marks the interval</label><select id="m-marks"><option value="start">start</option><option value="end">end</option></select></div>
+        <div class="field"><label for="m-dec">Decimal separator</label><select id="m-dec"><option value=".">. (1.5)</option><option value=",">, (1,5)</option></select></div>
+        <div class="field"><label for="m-fmt">Timestamp format (if not ISO-8601)</label><input id="m-fmt" placeholder="e.g. %d/%m/%Y %H:%M"></div>
+        <div class="field"><label for="m-roll">Register rollover (kWh)</label><input id="m-roll" type="number" min="1" placeholder="none"></div></div></details>
     <div id="m-prev"></div><div class="row"><button class="btn" id="m-d1">Load demo file</button><button class="btn" id="m-pv">Preview</button><button class="btn primary" id="m-go">Attach to schedule</button></div>`, (bg, close) => {
     let filename = 'meter.csv';
-    const body = () => ({ csv: $('#m-csv', bg).value, unit: $('#m-unit', bg).value, tariff: inlineTariff(d.household.tariff), tariff_id: null, filename, departure_charge_pct: num('#m-soc', bg) });
+    const advOptions = () => {
+      if (!$('#m-advon', bg).checked) return null;
+      const v = (id) => $(id, bg).value.trim(), o = { timezone: v('#m-tz') || 'UTC', timestamp_marks: v('#m-marks'), decimal: v('#m-dec') };
+      if (v('#m-tscol')) o.timestamp_column = v('#m-tscol'); if (v('#m-valcol')) o.value_column = v('#m-valcol');
+      if (v('#m-kind')) o.reading_kind = v('#m-kind'); if (v('#m-aunit')) o.unit = v('#m-aunit');
+      if (v('#m-fmt')) o.timestamp_format = v('#m-fmt'); if (v('#m-roll')) o.rollover_kwh = parseFloat(v('#m-roll'));
+      return o;
+    };
+    const body = () => ({ csv: $('#m-csv', bg).value, unit: $('#m-unit', bg).value, tariff: inlineTariff(d.household.tariff), tariff_id: null, filename,
+      departure_charge_pct: num('#m-soc', bg), options: advOptions() });
     $('#m-file', bg).addEventListener('change', async () => { const f = $('#m-file', bg).files[0]; if (f) { filename = f.name; $('#m-csv', bg).value = await readFileText(f); } });
     $('#m-d1', bg).addEventListener('click', async () => { try { $('#m-csv', bg).value = await api('GET', '/api/demo/meter.csv'); filename = 'demo_meter.csv'; } catch (e) { $('#m-err', bg).innerHTML = errorsBox(e); } });
     $('#m-pv', bg).addEventListener('click', async () => { $('#m-err', bg).innerHTML = ''; try { $('#m-prev', bg).innerHTML = meterSummary(await api('POST', '/api/meter/preview', body())); } catch (e) { $('#m-err', bg).innerHTML = errorsBox(e); } });

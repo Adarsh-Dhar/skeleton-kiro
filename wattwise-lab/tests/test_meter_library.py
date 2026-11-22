@@ -156,3 +156,39 @@ def test_import_errors_are_422(client):
 def test_existing_preview_and_run_attach_routes_unchanged(client):
     r = client.post("/api/meter/preview", json={"csv": _demo(client), "unit": "kW"})
     assert r.status_code == 200 and r.json()["reading_kind"] == "imported"
+
+
+# ---------------------------------------------------------------------------------------------- run attachment with the same reader
+REGISTER = "Zeit;Zaehler\n" + "\n".join(
+    f"2026-03-03 {16 + i // 4:02d}:{15 * (i % 4):02d};{100 + 0.25 * i:.2f}".replace(".", ",") for i in range(9)) + "\n"
+REGISTER_OPTS = {"timestamp_column": "Zeit", "value_column": "Zaehler", "reading_kind": "cumulative", "unit": "kWh",
+                 "timezone": "Europe/Berlin", "decimal": ","}
+
+
+def test_run_attachment_accepts_the_library_formats(client, make_experiment):
+    d = make_experiment(design={"method": "full_factorial", "levels": 2})
+    run = d["runs"][0]["run_id"]
+    p = client.post("/api/meter/preview", json={"csv": REGISTER, "options": REGISTER_OPTS})
+    assert p.status_code == 200, p.text
+    q = p.json()["quality"]
+    assert q["interpretation"]["reading_kind"] == "cumulative" and q["timezone"] == "Europe/Berlin"
+    assert p.json()["series"][0]["t"] == "2026-03-03T16:00:00+01:00"  # local time kept, so pricing uses local tariff periods
+    r = client.post(f"/api/experiments/{d['id']}/runs/{run}/meter", json={"csv": REGISTER, "options": REGISTER_OPTS, "departure_charge_pct": 85})
+    assert r.status_code == 200, r.text
+    s = r.json()["summary"]
+    assert s["energy_kwh"] == pytest.approx(2.0)  # 8 intervals x 0.25 kWh from register differences
+    assert set(s["cost_by_period"]) == {"Peak"}  # 16:00-18:00 Berlin time is the example tariff's Peak period
+    assert s["energy_cost"] == pytest.approx(2.0 * 0.36)
+    row = next(x for x in client.get(f"/api/experiments/{d['id']}").json()["runs"] if x["run_id"] == run)
+    assert row["status"] == "completed" and row["imported"] is True
+
+
+def test_run_attachment_simple_format_is_unchanged(client, make_experiment):
+    d = make_experiment(design={"method": "full_factorial", "levels": 2})
+    run = d["runs"][0]["run_id"]
+    r = client.post(f"/api/experiments/{d['id']}/runs/{run}/meter",
+                    json={"csv": client.get("/api/demo/meter.csv").text, "unit": "kW", "departure_charge_pct": 80})
+    assert r.status_code == 200 and r.json()["summary"]["readings"] == 96
+    bad = client.post(f"/api/experiments/{d['id']}/runs/{d['runs'][1]['run_id']}/meter",
+                      json={"csv": REGISTER, "options": {**REGISTER_OPTS, "timezone": "Nowhere/City"}, "departure_charge_pct": 80})
+    assert bad.status_code == 422 and "unknown timezone" in bad.json()["detail"][0]["message"]

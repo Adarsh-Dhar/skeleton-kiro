@@ -10,6 +10,7 @@ import asyncio
 import statistics
 import uuid
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from trialforge import (
     AdapterRegistry,
@@ -34,11 +35,12 @@ from db.scoped import ScopedExperimentRepository
 from wattwise import SIMULATED_NOTICE
 from wattwise.adapters.household_model import BASELINE, FACTORS, METRIC_UNITS, clock, simulate, summarise
 from wattwise.adapters.meter_adapter import MeterSimulatorAdapter
-from wattwise.adapters.meter_csv import parse_meter_csv, to_series
+from wattwise.adapters.meter_csv import ParsedMeter, parse_meter_csv, to_series
+from wattwise.adapters.meter_import import interpret
 from wattwise.api.schemas import DayRequest, ExperimentRequest, MeterAttachRequest, MeterRequest
 from wattwise.services import baseline, narrative, report_html
 from wattwise.services.household import HouseholdStore
-from wattwise.services.meter_library import MeterLibrary
+from wattwise.services.meter_library import MeterLibrary, options_from
 from wattwise.services.tariffs import TariffError, TariffStore  # noqa: F401  (TariffError re-exported)
 
 ADAPTER_PREFIX = "wattwise-sim/"
@@ -314,8 +316,23 @@ class LabService:
         return {"retried": len(failed)}
 
     # ------------------------------------------------------------------ smart-meter CSV
-    def _meter_read(self, csv_text: str, unit: str) -> tuple[Any, list[Measurement], list[str], dict[str, int]]:
-        parsed = parse_meter_csv(csv_text, unit)
+    def _meter_read(self, csv_text: str, unit: str, options: dict | None = None) -> tuple[Any, list[Measurement], list[str], dict[str, int]]:
+        """Simple ``timestamp,power_kw|power_w`` parsing, or (when ``options`` is given) the configurable interpreter used by
+        the historical meter library: column mapping, time zones/DST, interval energy, cumulative registers. With options,
+        timestamps are converted to the chosen local time zone so readings are priced in the right tariff period."""
+        interpretation: dict[str, Any] = {}
+        if options is not None:
+            opt = options_from(options)
+            res = interpret(csv_text, opt)
+            tz = ZoneInfo(opt.timezone)
+            parsed = ParsedMeter(readings=[(r.start_utc.astimezone(tz), r.kw) for r in res.readings], unit="kW")
+            uneven = sum(1 for r in res.readings if abs(r.interval_minutes - (res.interval_minutes or r.interval_minutes)) > 1e-6)
+            parsed.errors = [*res.warnings] + ([f"{uneven} reading(s) span an irregular interval (e.g. a gap in a cumulative register); "
+                                                "they are priced as one normal interval"] if uneven else [])
+            interpretation = {"interpretation": res.options["resolved"], "summary": res.summary(), "row_log": res.row_log, "gaps": res.gaps,
+                              "timezone": opt.timezone}
+        else:
+            parsed = parse_meter_csv(csv_text, unit)
         if not parsed.readings:
             raise ValueError("; ".join(parsed.errors) or "no usable readings")
         ms = to_series("preview", parsed, "csv")
@@ -328,7 +345,7 @@ class LabService:
         valid, assessed, warnings = eng.assess(ms, "preview")
         quality = {"duplicates": sum("duplicate" in m.quality_flags for m in assessed), "out_of_order": sum("out_of_order" in m.quality_flags for m in assessed),
                    "unit_converted": sum("unit_converted" in m.quality_flags for m in assessed), "invalid": len(assessed) - len(valid)}  # fmt: skip
-        return parsed, sorted(valid, key=lambda m: m.timestamp), warnings + parsed.errors, quality | {"interval_s": interval}
+        return parsed, sorted(valid, key=lambda m: m.timestamp), warnings + parsed.errors, quality | {"interval_s": interval, **interpretation}
 
     def _meter_summary(self, valid: list[Measurement], interval_s: float, tariff: dict[str, Any]) -> dict[str, Any]:
         readings = [(m.timestamp.hour + m.timestamp.minute / 60 + m.timestamp.second / 3600, float(m.value)) for m in valid]  # kW (SDK converted W)
@@ -343,7 +360,7 @@ class LabService:
                 "hourly_profile": [{"hour": h, "kw": round(sum(v) / len(v), 3)} for h, v in sorted(hourly.items())]}  # fmt: skip
 
     def meter_preview(self, req: MeterRequest) -> dict:
-        parsed, valid, warnings, quality = self._meter_read(req.csv, req.unit)
+        parsed, valid, warnings, quality = self._meter_read(req.csv, req.unit, req.options)
         tariff = self.resolve_tariff(req.tariff_id, req.tariff)
         step = max(1, len(valid) // 480)
         return {"summary": self._meter_summary(valid, quality["interval_s"], tariff), "quality": quality, "warnings": warnings, "errors": parsed.errors, "tariff": tariff,
@@ -353,7 +370,7 @@ class LabService:
         res = self._result(exp_id)
         if not any(r.run_id == run_id for r in res.runs):
             raise NotFound(run_id)
-        parsed, valid, warnings, quality = self._meter_read(req.csv, req.unit)
+        parsed, valid, warnings, quality = self._meter_read(req.csv, req.unit, req.options)
         tariff = self._hh(res)["tariff"]  # the experiment's own tariff, so imported and simulated runs are priced identically
         s = self._meter_summary(valid, quality["interval_s"], tariff)
         meta = {"synthetic": False, "reading_kind": "imported", "imported": True}

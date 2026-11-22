@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import socket
 import sys
 
@@ -52,7 +53,7 @@ async def run(a) -> tuple[int, dict]:
             return SKIPPED, {"result": "SKIPPED", "reason": f"{job['error_code']}: {job['error']}; this is NOT a pass", "job": job}
         if job.get("error_code") == "NO_LAP_DATA" and not credentials_configured():
             return SKIPPED, {"result": "SKIPPED", "job": job,
-                             "reason": "FastF1 access needs an F1 account: set F1_USERNAME and F1_PASSWORD in your environment and run again; this is NOT a pass"}
+                             "reason": "FastF1 needs an F1TV Access/Pro/Premium account: set F1_USERNAME and F1_PASSWORD in your environment and run again; this is NOT a pass"}
         return FAILED, {"result": "FAILED", "reason": f"{job.get('error_code')}: {job['error']}", "job": job}
     info = inspect(svc.repo, job["session_id"])
     rows = sum(f["rows"] for f in info["stored_frames"])
@@ -73,6 +74,16 @@ async def run(a) -> tuple[int, dict]:
     return (PASSED if all(checks.values()) else FAILED), summary
 
 
+
+def run_without_waiting_for_workers(coro):
+    """Like asyncio.run(), but does not wait for executor threads at the end: after an import timeout, FastF1's worker
+    thread can stay blocked on the network for a long time, and the result is already known."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.run_until_complete(loop.shutdown_asyncgens())
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--year", type=int, default=2024)
@@ -90,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         rc = SKIPPED
     else:
         print(f"network ok ({where}); importing {a.year} {a.event} {a.session} {' '.join(a.drivers)} ...", flush=True)
-        rc, res = asyncio.run(run(a))
+        rc, res = run_without_waiting_for_workers(run(a))
     if a.json:
         print(json.dumps(res, indent=2, default=str))
     else:
@@ -104,4 +115,9 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # FastF1's download runs in a worker thread that cannot be interrupted; after a timeout it can stay blocked on the network.
+    # The result is final at this point, so exit without waiting for that thread (sys.exit would wait for it indefinitely).
+    os._exit(code)

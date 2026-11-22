@@ -9,7 +9,8 @@
 #
 # Usage:  scripts/check-release.sh [--reuse]      --reuse keeps an existing release venv (faster, not a clean run)
 # Env:    PYTHON_BIN (interpreter >= 3.11 used to create the venv), RELEASE_VENV (venv path)
-# Opt-in: RUN_NETWORK_TESTS=1 (real FastF1 download; needs F1_USERNAME/F1_PASSWORD), RUN_START_SMOKE=1 (start both apps with
+# Opt-in: RUN_NETWORK_TESTS=1 (real FastF1 download, FASTF1_TIMEOUT seconds, default 600; needs F1_USERNAME/F1_PASSWORD of an
+#         F1TV Access/Pro/Premium account), RUN_START_SMOKE=1 (start both apps with
 #         scripts/start-*.sh on F1_PORT/WATTWISE_PORT, default 8001/8002, against a throw-away database; occupied ports are
 #         reported UNAVAILABLE and never touched; STARTUP_TIMEOUT seconds per app, default 900), INSTALL_CHROMIUM=1 (download Playwright's Chromium if missing; otherwise browser tests are UNAVAILABLE)
 # Needs network access to PyPI to install dependencies.
@@ -47,7 +48,8 @@ pytest_run() {  # pytest_run NAME DIR ARGS...
     local name="$1" dir="$2"; shift 2
     local f="$LOG/$(echo "$name" | tr -c 'a-zA-Z0-9' '_').log"
     printf '%-58s ' "$name"
-    (cd "$dir" && "$PY" -m pytest -q -p no:cacheprovider -rs "$@" </dev/null) >"$f" 2>&1
+    # the real FastF1 download and the full start smoke run once, as their own checks below, not again inside pytest
+    (cd "$dir" && env -u RUN_NETWORK_TESTS -u RUN_START_SMOKE "$PY" -m pytest -q -p no:cacheprovider -rs "$@" </dev/null) >"$f" 2>&1
     local rc=$?
     local summary; summary="$(grep -E '^[0-9]+ (passed|failed)|passed|failed' "$f" | tail -1)"
     if [[ $rc -eq 0 ]]; then PASSED+=("$name"); echo "PASSED  ($summary)"; else FAILED+=("$name"); echo "FAILED  ($summary; log: $f)"; fi
@@ -266,14 +268,14 @@ else
 fi
 if [[ -n "${RUN_NETWORK_TESTS:-}" ]]; then
     printf '%-58s ' "real FastF1 import (smoke_fastf1_import.py)"
-    (cd f1-setup-lab && "$PY" scripts/smoke_fastf1_import.py --db "$TMP/smoke.db" </dev/null) >"$LOG/smoke.log" 2>&1
+    (cd f1-setup-lab && "$PY" scripts/smoke_fastf1_import.py --timeout "${FASTF1_TIMEOUT:-600}" --db "$TMP/smoke.db" </dev/null) >"$LOG/smoke.log" 2>&1
     case $? in
         0) PASSED+=("real FastF1 import"); echo "PASSED" ;;
         3) SKIPPED+=("real FastF1 import: $(tail -1 "$LOG/smoke.log")"); echo "SKIPPED ($(tail -1 "$LOG/smoke.log"))" ;;
         *) FAILED+=("real FastF1 import"); echo "FAILED  (log: $LOG/smoke.log)" ;;
     esac
 else
-    skip "real FastF1 import (smoke_fastf1_import.py)" "opt-in: RUN_NETWORK_TESTS=1; needs F1_USERNAME/F1_PASSWORD"
+    skip "real FastF1 import (smoke_fastf1_import.py)" "opt-in: RUN_NETWORK_TESTS=1; needs an F1TV Access/Pro/Premium login in F1_USERNAME/F1_PASSWORD"
 fi
 if [[ -n "${RUN_START_SMOKE:-}" ]]; then
     start_smoke

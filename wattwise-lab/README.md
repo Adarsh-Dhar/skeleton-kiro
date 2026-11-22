@@ -36,7 +36,7 @@ It runs independently of F1 SETUP LAB (port 8001); both can be installed in the 
 | **Household setup** | Edit tariffs (periods that wrap midnight, demand charge; gaps and overlaps are explained as you type), the EV (battery, charge needed and departure time) and appliances |
 | **Experiment designer** | Pick the variables (EV charging start, charger power, flexible-appliance start), their ranges, the design method (full / fractional factorial, one-factor-at-a-time, central composite, Box-Behnken, random) and a run budget |
 | **Schedule simulator** | Move three sliders and watch the day re-priced against today's schedule: cost, kWh, peak kW, charge at departure, cost per price period |
-| **Run monitor** (inside an experiment) | Run the design, watch progress, cancel, retry failed runs; open any run's day; attach a smart-meter CSV to a run |
+| **Run monitor** (inside an experiment) | Run the design, watch progress, cancel, retry failed runs; open any run's day; attach a smart-meter CSV to a run: plain `timestamp,power_kw`, or any format the My usage importer reads (*Other file formats*: columns, time zone, interval energy, cumulative register), priced in local time |
 | **Analysis** | Cost of every schedule, cost against peak demand, factor effects with 95% intervals, interactions, Type II ANOVA, and which schedules failed the departure-charge constraint |
 | **Optimisation** | Compare the best schedule with today's day, ask for suggestions (Bayesian, Optuna, random, grid), run them, follow the history |
 | **Reports** | Printable HTML report, JSON, CSV exports of schedules, measurements and effects |
@@ -75,7 +75,10 @@ experiments start from the measured 15-minute profile as background load instead
 simulated on top, so import a period without them or remove them from the appliance list; the app warns when the profile looks like it
 includes EV charging).
 
-**Tariffs.** The original fields are unchanged and existing tariffs give identical costs (regression-tested). Optional, generic extensions:
+**Tariffs.** Every field below can be edited in *Household setup → Electricity tariff*: each period's days (all / weekday / weekend)
+and months, and an *Advanced charges* section for fixed daily and monthly charges, billing-period length, demand-charge basis, surcharge,
+tax, export credit, tiered (slab) prices and the day the one-day simulator uses. Saving from the editor keeps every field; earlier versions
+dropped the advanced ones. The original fields are unchanged and existing tariffs give identical costs (regression-tested). Optional, generic extensions:
 weekday/weekend and seasonal periods, fixed daily and monthly charges, tiered energy pricing (daily or billing-period basis), per-kWh surcharges,
 tax percentage, export credits, and a billing-period demand charge. The bundled tariffs are examples, not any utility's prices: enter your own
 tariff from your bill and check the computed cost of a billed period against the bill (manual gate).

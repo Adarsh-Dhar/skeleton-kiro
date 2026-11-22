@@ -173,6 +173,9 @@ class MeterRequest(BaseModel):
     tariff_id: str | None = "time-of-use"
     tariff: TariffIn | None = None
     filename: str = "meter.csv"
+    options: dict | None = Field(None, description="Optional: read the file with the historical-library interpreter (same keys as "
+                                                   "/api/meter/import options: columns, timezone, reading_kind, unit, ...). "
+                                                   "Omit for the simple timestamp,power_kw|power_w format.")
 
 
 class MeterImportRequest(BaseModel):

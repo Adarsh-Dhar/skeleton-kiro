@@ -184,3 +184,25 @@ def test_my_usage_library_baseline_and_comparison(page):
     assert "PROJECTED" in out and "MEASURED" in out
     shot(page, "11-my-usage")
     assert page.errors == [], page.errors
+
+
+def test_tariff_editor_keeps_and_edits_advanced_fields(page):
+    """Saving from the Household setup screen must never drop fixed charges, tiers, taxes or seasonal periods."""
+    body = {"name": "Generic slab example", "demand_charge_per_kw": 0.0, "fixed_monthly_charge": 9.0, "billing_days": 30, "tax_pct": 5,
+            "tiers": [{"up_to_kwh": 10, "adder_per_kwh": 0}, {"up_to_kwh": None, "adder_per_kwh": 0.05}], "tier_basis": "daily",
+            "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.2}]}
+    fresh(page, "#/")
+    page.wait_for_selector("#kpis")
+    t = page.evaluate("b => fetch('/api/tariffs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}).then(r => r.json())", body)
+    page.evaluate("id => fetch('/api/household').then(r => r.json()).then(s => fetch('/api/household', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...s.settings, tariff_id: id})}))", t["id"])
+    fresh(page, "#/household")
+    page.wait_for_selector("#tadv[open]")  # opens by itself because the tariff has advanced charges
+    assert page.input_value("#tfixm") == "9" and page.input_value("#ttax") == "5" and len(page.query_selector_all("#tiers tr")) == 2
+    page.fill("#ttax", "7.5")
+    page.fill("#tfixd", "0.25")
+    page.click("#tsave")
+    page.wait_for_selector("#toast:not([hidden])")
+    saved = page.evaluate("id => fetch('/api/tariffs').then(r => r.json()).then(ts => ts.find(x => x.id === id))", t["id"])
+    assert saved["tax_pct"] == 7.5 and saved["fixed_daily_charge"] == 0.25 and saved["fixed_monthly_charge"] == 9.0
+    assert saved["tiers"] == body["tiers"] and saved["billing_days"] == 30
+    assert page.errors == [], page.errors

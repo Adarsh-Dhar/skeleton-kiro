@@ -131,10 +131,22 @@ python scripts/smoke_fastf1_import.py --year 2024 --event Monza --session Q --dr
 
 A SKIPPED smoke test is never a pass.
 
-**Credentials.** FastF1 3.9 signs in to a Formula 1 account to read the live-timing archive. Without `F1_USERNAME` and `F1_PASSWORD` in the
-app's environment, sessions load without lap timing and the import fails with `NO_LAP_DATA` (this is what happened for 2024 Monza Q while
-building this version). Set them in your shell or service environment, never in code or shared files. The web app never prompts on the
-terminal, so an import cannot hang waiting for input; `import_historical.py` run in a terminal may prompt.
+**Credentials and subscription.** FastF1 3.9 requires authentication for the protected Formula 1 live-timing archive, and the account must
+have an **active F1TV Access, Pro or Premium subscription**. A free Formula 1 account is not enough; see FastF1's
+[F1TV account authentication](https://docs.fastf1.dev/api_reference/accounts_auth.html) documentation. FastF1 reads the login from
+`F1_USERNAME` and `F1_PASSWORD` (password sign-in is the default; `FASTF1_AUTH_METHOD=password` selects it explicitly) and stores the
+resulting token for reuse. Without valid subscription credentials, sessions load without lap timing and the import fails with `NO_LAP_DATA`.
+This is what happened for 2024 Monza Q while building this version, with no credentials set. The error message says whether credentials were
+missing or set but not accepted. If your account has no eligible subscription, retrying will not help: it is an access requirement, not a
+code problem.
+
+```bash
+read -r -p "F1TV email: " F1_USERNAME; read -r -s -p "F1TV password: " F1_PASSWORD; printf '\n'
+export F1_USERNAME F1_PASSWORD
+```
+
+Set them in your shell or service environment, never in code or shared files. The web app never prompts on the terminal, so an import cannot
+hang waiting for input; `import_historical.py` run in a terminal may prompt.
 
 **Attribution.** Historical data comes through [FastF1](https://github.com/theOehrly/FastF1), an unofficial community library reading
 Formula 1's live-timing feed. It is not affiliated with or endorsed by Formula 1; the data belongs to its owners. Coverage and accuracy

@@ -28,7 +28,7 @@ def cache_stats(cache_dir: str | Path) -> dict:
 
 class FastF1Client:
     def __init__(self, cache_dir: str | Path, interactive: bool = False) -> None:
-        """``interactive=True`` lets FastF1 prompt for F1 account credentials on the terminal (command-line use only)."""
+        """``interactive=True`` lets FastF1 prompt for F1TV account credentials on the terminal (command-line use only)."""
         self.cache_dir = Path(cache_dir)
         self.interactive = interactive
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -71,7 +71,8 @@ class FastF1Client:
 
 
 def credentials_configured() -> bool:
-    """FastF1 (3.9+) signs in to an F1 account for live-timing data using F1_USERNAME / F1_PASSWORD."""
+    """FastF1 (3.9+) signs in with F1_USERNAME / F1_PASSWORD to read the live-timing archive; the account needs an active
+    F1TV Access, Pro or Premium subscription (a free Formula 1 account is not enough). Only presence is checked here."""
     return bool(os.environ.get("F1_USERNAME") and os.environ.get("F1_PASSWORD"))
 
 
@@ -80,7 +81,7 @@ _STDIN_LOCK = threading.Lock()
 
 @contextmanager
 def _stdin_policy(interactive: bool):
-    """FastF1 prompts for F1 account credentials when stdin is a terminal. Inside the web app that prompt would block
+    """FastF1 prompts for F1TV account credentials when stdin is a terminal. Inside the web app that prompt would block
     an import thread forever, so non-interactive clients hide the terminal for the duration of the load (FastF1 then
     continues without authentication and the import reports the missing data)."""
     if interactive or sys.stdin is None or not sys.stdin.isatty():

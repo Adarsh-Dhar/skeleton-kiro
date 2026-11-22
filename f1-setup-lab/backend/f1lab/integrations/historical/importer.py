@@ -169,9 +169,11 @@ def import_session(client: FastF1Client, repo: HistoricalRepository, payload: di
 
     laps = N.normalize_laps(session)
     if laps.empty:
-        hint = ("no F1 account credentials are configured: FastF1 needs F1_USERNAME and F1_PASSWORD in the environment of the app "
-                "(never in code or files you share)" if not credentials_configured() else
-                "F1 account credentials are configured; the timing feed for this session may not be published")
+        hint = ("no F1TV credentials are configured: FastF1 3.9 needs F1_USERNAME and F1_PASSWORD of an account with an active F1TV "
+                "Access, Pro or Premium subscription, set in the environment of the app (never in code or files you share)"
+                if not credentials_configured() else
+                "F1TV credentials are set, but the account may lack an active F1TV Access/Pro/Premium subscription, the sign-in may have "
+                "failed (see the FastF1 log), or the timing data for this session is not published")
         raise HistoricalImportError(NO_LAP_DATA, f"no lap timing data could be loaded for this session ({hint})")
     weather = N.normalize_weather(session) if payload.get("include_weather", True) else pd.DataFrame()
     corners = N.circuit_corners(session)
