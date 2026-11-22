@@ -120,3 +120,36 @@ def test_both_apps_start_independently_on_one_database(tmp_path):
             run(script, "stop", env={PORT_VARS[name]: str(ports[name])})
         for p in procs.values():
             p.terminate()
+
+
+# ------------------------------------------------------------------------------------------- start-all and package.json
+def test_package_json_scripts_point_at_existing_shell_scripts():
+    import json
+
+    pkg = json.loads((ROOT / "package.json").read_text())
+    assert {"start", "stop", "status", "start-f1", "start-wattwise", "start-all"} <= set(pkg["scripts"])
+    for name, cmd in pkg["scripts"].items():
+        script = cmd.split()[1]
+        assert cmd.startswith("bash scripts/") and (ROOT / script).exists(), (name, cmd)
+
+
+def test_start_all_refuses_when_a_port_is_taken_and_starts_nothing():
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    s.listen(1)
+    try:
+        r = run(ROOT / "scripts" / "start-all.sh", "start", env={"F1_PORT": str(s.getsockname()[1]), "WATTWISE_PORT": str(free_port())})
+    finally:
+        s.close()
+    assert r.returncode == 1 and "already in use" in r.stderr and "F1_PORT" in r.stderr
+    assert "Starting" not in r.stdout
+
+
+def test_start_all_check_stop_status_and_unknown_command():
+    sa = ROOT / "scripts" / "start-all.sh"
+    env = {"F1_PORT": str(free_port()), "WATTWISE_PORT": str(free_port())}
+    r = run(sa, "check", env=env)
+    assert r.returncode == 0 and r.stdout.count("python:") == 2
+    assert "not running" in run(sa, "stop", env=env).stdout
+    assert run(sa, "status", env=env).returncode == 1
+    assert run(sa, "frobnicate").returncode == 1

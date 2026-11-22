@@ -1,9 +1,12 @@
-"""Import one historical F1 session (FastF1) into the root database from the command line.
+"""Import one historical F1 session (FastF1 or OpenF1) into the root database from the command line.
 
     python scripts/import_historical.py --year 2024 --event Monza --session Q --drivers VER LEC [--force] [--no-position]
+    python scripts/import_historical.py --provider openf1 --year 2025 --event "Abu Dhabi" --session R --drivers VER HAM
 
-Uses the same import job machinery as the app (the job appears under Historical F1 > imports), the same FastF1 cache
-(``<repo>/data/fastf1-cache``) and the same database (``TRIALFORGE_DB`` or ``<repo>/data/trialforge.db``).
+--provider openf1 is free, needs no account and covers 2023 onwards; the default (fastf1) needs F1TV credentials.
+
+Uses the same import job machinery as the app (the job appears under Historical F1 > imports), the same caches
+(``<repo>/data/fastf1-cache`` and ``<repo>/data/openf1-cache``) and the same database (``TRIALFORGE_DB`` or ``<repo>/data/trialforge.db``).
 Exit code 0 = completed, 1 = failed/cancelled, 2 = bad arguments.
 """
 
@@ -39,7 +42,7 @@ def build_service(db: str | None) -> HistoricalService:
 async def run(args: argparse.Namespace) -> int:
     svc = build_service(args.db)
     svc.recover()
-    req = HistoricalImportRequest(year=args.year, event=args.event, session=args.session, drivers=args.drivers or [],
+    req = HistoricalImportRequest(provider=args.provider, year=args.year, event=args.event, session=args.session, drivers=args.drivers or [],
                                   include_telemetry=not args.no_telemetry, include_position=not args.no_position,
                                   include_weather=not args.no_weather)
     job = await svc.start_import(req, force=args.force)
@@ -86,6 +89,7 @@ def run_without_waiting_for_workers(coro):
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--provider", choices=["fastf1", "openf1"], default="fastf1", help="data source (default fastf1; openf1 is free, 2023+)")
     ap.add_argument("--year", type=int, required=True)
     ap.add_argument("--event", required=True, help="Grand Prix name or location, e.g. Monza")
     ap.add_argument("--session", required=True, help="FP1 FP2 FP3 Q SQ S R")

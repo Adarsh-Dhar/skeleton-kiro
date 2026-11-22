@@ -38,7 +38,8 @@ from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
 from f1lab.catalogs.verification import get_probe_report, list_probe_reports
 from f1lab.catalogs.verification import status as verification_status
 from f1lab.integrations.game_udp.probe import VARIANT_LABELS
-from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest
+from f1lab.integrations.historical.openf1_client import OpenF1Error
+from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest, Provider
 from f1lab.integrations.historical.service import HistoricalService
 from f1lab.services.lab import Conflict, LabService, NotFound
 
@@ -57,10 +58,12 @@ def _issue(field: str, message: str) -> dict:
     return {"field": field, "message": message}
 
 
-def create_app(db_path: str | None = None, frontend_dir: str | None = None, fastf1_client_factory=None) -> FastAPI:
-    """``db_path`` and ``fastf1_client_factory`` are for tests; production uses the root database (TRIALFORGE_DB) and FastF1."""
+def create_app(db_path: str | None = None, frontend_dir: str | None = None, fastf1_client_factory=None,
+               openf1_client_factory=None) -> FastAPI:
+    """The factories and ``db_path`` are for tests; production uses the root database (TRIALFORGE_DB), FastF1 and OpenF1."""
     lab = LabService(db_path)
-    hist = HistoricalService(lab.repo.db_engine, lab.data_dir / "fastf1-cache", client_factory=fastf1_client_factory)
+    hist = HistoricalService(lab.repo.db_engine, lab.data_dir / "fastf1-cache", client_factory=fastf1_client_factory,
+                             openf1_client_factory=openf1_client_factory)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -96,6 +99,10 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, fast
     @app.exception_handler(ValueError)
     async def _val(_: Request, exc: ValueError):
         return JSONResponse({"detail": [_issue("request", str(exc))]}, status_code=422)
+
+    @app.exception_handler(OpenF1Error)
+    async def _openf1(_: Request, exc: OpenF1Error):
+        return JSONResponse({"detail": [_issue("openf1", str(exc))], "code": exc.code}, status_code=502)
 
     @app.exception_handler(NotFound)
     async def _nf(_: Request, exc: NotFound):
@@ -230,12 +237,13 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, fast
 
     # ------------------------------------------------------------ historical F1 (FastF1)
     @app.get("/api/historical/events")
-    async def hist_events(year: int = Query(2024, ge=2018, le=2100)):
-        return await asyncio.to_thread(hist.events, year)
+    async def hist_events(year: int = Query(2024, ge=2018, le=2100), provider: Provider = "fastf1"):
+        return await asyncio.to_thread(hist.events, year, provider)
 
     @app.get("/api/historical/event-sessions")
-    async def hist_event_sessions(year: int = Query(2024, ge=2018, le=2100), event: str = Query(..., min_length=1)):
-        return await asyncio.to_thread(hist.sessions_for_event, year, event)
+    async def hist_event_sessions(year: int = Query(2024, ge=2018, le=2100), event: str = Query(..., min_length=1),
+                                  provider: Provider = "fastf1"):
+        return await asyncio.to_thread(hist.sessions_for_event, year, event, provider)
 
     # ------------------------------------------------------------ setup-mapping verification (read-only; confirm with the script)
     @app.get("/api/game/verification")
@@ -255,8 +263,9 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, fast
         return rep
 
     @app.get("/api/historical/drivers")
-    async def hist_drivers(year: int = Query(..., ge=2018, le=2100), event: str = Query(..., min_length=1), session: str = Query(..., min_length=1)):
-        return await hist.drivers_preview(year, event, session)
+    async def hist_drivers(year: int = Query(..., ge=2018, le=2100), event: str = Query(..., min_length=1), session: str = Query(..., min_length=1),
+                           provider: Provider = "fastf1"):
+        return await hist.drivers_preview(year, event, session, provider)
 
     @app.post("/api/historical/import", status_code=202)
     async def hist_import(req: HistoricalImportRequest, force: bool = Query(False, description="re-download even if this session is already stored")):

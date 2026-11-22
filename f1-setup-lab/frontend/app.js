@@ -573,24 +573,41 @@ async function viewReport(id) {
 
 /* ------------------------------------------------------------- historical F1 */
 const HIST_TABS = [['overview', 'Overview'], ['laps', 'Lap analysis'], ['telemetry', 'Telemetry'], ['track', 'Track map'], ['compare', 'Compare'], ['weather', 'Weather & tyres']];
-const histChip = '<span class="chip hist">HISTORICAL F1 · FASTF1</span>';
+const PROVIDER_LABEL = { fastf1: 'FASTF1', openf1: 'OPENF1' };
+const histChipFor = (m) => `<span class="chip hist">${esc(m.source_label || `HISTORICAL F1 · ${PROVIDER_LABEL[m.provider] || String(m.provider || '').toUpperCase()}`)}</span>`;
+/* Per-endpoint coverage of an OpenF1 import: what each endpoint returned and which drivers had no car/position data. */
+const histCoverage = (m) => {
+  const c = m.coverage;
+  if (!c) return '';
+  const eps = Object.entries(c.endpoints || {});
+  const empty = c.drivers_empty || {};
+  const cls = (st) => (st === 'ok' ? 'good' : st === 'error' ? 'badc' : 'dim');
+  const missing = Object.entries(empty).filter(([, v]) => (v || []).length)
+    .map(([k, v]) => `<tr><td class="dim">${esc(k)} missing for</td><td class="mono">${v.map(esc).join(', ')}</td></tr>`).join('');
+  const rows = eps.map(([k, v]) => `<tr><td class="dim">${esc(k)}</td><td><span class="${cls(v.status)}">${esc(v.status)}</span> &middot; ${esc(v.rows)} rows${v.note ? ` <span class="dim">${esc(v.note)}</span>` : ''}</td></tr>`).join('');
+  const notes = [...(m.not_provided || []).map((x) => `not provided by ${esc(m.provider)}: ${esc(x)}`), ...(m.derived || []).map((x) => `derived here: ${esc(x)}`)];
+  return `<div class="panel"><h2>Import coverage ${m.partial ? '<span class="tag">partial</span>' : ''}</h2><table><tbody>${rows}${missing}</tbody></table>
+    ${(m.warnings || []).length ? `<p class="hint">${m.warnings.map(esc).join('<br>')}</p>` : ''}
+    ${notes.length ? `<details><summary class="hint">What is derived or missing</summary><ul class="hint">${notes.map((n) => `<li>${n}</li>`).join('')}</ul></details>` : ''}</div>`;
+};
 /* FastF1 brake data is an on/off flag stored as brake_applied (0/100); brake_pct is a fallback. */
 const brakeOf = (pts) => (pts.some((p) => p.brake_applied != null) ? 'brake_applied' : 'brake_pct');
 
 async function viewHist() {
-  view().innerHTML = `<h1>Historical F1</h1><p class="sub">Real Formula 1 session data via <b>FastF1</b> (unofficial community library; timing and telemetry from 2018 onwards). For benchmarking and analysis &mdash; separate from your setup experiments.</p>
+  view().innerHTML = `<h1>Historical F1</h1><p class="sub">Real Formula 1 session data from <b>OpenF1</b> (free, no account, 2023 onwards) or <b>FastF1</b> (needs an F1TV subscription, 2018 onwards). Both are unofficial. For benchmarking and analysis &mdash; separate from your setup experiments.</p>
   <div class="grid g21"><div><div class="panel" id="hist-form"><h2>Import a session</h2><div id="hist-err"></div>
-    <div class="grid g2"><div class="field"><label for="hyear">Season</label><input id="hyear" type="number" min="2018" max="2100" value="2024"></div>
+    <div class="grid g2"><div class="field"><label for="hprov">Data source</label><select id="hprov"><option value="openf1" selected>OpenF1 (free, 2023+)</option><option value="fastf1">FastF1 (F1TV account, 2018+)</option></select></div>
+    <div class="field"><label for="hyear">Season</label><input id="hyear" type="number" min="2023" max="2100" value="2025"></div>
     <div class="field"><label for="hevent">Grand Prix</label><select id="hevent"><option>Loading&hellip;</option></select></div>
     <div class="field"><label for="hsession">Session</label><select id="hsession"><option>&mdash;</option></select></div>
     <div class="field"><label>&nbsp;</label><button class="btn" id="hloaddrv" type="button">Load drivers</button></div></div>
     <div class="field"><label>Drivers</label><div id="hdrivers"><span class="dim">Pick a session and press "Load drivers" (leave all checked = whole field, or uncheck to select).</span></div></div>
     <div class="field"><label>Include</label><div class="row"><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="htele" checked> telemetry</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hpos" checked> position</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hwx" checked> weather</label></div></div>
     <button class="btn primary" id="himport">Import session</button><span class="dim" id="hmsg"></span><div id="hprog"></div></div>
-    <div class="note info">The first import downloads and processes the session (can take a few minutes); results are cached locally and re-imports are fast. Historical data never enters your setup experiments.</div></div>
+    <div class="note info">The first import downloads and processes the session (OpenF1 is throttled to 30 requests a minute, so a full field can take several minutes); results are cached locally and re-imports are fast. Historical data never enters your setup experiments.</div></div>
   <div><div class="panel"><h2>Imported sessions</h2><div id="hist-lib"><div class="dim">Loading&hellip;</div></div></div>
     <div class="panel"><h2>Recent imports</h2><div id="hist-jobs"><div class="dim">Loading&hellip;</div></div></div>
-    <div class="panel"><h2>About this data</h2><p class="hint">FastF1 is an unofficial Python library for Formula 1 timing and telemetry data. It is not affiliated with Formula 1, and coverage varies by year/session. Car telemetry is sampled at the timing feed's rate; weather is sampled sparsely. Historical sessions contain no car setup configuration, so they are kept separate from the TRIALFORGE setup experiments.</p></div></div></div>`;
+    <div class="panel"><h2>About this data</h2><p class="hint">OpenF1 (free, from 2023) and FastF1 (F1TV account, from 2018) are unofficial sources of Formula 1 timing and telemetry data. Neither is affiliated with Formula 1, and coverage varies by year and session. OpenF1 supplies no steering, no corner positions and no lap deletions. Car telemetry is sampled at the timing feed's rate; weather is sampled sparsely. Historical sessions contain no car setup configuration, so they are kept separate from the TRIALFORGE setup experiments.</p></div></div></div>`;
   let events = [];
   const fillEvents = () => {
     $('#hevent').innerHTML = events.map((e, i) => `<option value="${i}">${esc(e.event)}${e.location ? ` (${esc(e.location)})` : ''}</option>`).join('') || '<option>No events</option>';
@@ -600,19 +617,27 @@ async function viewHist() {
     const ev = events[+$('#hevent').value];
     $('#hsession').innerHTML = (ev?.sessions || []).map((s) => `<option value="${esc(s.type)}">${esc(s.name || s.type)} (${esc(s.type)})</option>`).join('') || '<option>&mdash;</option>';
   };
+  const provider = () => $('#hprov').value;
   const loadEvents = async () => {
     const y = +$('#hyear').value;
-    try { events = await api('GET', `/api/historical/events?year=${y}`); fillEvents(); $('#hist-err').innerHTML = ''; }
+    try { events = await api('GET', `/api/historical/events?year=${y}&provider=${provider()}`); fillEvents(); $('#hist-err').innerHTML = ''; }
     catch (e) { events = []; fillEvents(); $('#hist-err').innerHTML = errorsBox(e); }
   };
   $('#hyear').addEventListener('change', loadEvents);
+  $('#hprov').addEventListener('change', () => {
+    const open = provider() === 'openf1', year = $('#hyear');
+    year.min = open ? '2023' : '2018';
+    if (open && +year.value < 2023) year.value = '2025';
+    $('#hdrivers').innerHTML = '<span class="dim">Pick a session and press "Load drivers" (leave all checked = whole field, or uncheck to select).</span>';
+    loadEvents();
+  });
   $('#hevent').addEventListener('change', fillSessions);
   $('#hloaddrv').addEventListener('click', async () => {
     const ev = events[+$('#hevent').value];
     if (!ev) return;
     $('#hdrivers').innerHTML = '<span class="dim">Loading drivers&hellip;</span>';
     try {
-      const ds = await api('GET', `/api/historical/drivers?year=${+$('#hyear').value}&event=${encodeURIComponent(ev.event)}&session=${encodeURIComponent($('#hsession').value)}`);
+      const ds = await api('GET', `/api/historical/drivers?year=${+$('#hyear').value}&event=${encodeURIComponent(ev.event)}&session=${encodeURIComponent($('#hsession').value)}&provider=${provider()}`);
       $('#hdrivers').innerHTML = ds.length ? `<div class="row" style="gap:14px">${ds.map((d) => `<label style="text-transform:none;letter-spacing:0"><input type="checkbox" class="hdrv" value="${esc(d.code)}" checked> ${esc(d.code)} <span class="dim">${esc(d.name)}</span></label>`).join('')}</div>` : '<span class="dim">No drivers returned.</span>';
     } catch (e) { $('#hdrivers').innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
   });
@@ -620,7 +645,7 @@ async function viewHist() {
     const ev = events[+$('#hevent').value];
     if (!ev) { $('#hist-err').innerHTML = errorsBox(new Error('pick a Grand Prix first')); return; }
     const drivers = [...document.querySelectorAll('.hdrv:checked')].map((c) => c.value);
-    const body = { year: +$('#hyear').value, event: ev.event, session: $('#hsession').value, drivers,
+    const body = { provider: provider(), year: +$('#hyear').value, event: ev.event, session: $('#hsession').value, drivers,
       include_telemetry: $('#htele').checked, include_position: $('#hpos').checked, include_weather: $('#hwx').checked };
     try {
       const r = await api('POST', '/api/historical/import', body);
@@ -650,7 +675,7 @@ async function viewHist() {
     try {
       const jobs = await api('GET', '/api/historical/imports?limit=10');
       $('#hist-jobs').innerHTML = jobs.length ? `<table><thead><tr><th>Import</th><th>State</th><th>Detail</th><th></th></tr></thead><tbody>${jobs.map((j) => `<tr>
-        <td class="mono">${esc(j.request.year)} ${esc(j.request.event)} ${esc(j.request.session)}<div class="dim">${esc((j.created_at || '').slice(0, 16).replace('T', ' '))}</div></td>
+        <td class="mono">${esc(j.request.year)} ${esc(j.request.event)} ${esc(j.request.session)}<div class="dim">${esc(PROVIDER_LABEL[j.request.provider || 'fastf1'] || '')} &middot; ${esc((j.created_at || '').slice(0, 16).replace('T', ' '))}</div></td>
         <td>${esc(j.state)}${j.error_code ? `<div class="badc mono">${esc(j.error_code)}</div>` : ''}</td><td class="dim">${esc(j.error || j.detail || '')}</td>
         <td><button class="btn small hjob" data-id="${esc(j.import_id)}" type="button">Show</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">No imports yet.</div>';
       document.querySelectorAll('.hjob').forEach((b) => b.addEventListener('click', () => trackImport(b.dataset.id)));
@@ -662,7 +687,7 @@ async function viewHist() {
     try {
       const list = await api('GET', '/api/historical/sessions');
       $('#hist-lib').innerHTML = list.length ? `<table><thead><tr><th>Session</th><th>Season</th><th>Circuit</th><th class="num">Drivers</th><th>Imported</th><th></th></tr></thead><tbody>
-        ${list.map((s) => `<tr><td><b>${esc(s.event)}</b><div class="dim mono">${esc(s.session)} &middot; ${esc(s.session_id)}</div></td><td class="num">${esc(s.year)}</td><td>${esc(s.circuit || s.location || '&mdash;')}</td>
+        ${list.map((s) => `<tr><td><b>${esc(s.event)}</b><div class="dim mono">${esc(s.session)} &middot; ${esc(PROVIDER_LABEL[s.provider] || s.provider)} &middot; ${esc(s.session_id)}</div></td><td class="num">${esc(s.year)}</td><td>${esc(s.circuit || s.location || '&mdash;')}</td>
         <td class="num">${(s.drivers || []).length}</td><td class="dim mono">${esc((s.imported_at || '').slice(0, 10))}</td><td><a class="btn small" href="#/hist/${esc(s.session_id)}">Open</a></td></tr>`).join('')}</tbody></table>`
         : '<div class="empty">No historical sessions imported yet.</div>';
     } catch (e) { $('#hist-lib').innerHTML = errorsBox(e); }
@@ -675,7 +700,7 @@ async function viewHist() {
 async function viewHistSession(id, tab) {
   const m = await api('GET', `/api/historical/sessions/${id}`);
   view().innerHTML = `<div class="row"><div><h1>${esc(m.event)} ${m.round ? `<span class="dim">&middot; Round ${esc(m.round)}</span>` : ''}</h1>
-    <p class="sub">${esc(m.circuit || '')} &middot; ${esc(m.session)} (${esc(m.session_type)}) &middot; ${esc(m.session_date || '')} &middot; ${histChip}</p></div><div class="spacer"></div><a class="btn" href="#/hist">All sessions</a></div>
+    <p class="sub">${esc(m.circuit || '')} &middot; ${esc(m.session)} (${esc(m.session_type)}) &middot; ${esc(m.session_date || '')} &middot; ${histChipFor(m)}</p></div><div class="spacer"></div><a class="btn" href="#/hist">All sessions</a></div>
     <div class="tabs">${HIST_TABS.map(([k, n]) => `<a href="#/hist/${esc(id)}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div><div id="hist-body"><div class="dim">Loading&hellip;</div></div>`;
   const body = $('#hist-body');
   const drivers = m.drivers || [];
@@ -702,7 +727,7 @@ async function viewHistSession(id, tab) {
         <tr><td class="dim">Weather</td><td>${ch.weather ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}</td></tr>
         <tr><td class="dim">Telemetry</td><td>${drivers.map((d) => `${esc(d.code)}: ${ch.telemetry?.[d.code] ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}`).join(' &middot; ') || '&mdash;'}</td></tr>
         <tr><td class="dim">Position</td><td>${drivers.map((d) => `${esc(d.code)}: ${ch.position?.[d.code] ? '<span class="good">yes</span>' : '<span class="dim">no</span>'}`).join(' &middot; ') || '&mdash;'}</td></tr></tbody></table>
-        <p class="hint">${esc(m.attribution || '')}</p></div></div></div>`;
+        <p class="hint">${esc(m.attribution || '')}</p></div>${histCoverage(m)}</div></div>`;
   } else if (tab === 'laps') {
     body.innerHTML = `<div class="panel"><div class="row"><div class="field" style="max-width:280px"><label for="hlapdrv">Driver</label><select id="hlapdrv">${drvOpts()}</select></div></div><div id="hlapout"><div class="dim">Loading&hellip;</div></div></div>`;
     const show = async () => {
@@ -772,7 +797,7 @@ async function viewHistSession(id, tab) {
     const stints = {};
     laps.forEach((l) => { const k = `${l.driver}|${l.stint}`; if (l.compound || l.tyre_life != null) stints[k] = { driver: l.driver, stint: l.stint, compound: l.compound, tyre_life: l.tyre_life, laps: (stints[k]?.laps || 0) + 1 }; });
     body.innerHTML = `<div class="note info">${esc(wx.note || 'Weather is sampled sparsely by the timing feed.')}</div>
-      <div class="grid g2">${wchart('Air temperature', 'air_temp_c', '°C')}${wchart('Track temperature', 'track_temp_c', '°C')}${wchart('Humidity', 'humidity_pct', '%')}${wchart('Wind speed', 'wind_speed_ms', 'm/s')}${wchart('Rainfall', 'rainfall_mm', 'mm')}${wchart('Pressure', 'pressure_hpa', 'hPa')}</div>
+      <div class="grid g2">${wchart('Air temperature', 'air_temp_c', '°C')}${wchart('Track temperature', 'track_temp_c', '°C')}${wchart('Humidity', 'humidity_pct', '%')}${wchart('Wind speed', 'wind_speed_ms', 'm/s')}${s.some((p) => p.rainfall_flag != null) ? wchart('Rainfall (0 = dry, 1 = rain)', 'rainfall_flag', 'flag') : wchart('Rainfall', 'rainfall_mm', 'mm')}${wchart('Pressure', 'pressure_hpa', 'hPa')}</div>
       <div class="panel"><h2>Tyre strategy</h2><table><thead><tr><th>Driver</th><th>Stint</th><th>Compound</th><th class="num">Tyre life</th><th class="num">Laps</th></tr></thead><tbody>
       ${Object.values(stints).map((t) => `<tr><td class="mono"><b>${esc(t.driver)}</b></td><td class="mono">${esc(t.stint ?? '&mdash;')}</td><td>${esc(t.compound || '&mdash;')}</td><td class="num">${esc(t.tyre_life ?? '&mdash;')}</td><td class="num">${t.laps}</td></tr>`).join('') || '<tr><td colspan="5" class="dim">No stint data.</td></tr>'}</tbody></table></div>`;
   }

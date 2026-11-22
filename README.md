@@ -10,7 +10,7 @@ contains no F1 or electricity knowledge (enforced by tests):
 
 | App | Port | Domain | What it adds on top of the SDK |
 |---|---|---|---|
-| [**F1 SETUP LAB**](f1-setup-lab/README.md) | 8001 | Racing-car setup | Vehicle model + simulator adapter, EA SPORTS F1 25 UDP receiver (live stints), FastF1 historical sessions, F1 screens |
+| [**F1 SETUP LAB**](f1-setup-lab/README.md) | 8001 | Racing-car setup | Vehicle model + simulator adapter, EA SPORTS F1 25 UDP receiver (live stints), FastF1 and OpenF1 historical sessions, F1 screens |
 | [**WATTWISE LAB**](wattwise-lab/README.md) | 8002 | Household electricity | Household/EV model + simulator adapter, tariffs, smart-meter import and baseline, electricity screens |
 
 How each uses the SDK: both build an `ExperimentSpec`, register an app-owned adapter in an `AdapterRegistry`, and call `ExperimentService`
@@ -24,10 +24,18 @@ the app's virtual environment, installs the SDK wheel, the root database package
 refuses an occupied port with a clear message, migrates the root database and starts the server:
 
 ```bash
-scripts/start-f1.sh            # http://127.0.0.1:8001     F1_PORT to change
-scripts/start-wattwise.sh      # http://127.0.0.1:8002     WATTWISE_PORT to change
-scripts/start-f1.sh stop       # also: status, check (dry run: interpreter, wheel, venv, port, database)
+pnpm run start                 # BOTH apps at once (output prefixed [f1] / [wattwise]); Ctrl+C stops both
+pnpm run stop                  # stop both, from another terminal
+pnpm run status                # which of them is running
+pnpm run start-f1              # F1 SETUP LAB only,  http://127.0.0.1:8001     F1_PORT to change
+pnpm run start-wattwise        # WATTWISE LAB only,  http://127.0.0.1:8002     WATTWISE_PORT to change
 ```
+
+`pnpm` (or `npm run <name>`) only runs the shell scripts listed in the root `package.json`; there is nothing to install. The same
+commands work without it: `scripts/start-all.sh [start|stop|status|check]`, `scripts/start-f1.sh`, `scripts/start-wattwise.sh` (each
+also accepts `stop`, `status` and `check`, a dry run of interpreter, wheel, venv, port and database).
+`pnpm run start` refuses to start if either port is taken and names the process holding it. If you are already running the apps, use
+other ports: `F1_PORT=18001 WATTWISE_PORT=18002 pnpm run start`.
 
 The two apps run as separate processes with separate virtual environments; either can run without the other.
 
@@ -45,7 +53,7 @@ migrations (`python -m db.migrate [--status]`), and the app-scoped view of the S
 | `ww_*` | WATTWISE LAB | household settings, tariff library, historical meter imports and readings |
 
 There are no other stores: no per-app databases, Parquet files, JSON tariff file, evidence files or browser storage. Two things outside the
-database are not application data: FastF1's download cache (`data/fastf1-cache/`) and the bundled demo CSVs.
+database are not application data: the FastF1 and OpenF1 download caches (`data/fastf1-cache/`, `data/openf1-cache/`) and the bundled demo CSVs.
 
 **Upgrading from an earlier version** (with `f1lab.db`, `wattwise.db`, Parquet sessions, evidence files, `.f1raw` captures, `tariffs.json`):
 
@@ -63,7 +71,7 @@ Re-running is safe. Household settings in a browser are uploaded the next time W
 |---|---|
 | F1 `SYNTHETIC` | an invented vehicle model |
 | F1 `SIM-RECORDED` | your own laps in EA SPORTS F1 25 (a video game), decoded from its UDP output |
-| F1 `HISTORICAL F1 · FASTF1` | real Formula 1 timing/telemetry via the unofficial FastF1 library; analysis only, never an experiment result |
+| F1 `HISTORICAL F1 · FASTF1` / `HISTORICAL F1 · OPENF1` | real Formula 1 timing/telemetry via the unofficial FastF1 library or the free OpenF1 API; analysis only, never an experiment result |
 | WATTWISE `synthetic` | the built-in example household |
 | WATTWISE `historical_measured` | your imported meter readings (`…_priced` = priced with the tariff you entered) |
 | WATTWISE `projected` | model estimate for a schedule |
@@ -83,7 +91,7 @@ package and both apps with their test dependencies, and checks that both apps us
 source tree). It then builds the other packages, lints, compiles every Python file, checks JavaScript and shell syntax, runs the SDK, root,
 F1 and WATTWISE test suites and the browser tests (when Playwright's Chromium is installed; `INSTALL_CHROMIUM=1` downloads it), and prints
 PASSED / FAILED / SKIPPED / UNAVAILABLE separately. Opt-in: `RUN_NETWORK_TESTS=1` (real FastF1 download, needs `F1_USERNAME` /
-`F1_PASSWORD` of an account with an active F1TV Access, Pro or Premium subscription), `RUN_START_SMOKE=1` (startup smoke, below). The real-game and real-household checks are always listed as SKIPPED manual
+`F1_PASSWORD` of an account with an active F1TV Access, Pro or Premium subscription; plus one real OpenF1 import, no account), `RUN_START_SMOKE=1` (startup smoke, below). The real-game and real-household checks are always listed as SKIPPED manual
 gates. Skipped and unavailable checks are not passes.
 
 **Startup smoke (`RUN_START_SMOKE=1`).** Starts F1 SETUP LAB and WATTWISE LAB with the official `scripts/start-f1.sh` and

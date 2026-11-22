@@ -20,7 +20,8 @@ TERMINAL = ("COMPLETED", "FAILED", "CANCELLED")
 def dedupe_key(payload: dict) -> str:
     drivers = ",".join(sorted({d.strip().upper() for d in payload.get("drivers") or []})) or "*"
     flags = "".join("1" if payload.get(k, True) else "0" for k in ("include_telemetry", "include_position", "include_weather"))
-    return f"{int(payload['year'])}|{str(payload['event']).strip().lower()}|{str(payload['session']).strip().upper()}|{drivers}|{flags}"
+    prefix = "" if payload.get("provider", "fastf1") == "fastf1" else f"{payload['provider']}|"  # FastF1 keys stay as stored
+    return f"{prefix}{int(payload['year'])}|{str(payload['event']).strip().lower()}|{str(payload['session']).strip().upper()}|{drivers}|{flags}"
 
 
 def _now() -> datetime:

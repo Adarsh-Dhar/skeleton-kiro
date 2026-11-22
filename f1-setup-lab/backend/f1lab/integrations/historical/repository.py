@@ -41,9 +41,9 @@ def slug(text: str) -> str:
     return _SAFE.sub("-", str(text).lower()).strip("-") or "x"
 
 
-def session_id(year: int, event: str, session_type: str) -> str:
-    """Deterministic, path-safe session id."""
-    return f"fastf1-{year}-{slug(event)}-{slug(session_type)}"
+def session_id(year: int, event: str, session_type: str, provider: str = "fastf1") -> str:
+    """Deterministic, path-safe session id; the provider is part of it so two providers never overwrite each other."""
+    return f"{slug(provider)}-{year}-{slug(event)}-{slug(session_type)}"
 
 
 def _check(sid: str) -> str:

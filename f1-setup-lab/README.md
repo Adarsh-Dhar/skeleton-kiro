@@ -11,7 +11,7 @@ The app works with **three data sources**, kept clearly labelled everywhere:
 |---|---|---|---|
 | **Synthetic** (default) | Built-in vehicle model | `SYNTHETIC` | An invented response surface. Not real F1 telemetry. |
 | **Live simulator** | EA SPORTS F1 25 UDP telemetry | `SIM-RECORDED` | You drive stints in the game; the app records laps and verifies the game reported exactly the requested setup. |
-| **Historical F1** | [FastF1](https://github.com/theOehrly/FastF1) (unofficial) | `HISTORICAL F1 · FASTF1` | Real Grand Prix sessions (timing, telemetry, position, weather) imported for analysis and benchmarking &mdash; never mixed into setup experiments. |
+| **Historical F1** | [OpenF1](https://openf1.org) (free, 2023+) or [FastF1](https://github.com/theOehrly/FastF1) (F1TV account, 2018+), both unofficial | `HISTORICAL F1 · OPENF1` / `HISTORICAL F1 · FASTF1` | Real Grand Prix sessions (timing, telemetry, position, weather) imported for analysis and benchmarking &mdash; never mixed into setup experiments. |
 
 ![Analysis](docs/screenshots/06-analysis.png)
 
@@ -32,7 +32,7 @@ f1-setup-lab                       # or: python -m f1lab
 Open <http://127.0.0.1:8001>. **All state lives in the repository's single root database** `data/trialforge.db` (set `TRIALFORGE_DB`
 to use another file), shared with WATTWISE LAB but scoped per app: F1 SETUP LAB only sees its own experiments. Experiments, import jobs,
 historical sessions (laps, telemetry, position, weather), raw UDP captures, stint evidence and decoded stint telemetry, probe reports and
-mapping confirmations are tables in that file (`f1_*`). The only other directory is FastF1's own download cache, `data/fastf1-cache/`.
+mapping confirmations are tables in that file (`f1_*`). The only other directories are the download caches of the two historical providers, `data/fastf1-cache/` and `data/openf1-cache/`.
 Restart the server and everything is still there (interrupted runs are recovered; interrupted imports are marked `INTERRUPTED` and can be
 retried). Upgrading from a version with `data/f1lab.db`, Parquet sessions or evidence files: `python scripts/migrate_to_root_db.py` (root README). Interactive API docs: <http://127.0.0.1:8001/api/docs>.
 
@@ -49,7 +49,7 @@ retried). Upgrading from a version with `data/f1lab.db`, Parquet sessions or evi
 | 7 | **Optimisation** | Preview and run Bayesian-optimisation proposals; convergence chart | [07](docs/screenshots/07-optimisation-preview.png), [08](docs/screenshots/08-optimisation-result.png) |
 | 8 | **Report** | Printable HTML report, JSON, CSV exports, reproducibility facts | [09](docs/screenshots/09-report.png) |
 | 9 | **Live simulator** | Listen for EA SPORTS F1 25 UDP telemetry, watch live speed/throttle/brake/tyre charts, record verified stints | — |
-| 10 | **Historical F1** | Browse seasons/events, import real sessions via FastF1, analyse laps, telemetry, track map, weather and driver comparisons | — |
+| 10 | **Historical F1** | Browse seasons/events, import real sessions via OpenF1 or FastF1, analyse laps, telemetry, track map, weather and driver comparisons | — |
 
 Demo datasets: `data/demo_telemetry.csv` (seconds) and `data/demo_telemetry_ms.csv` (milliseconds): 8 laps, one deliberately slow lap
 that gets flagged. Both load from the Telemetry screen ("Load demo"). Failures are easy to demo: set *Demo fault rate* to 1 and *Retries* to 0
@@ -155,6 +155,36 @@ vary by season and session.
 **Simulator data vs real F1 data.** `SIM-RECORDED` values are what you drove in a video game: they show how a game setup changed your lap
 times, not how a real car behaves. `HISTORICAL F1` values are real race-weekend timing and telemetry but contain no car setup, so they never
 enter a setup experiment. `SYNTHETIC` values come from an invented model. The three never mix.
+
+## Historical F1 mode: OpenF1 provider
+[OpenF1](https://openf1.org) serves historical Formula 1 data **from 2023 onwards, free and without an account**. In **Historical F1** the *Data
+source* selector defaults to OpenF1; FastF1 stays available (it is the API and CLI default, and the only source before 2023).
+From the command line: `python scripts/import_historical.py --provider openf1 --year 2025 --event "Abu Dhabi" --session R --drivers VER HAM`.
+
+| | OpenF1 | FastF1 |
+|---|---|---|
+| Seasons | 2023 onwards | 2018 onwards |
+| Account | none | F1TV Access/Pro/Premium |
+| Session id | `openf1-<year>-<event>-<session>` | `fastf1-<year>-<event>-<session>` |
+| Brake | on/off, stored as `brake_applied` (0/100) | on/off, stored as `brake_applied` |
+| Not provided | steering, corner positions, steward lap deletions/validity | corner positions need circuit info |
+
+* **Throttle and cache.** Requests are limited to 3 per second and 30 per minute, retried with back-off on HTTP 429 and 5xx (honouring
+  `Retry-After`) and can be cancelled between requests. Every non-empty answer is cached on disk in `data/openf1-cache/`, so a repeated
+  import sends no request for data it already has. OpenF1 publishes no quota; these limits are deliberately conservative, so a full
+  20-driver race (car data and position in 30-minute windows) takes several minutes the first time.
+* **Partial imports.** Laps are required. Weather, stints, pit stops, race control and each driver's car/position data are optional: when
+  one is empty or fails the session is stored with `partial: true`, and the session overview shows an *Import coverage* panel with the rows
+  and status of every endpoint and the drivers that had no car or position data.
+* **Derived values, listed in the manifest.** `distance_m` is speed integrated over time within each lap (OpenF1 has no distance channel);
+  the lap of each car/position sample comes from OpenF1 lap start times (samples outside every lap are dropped); `session_time_s` counts from the
+  session start OpenF1 publishes; `tyre_life` is tyre age at stint start plus laps in the stint. Position coordinates are OpenF1's raw units
+  (not verified as metres) and `(0, 0, 0)` "no signal" samples are dropped. `rainfall` is an on/off flag (stored as `rainfall_flag`, not mm).
+* **Tests.** `tests/test_openf1.py` runs the client, importer and API against a fake OpenF1 server (`tests/openf1_fakes.py`): rate limiter,
+  retries, cache, windows, partial coverage, cancel, dedupe. `tests/test_ui_openf1.py` drives the page. A real-network check is opt-in:
+  `RUN_NETWORK_TESTS=1 pytest tests/test_openf1.py -k live`. OpenF1 has not been contacted by the default test run.
+* **Attribution.** Data from OpenF1, an unofficial open-source API, not affiliated with Formula 1. OpenF1 data is not EA SPORTS F1 game data and
+  never enters a setup experiment.
 
 ## Reading the results honestly
 

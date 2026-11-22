@@ -1,0 +1,17 @@
+{
+  "name": "trialforge-workspace",
+  "private": true,
+  "description": "Command shortcuts for the TRIALFORGE workspace (no Node dependencies; each script calls a shell script in scripts/)",
+  "scripts": {
+    "start": "bash scripts/start-all.sh start",
+    "start-all": "bash scripts/start-all.sh start",
+    "stop": "bash scripts/start-all.sh stop",
+    "status": "bash scripts/start-all.sh status",
+    "check": "bash scripts/start-all.sh check",
+    "start-f1": "bash scripts/start-f1.sh start",
+    "stop-f1": "bash scripts/start-f1.sh stop",
+    "start-wattwise": "bash scripts/start-wattwise.sh start",
+    "stop-wattwise": "bash scripts/start-wattwise.sh stop",
+    "check-release": "bash scripts/check-release.sh"
+  }
+}
