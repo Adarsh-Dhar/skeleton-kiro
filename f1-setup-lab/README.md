@@ -41,7 +41,8 @@ retried). Upgrading from a version with `data/f1lab.db`, Parquet sessions or evi
 | # | Screen | What you do | Screenshot |
 |---|---|---|---|
 | 1 | **Dashboard** | See every experiment, progress, best feasible lap | [10](docs/screenshots/10-dashboard.png) |
-| 2 | **New experiment** | Pick factors and ranges (front wing, rear wing, suspension, tyre pressure), minimise lap time, minimum stability, design method, budget | [02](docs/screenshots/02-experiment-creator.png) |
+| 1b | **New experiment: choose a data source** | Three cards. **Historical F1 data** (default, recommended): pick provider, season, Grand Prix, session and one, several or all drivers, choose which datasets to import, and the real session opens for analysis when the import finishes (no experiment is created). **Synthetic simulator** (`#/new/synthetic`) and **Live simulator** (`#/new/live`) are the setup-experiment modes | — |
+| 2 | **New experiment (synthetic simulator)** | Pick factors and ranges (front wing, rear wing, suspension, tyre pressure), minimise lap time, minimum stability, design method, budget | [02](docs/screenshots/02-experiment-creator.png) |
 | 3 | **Setup design** | Inspect the generated setups: 2<sup>4-1</sup> fractional factorial, resolution IV, `I=ABCD`, alias structure, randomised order | [03](docs/screenshots/03-setup-design.png) |
 | 4 | **Run monitor** | Run on the simulator, watch results arrive; cancel, retry failed runs; infeasible setups flagged | [04](docs/screenshots/04-run-monitor.png) |
 | 5 | **Telemetry** | Lap/sector charts per run; import a recorded CSV (s or ms) with unit conversion and outlier flagging; attach it to a queued run. Live experiments: **Stint telemetry** inspector (below) | [05](docs/screenshots/05-telemetry.png), [13](docs/screenshots/13-telemetry-import.png), [14](docs/screenshots/14-stint-inspector.png) |
@@ -172,6 +173,16 @@ command line:
 | Brake | on/off, stored as `brake_applied` (0/100) | on/off, stored as `brake_applied` |
 | Not provided | steering, corner positions, steward lap deletions/validity | corner positions need circuit info |
 
+### Starting from New experiment
+**New experiment** opens on **Historical F1 data**, with OpenF1 preselected (free, no account). The same selector is used on the Historical F1 page.
+Seasons run from the provider's first year to the current one (the newest season with no published Grand Prix steps back to the latest one that has
+data). The Grand Prix, session and driver lists are loaded from OpenF1 or FastF1, never typed in: changing the season reloads the Grand Prix list,
+changing the Grand Prix reloads its sessions, and changing the session reloads that session's driver roster (number, code, name, team). Drivers are
+searchable and multi-selectable; the default is the whole field. A "car" is the driver's entry in that session (OpenF1 publishes no separate chassis).
+Lap times are always imported; telemetry, track location, weather and each OpenF1 dataset (race results, running position, grid, tyres and pit stops,
+overtakes and intervals, race control, team radio) can be switched off. When the import completes the session analysis opens.
+Historical data cannot reveal setup parameters, so it never feeds the setup design or the optimiser.
+
 ### Which OpenF1 endpoints are used
 All 18 documented endpoints are integrated except the per-lap mini-sector arrays (`segments_sector_*`) and the driver headshots/team colours.
 
@@ -189,7 +200,7 @@ All 18 documented endpoints are integrated except the per-lap mini-sector arrays
 | `starting_grid` | grid (filed by OpenF1 under the *qualifying* session; the importer looks it up there) | Race & results |
 | `intervals`, `overtakes` | gaps to leader and car ahead; overtake events (race and sprint only) | Race & results |
 | `team_radio` | clip links (https only; the audio stays on Formula 1's server) | Pit, flags & radio |
-| `drivers_championship`, `teams_championship` | standings (beta endpoints, race sessions only) | Championship |
+| `drivers_championship`, `teams_championship` | standings (beta endpoints, race sessions only); available through the API and CLI only, with no screen or import option in the UI | none |
 
 `location` (where the car is on the circuit) and `position` (P1, P2, ...) are different datasets and are never mixed: the UI says *track location*
 for the first and *running order* for the second. Per-session datasets live in `f1_hist_dataset` (migration 7) and are served by

@@ -165,3 +165,17 @@ def test_null_fields_in_real_laps_do_not_break_normalization():
         assert len(df) == len(d["laps"])
         seen_null |= bool(df["lap_time_s"].isna().any()) and any(r["date_start"] is None or r["lap_duration"] is None for r in d["laps"])
     assert seen_null  # the fixtures include real laps with null durations/start times (out laps, in laps)
+
+
+def test_race_control_names_the_driver_even_when_openf1_leaves_driver_number_empty():
+    d, drivers, t0 = _setup("2024-monza-qualifying")
+    rows = N.race_control(d["race_control"], t0, drivers)
+    assert all(r["driver_number"] is None for r in rows)  # real data: the field is empty for every message
+    named = [r for r in rows if r["driver"]]
+    assert named and all(r["driver_source"] == "message" and r["driver"] in {x["code"] for x in drivers} for r in named)
+    assert {r["driver"] for r in named} >= {"PIA", "HAM"}
+    assert all(r["driver"] is None and r["driver_source"] is None for r in rows if "CAR " not in r["message"])  # track/sector flags have no driver
+    pen = N.race_control([{"date": "2024-05-04T10:00:00+00:00", "message": "FIA STEWARDS: 10 SECOND TIME PENALTY FOR CAR 31 (OCO) - UNSAFE RELEASE"}], None, [])
+    assert pen[0]["driver"] == "OCO" and pen[0]["cars_in_message"] == ["OCO"]  # a driver outside the imported selection is still named
+    both = N.race_control([{"date": "2024-05-04T10:00:00+00:00", "driver_number": 1, "message": "NOTE CAR 44 (HAM)"}], None, drivers)
+    assert both[0]["driver"] and both[0]["driver_source"] == "provided" and both[0]["cars_in_message"] == ["HAM"]

@@ -71,7 +71,13 @@ DATA = {
     "weather": [{"session_key": 99, "date": (T0 + timedelta(seconds=60 * i)).isoformat(), "air_temperature": 26.0 + i, "track_temperature": 31.0,
                  "humidity": 55, "pressure": 1013.2, "rainfall": 0, "wind_direction": 120, "wind_speed": 2.1} for i in range(5)],
     "race_control": [{"session_key": 99, "date": (T0 + timedelta(seconds=300)).isoformat(), "category": "Flag", "flag": "GREEN", "scope": "Track",
-                      "lap_number": 1, "message": "GREEN LIGHT - PIT EXIT OPEN"}],
+                      "lap_number": 1, "message": "GREEN LIGHT - PIT EXIT OPEN"},
+                     {"session_key": 99, "date": (T0 - timedelta(seconds=120)).isoformat(), "category": "Flag", "flag": "YELLOW", "scope": "Sector",
+                      "sector": 2, "lap_number": 1, "message": "YELLOW IN TRACK SECTOR 2"},
+                     {"session_key": 99, "date": (T0 + timedelta(seconds=400)).isoformat(), "category": "Other", "flag": None, "scope": "Driver",
+                      "lap_number": 2, "driver_number": None, "message": "CAR 44 (HAM) LAP DELETED - TRACK LIMITS AT TURN 2 LAP 2 16:05:33"},
+                     {"session_key": 99, "date": (T0 + timedelta(seconds=500)).isoformat(), "category": "Other", "flag": "BLACK AND WHITE", "scope": "Driver",
+                      "lap_number": 3, "driver_number": 1, "message": "BLACK AND WHITE FLAG FOR CAR 1 (VER) - TRACK LIMITS"}],
 }
 def _at(seconds: float) -> str:
     return (LAP1 + timedelta(seconds=seconds)).isoformat()

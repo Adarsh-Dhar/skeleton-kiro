@@ -1,5 +1,5 @@
 /* Historical F1: OpenF1 race analysis views (running order, results, grid, gaps, overtakes, pit & strategy, race control,
-   team radio, championships) and the import-coverage / provenance panel. Every text value is escaped with esc(). */
+   team radio) and the import-coverage / provenance panel. Every text value is escaped with esc(). */
 const HistRace = (() => {
   const esc = Charts.esc, fmt = Charts.f;
   const PALETTE = ['#e10600', '#4aa8ff', '#2ecc71', '#ffb400', '#c99bff', '#00cec9', '#ff7ab8', '#a3e635', '#fb923c', '#94a3b8'];
@@ -184,28 +184,47 @@ const HistRace = (() => {
       <p class="hint">Pit lane time is entry to exit as published by OpenF1; stationary time is only published from the 2024 United States GP onwards, so older sessions show &mdash;.</p>`;
   }
 
+  /* Who a race control message is about: the driver OpenF1 provides, else the car named in the text ("CAR 44 (HAM) ..."). Works on
+     sessions imported before the backend extracted it. */
+  const CAR_RE = /\bCARS? (\d{1,2}) \(([A-Z]{3})\)/g;
+  const subjectOf = (r, drivers) => {
+    const code = (n) => (drivers.find((d) => String(d.number) === String(n)) || {}).code;
+    if (r.driver) return { code: r.driver, source: r.driver_source || 'provided' };
+    if (r.driver_number != null) return { code: code(r.driver_number) || String(r.driver_number), source: 'provided' };
+    const hit = [...String(r.message || '').matchAll(CAR_RE)][0];
+    return hit ? { code: code(hit[1]) || hit[2], source: 'message' } : null;
+  };
+  /* Times are relative to the session start OpenF1 publishes; negative = a message sent before the session began. */
+  const rcTime = (s) => (s === null || s === undefined ? '&mdash;' : s < 0 ? `${clock(-s)} <span class="dim">before start</span>` : clock(s));
   function raceControlPanel(m, rows) {
     if (!rows.length) return unavailable(m, 'race_control', 'race control messages');
     const cats = [...new Set(rows.map((r) => r.category).filter(Boolean))].sort();
-    return `<div class="field" style="max-width:240px"><label for="hrccat">Category</label><select id="hrccat"><option value="">All (${rows.length})</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div>
-      <div style="overflow:auto;max-height:420px"><table><thead><tr><th class="num">Time</th><th class="num">Lap</th><th>Category</th><th>Flag</th><th>Scope</th><th>Message</th></tr></thead><tbody id="hrcbody"></tbody></table></div>`;
+    const who = [...new Set(rows.map((r) => (subjectOf(r, m.drivers || []) || {}).code).filter(Boolean))].sort();
+    return `<div class="row" style="gap:12px"><div class="field" style="max-width:240px"><label for="hrccat">Category</label><select id="hrccat"><option value="">All (${rows.length})</option>${cats.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div>
+      <div class="field" style="max-width:240px"><label for="hrcdrv">Driver</label><select id="hrcdrv"><option value="">All messages</option><option value="*track">Track / sector only (no driver)</option>${who.map((c) => `<option>${esc(c)}</option>`).join('')}</select></div></div>
+      <div style="overflow:auto;max-height:420px"><table><thead><tr><th class="num">Time</th><th class="num">Lap</th><th>Category</th><th>Flag</th><th>Scope</th><th>Driver</th><th>Message</th></tr></thead><tbody id="hrcbody"></tbody></table></div>
+      <p class="hint">Time is measured from the session start OpenF1 publishes; messages sent before the session began show "before start". A driver is shown when OpenF1 provides one or when the message names the car (marked "from message"); track and sector flags concern no single driver.</p>`;
   }
-  function fillRaceControl(rows) {
-    const cat = document.getElementById('hrccat')?.value || '';
+  function fillRaceControl(rows, drivers) {
+    const cat = document.getElementById('hrccat')?.value || '', who = document.getElementById('hrcdrv')?.value || '';
     const body = document.getElementById('hrcbody');
     if (!body) return;
-    body.innerHTML = rows.filter((r) => !cat || r.category === cat).map((r) => {
-      const col = FLAG[String(r.flag || '').toUpperCase()];
-      return `<tr><td class="num mono">${clock(r.time_s)}</td><td class="num">${r.lap_number ?? ''}</td><td>${esc(r.category || '')}</td>
-        <td>${r.flag ? `<span style="color:${col || 'inherit'}">&#9632;</span> ${esc(r.flag)}` : ''}</td><td class="dim">${esc(r.scope || '')}</td><td>${esc(r.message)}</td></tr>`;
-    }).join('');
+    body.innerHTML = rows.filter((r) => {
+      const s = subjectOf(r, drivers);
+      return (!cat || r.category === cat) && (!who || (who === '*track' ? !s : s && s.code === who));
+    }).map((r) => {
+      const col = FLAG[String(r.flag || '').toUpperCase()], s = subjectOf(r, drivers);
+      const driver = s ? `<span class="mono"><b>${esc(s.code)}</b></span>${s.source === 'message' ? ' <span class="dim">from message</span>' : ''}` : '<span class="dim">&mdash;</span>';
+      return `<tr><td class="num mono">${rcTime(r.time_s)}</td><td class="num">${r.lap_number ?? ''}</td><td>${esc(r.category || '')}</td>
+        <td>${r.flag ? `<span style="color:${col || 'inherit'}">&#9632;</span> ${esc(r.flag)}` : ''}</td><td class="dim">${esc(r.scope || '')}${r.sector ? ` ${esc(r.sector)}` : ''}</td><td>${driver}</td><td>${esc(r.message)}</td></tr>`;
+    }).join('') || '<tr><td colspan="7" class="dim">No message matches this filter.</td></tr>';
   }
 
   function radioPanel(m, rows) {
     if (!rows.length) return unavailable(m, 'team_radio', 'team radio clips');
     return `<div style="overflow:auto;max-height:340px"><table><thead><tr><th class="num">Time</th><th>Driver</th><th>Recording</th></tr></thead><tbody>
       ${rows.map((r) => `<tr><td class="num mono">${clock(r.time_s)}</td><td class="mono"><b>${esc(r.driver)}</b></td><td><a href="${esc(r.recording_url)}" target="_blank" rel="noopener noreferrer">open recording</a></td></tr>`).join('')}</tbody></table></div>
-      <p class="hint">${rows.length} clip(s). OpenF1 publishes only a limited selection of radio messages, and fewer in 2026. The audio is hosted by Formula 1's live-timing server and opens in a new tab; this app does not copy it.</p>`;
+      <p class="hint">${rows.length} clip(s). OpenF1 gives each clip's driver and time but no transcript, so what was said is only in the recording. It also publishes only a limited selection of radio messages, and fewer in 2026. The audio is hosted by Formula 1's live-timing server and opens in a new tab; this app does not copy it.</p>`;
   }
 
   async function strategy(body, api, id, m, laps) {
@@ -214,22 +233,10 @@ const HistRace = (() => {
       <div class="panel"><h2>Pit stops</h2>${pitTable(m, pit.rows, laps.some((l) => l.stint != null))}</div>
       <div class="panel"><h2>Race control</h2>${raceControlPanel(m, rc.rows)}</div>
       <div class="panel"><h2>Team radio</h2>${radioPanel(m, radio.rows)}</div>`;
-    document.getElementById('hrccat')?.addEventListener('change', () => fillRaceControl(rc.rows));
-    fillRaceControl(rc.rows);
+    const drv = m.drivers || [];
+    ['hrccat', 'hrcdrv'].forEach((i) => document.getElementById(i)?.addEventListener('change', () => fillRaceControl(rc.rows, drv)));
+    fillRaceControl(rc.rows, drv);
   }
 
-  /* ------------------------------------------------------------------ championship tab */
-  const pts = (v) => (v === null || v === undefined ? '&mdash;' : fmt(v, v % 1 ? 1 : 0));
-  function champTable(rows, key, label) {
-    return `<table><thead><tr><th class="num">Pos</th><th>${label}</th><th class="num">Points before</th><th class="num">Points after</th><th class="num">Pos before</th></tr></thead><tbody>
-      ${rows.map((r) => `<tr><td class="num"><b>${r.position_current ?? '&mdash;'}</b></td><td class="mono">${esc(r[key])}</td><td class="num">${pts(r.points_start)}</td><td class="num">${pts(r.points_current)}</td><td class="num">${r.position_start ?? '&mdash;'}</td></tr>`).join('')}</tbody></table>`;
-  }
-  async function championship(body, api, id, m) {
-    const [d, t] = await Promise.all(['drivers_championship', 'teams_championship'].map((n) => getSet(api, id, n, 'limit=0')));
-    body.innerHTML = `<div class="note info"><b>Beta data.</b> OpenF1 labels both championship endpoints beta and publishes them for race sessions only. "Points after" depends on when OpenF1 captured the standings. Where OpenF1 returned nothing, this page says so instead of filling in values.</div>
-      <div class="grid g2"><div class="panel"><h2>Drivers</h2>${d.rows.length ? champTable(d.rows, 'driver', 'Driver') : unavailable(m, 'drivers_championship', 'driver standings')}</div>
-      <div class="panel"><h2>Constructors</h2>${t.rows.length ? champTable(t.rows, 'team', 'Team') : unavailable(m, 'teams_championship', 'constructor standings')}</div></div>`;
-  }
-
-  return { coverage, race, strategy, championship, dur, clock, stintStrip, unavailable };
+  return { coverage, race, strategy, dur, clock, stintStrip, unavailable };
 })();

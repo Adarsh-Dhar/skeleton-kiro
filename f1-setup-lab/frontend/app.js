@@ -48,8 +48,15 @@ async function route() {
   try {
     if (!META) META = await api('GET', '/api/meta');
     setBanner('synthetic');
-    if (!parts.length) { setNav('dash'); return await viewDashboard(); }
-    if (parts[0] === 'new') { setNav('new'); return parts[1] === 'live' ? await viewNewLive() : await viewNew(); }
+    if (!parts.length) { location.replace('#/new'); return; }  // real historical F1 data is the landing page
+    if (parts[0] === 'dashboard') { setNav('dash'); return await viewDashboard(); }
+    if (parts[0] === 'new') {
+      setNav('new');
+      if (parts[1] === 'live') return await viewNewLive();
+      if (parts[1] === 'synthetic') return await viewNew();
+      setBanner('historical');  // real historical data is the default way to start
+      return await viewNewHistorical();
+    }
     if (parts[0] === 'live') { setNav('live'); setBanner(LIVE); return await viewLive(); }
     if (parts[0] === 'telemetry') { setNav('telemetry'); return await viewTelemetryStandalone(); }
     if (parts[0] === 'hist') { setNav('hist'); setBanner('historical'); return parts[1] ? await viewHistSession(parts[1], parts[2] || 'overview') : await viewHist(); }
@@ -59,8 +66,8 @@ async function route() {
       const fn = { design: viewDesign, runs: viewRuns, telemetry: viewExpTelemetry, analysis: viewAnalysis, optimise: viewOptimise, report: viewReport }[tab];
       if (fn) return await fn(parts[1]);
     }
-    view().innerHTML = '<div class="empty"><h2>Page not found</h2><a href="#/">Back to dashboard</a></div>';
-  } catch (e) { view().innerHTML = errorsBox(e) + '<p><a href="#/">Back to dashboard</a></p>'; }
+    view().innerHTML = '<div class="empty"><h2>Page not found</h2><a href="#/dashboard">Back to dashboard</a></div>';
+  } catch (e) { view().innerHTML = errorsBox(e) + '<p><a href="#/dashboard">Back to dashboard</a></p>'; }
 }
 window.addEventListener('hashchange', route);
 
@@ -84,7 +91,7 @@ async function viewDashboard() {
       <td>${esc(e.design_method.replaceAll('_', ' '))}</td><td class="num">${e.best ? fmt(e.best.lap_time, 3) + ' s' : '&mdash;'}</td><td class="num">${e.best ? (isLive(e) ? fmt(e.best.lap_time_std, 2) + ' s spread' : fmt(e.best.stability, 1)) : '&mdash;'}</td>
       <td class="dim mono">${esc(e.created_at.slice(0, 16).replace('T', ' '))}</td><td><a class="btn small" href="#/e/${esc(e.id)}/design">Open</a></td></tr>`).join('')}</tbody></table>`
       : `<div class="empty"><h2>No experiments yet</h2><p>Design a screening experiment, run it on the synthetic simulator, find the setup factors that matter and let the optimiser refine them.</p>
-      <p><button class="btn primary" id="demo">Create demo experiment</button> &nbsp; <a class="btn" href="#/new">Configure my own</a></p></div>`;
+      <p><button class="btn primary" id="demo">Create demo experiment</button> &nbsp; <a class="btn" href="#/new/synthetic">Configure my own</a></p></div>`;
     document.querySelectorAll('tr[data-id]').forEach((tr) => tr.addEventListener('click', (ev) => { if (!ev.target.closest('a')) location.hash = `#/e/${tr.dataset.id}/design`; }));
     $('#demo')?.addEventListener('click', async () => {
       try { const d = await api('POST', '/api/experiments', { name: 'Wing screening (demo)', hypothesis: 'A rearward aero balance improves lap time while keeping the car stable.' }); location.hash = `#/e/${d.id}/design`; } catch (e) { toast(e.message); }
@@ -98,9 +105,23 @@ async function viewDashboard() {
 }
 
 /* ----------------------------------------------------------- new experiment */
+const NEW_MODES = [
+  ['hist', '#/new', 'Historical F1 data', 'Recommended', 'Real Grand Prix sessions from OpenF1 (free) or FastF1. Opens an analysis; no experiment runs are created.'],
+  ['synthetic', '#/new/synthetic', 'Synthetic simulator', 'Simulated data', 'Design-of-experiments and setup optimisation on the artificial vehicle model.'],
+  ['live', '#/new/live', 'Live simulator (EA SPORTS F1 25)', 'Requires game', 'Drive your own stints in the game and record them over UDP.'],
+];
+const newModeCards = (active) => `<div class="modecards" role="tablist" aria-label="Data source">${NEW_MODES.map(([k, href, title, badge, text]) => `<a class="modecard ${k === active ? 'on' : ''}" href="${href}" role="tab" aria-selected="${k === active}" data-mode="${k}">
+  <b>${esc(title)}</b><span class="tag">${esc(badge)}</span><span class="dim">${esc(text)}</span></a>`).join('')}</div>`;
+
+/* Default New experiment screen: pick a real historical session and import it. Nothing here creates an experiment. */
+async function viewNewHistorical() {
+  view().innerHTML = `<h1>New experiment</h1>${newModeCards('hist')}<p class="sub">Choose a season, Grand Prix, session and driver. The real data is imported into the historical library and opened for analysis.</p>
+    <div class="note info"><b>Real-data analysis, not a setup experiment.</b> Historical sessions contain no car setup, so they cannot show what a wing or suspension change does. For controlled setup studies and optimisation choose <a href="#/new/synthetic">Synthetic simulator</a> or the live game.</div><div id="hpick"></div>`;
+  HistPicker.mount($('#hpick'), { api, errorsBox, toast, navigate: true });
+}
 async function viewNew() {
   const fdef = META.default_factors;
-  view().innerHTML = `<h1>New experiment</h1><div class="tabs mode"><a href="#/new" class="on">Synthetic simulator</a><a href="#/new/live">Live simulator (EA SPORTS F1 25)</a></div><p class="sub">Define the setup variables, the objective and the stability constraint, then generate the design.</p><div id="err"></div>
+  view().innerHTML = `<h1>New experiment</h1>${newModeCards('synthetic')}<p class="sub">Define the setup variables, the objective and the stability constraint, then generate the design.</p><div id="err"></div>
   <form id="f" class="grid g21"><div>
     <div class="panel"><h2>1 &middot; Experiment</h2><div class="field"><label for="name">Name</label><input id="name" value="Wing & suspension screening" maxlength="80"></div>
       <div class="field"><label for="hyp">Hypothesis</label><textarea id="hyp" style="min-height:60px">A rearward aero balance improves lap time while keeping the car stable.</textarea></div></div>
@@ -283,7 +304,7 @@ async function viewLive() {
 async function viewNewLive() {
   const gf = META.game.factors, defaults = { front_wing: ['20,25,30', 25], rear_wing: ['24,29,34', 29], on_throttle_diff: ['40,50,60', 50], rear_anti_roll_bar: ['8,11,14', 11] };
   const methods = META.methods.filter((m) => !META.game.unsupported_methods.includes(m.id));
-  view().innerHTML = `<h1>New experiment</h1><div class="tabs mode"><a href="#/new">Synthetic simulator</a><a href="#/new/live" class="on">Live simulator (EA SPORTS F1 25)</a></div>
+  view().innerHTML = `<h1>New experiment</h1>${newModeCards('live')}
   <p class="sub">You set each generated setup in the game and drive a stint; the app records the laps and checks the game really used that setup.</p><div id="err"></div>
   <form id="f" class="grid g21"><div>
     <div class="panel"><h2>1 &middot; Experiment</h2><div class="field"><label for="name">Name</label><input id="name" value="Aero and differential screening" maxlength="80"></div>
@@ -573,7 +594,7 @@ async function viewReport(id) {
 
 /* ------------------------------------------------------------- historical F1 */
 const HIST_TABS = [['overview', 'Overview'], ['laps', 'Lap analysis'], ['telemetry', 'Telemetry'], ['track', 'Track map'], ['compare', 'Compare'], ['weather', 'Weather & tyres']];
-const OPENF1_TABS = [['race', 'Race & results'], ['strategy', 'Pit, flags & radio'], ['championship', 'Championship']];
+const OPENF1_TABS = [['race', 'Race & results'], ['strategy', 'Pit, flags & radio']];
 const histTabs = (m) => (m.provider === 'openf1' ? HIST_TABS.concat(OPENF1_TABS) : HIST_TABS);
 const PROVIDER_LABEL = { fastf1: 'FASTF1', openf1: 'OPENF1' };
 const histChipFor = (m) => `<span class="chip hist">${esc(m.source_label || `HISTORICAL F1 · ${PROVIDER_LABEL[m.provider] || String(m.provider || '').toUpperCase()}`)}</span>`;
@@ -582,86 +603,11 @@ const brakeOf = (pts) => (pts.some((p) => p.brake_applied != null) ? 'brake_appl
 
 async function viewHist() {
   view().innerHTML = `<h1>Historical F1</h1><p class="sub">Real Formula 1 session data from <b>OpenF1</b> (free, no account, 2023 onwards) or <b>FastF1</b> (needs an F1TV subscription, 2018 onwards). Both are unofficial. For benchmarking and analysis &mdash; separate from your setup experiments.</p>
-  <div class="grid g21"><div><div class="panel" id="hist-form"><h2>Import a session</h2><div id="hist-err"></div>
-    <div class="grid g2"><div class="field"><label for="hprov">Data source</label><select id="hprov"><option value="openf1" selected>OpenF1 (free, 2023+)</option><option value="fastf1">FastF1 (F1TV account, 2018+)</option></select></div>
-    <div class="field"><label for="hyear">Season</label><input id="hyear" type="number" min="2023" max="2100" value="2025"></div>
-    <div class="field"><label for="hevent">Grand Prix</label><select id="hevent"><option>Loading&hellip;</option></select></div>
-    <div class="field"><label for="hsession">Session</label><select id="hsession"><option>&mdash;</option></select></div>
-    <div class="field"><label>&nbsp;</label><button class="btn" id="hloaddrv" type="button">Load drivers</button></div></div>
-    <div class="field"><label>Drivers</label><div id="hdrivers"><span class="dim">Pick a session and press "Load drivers" (leave all checked = whole field, or uncheck to select).</span></div></div>
-    <div class="field"><label>Include</label><div class="row"><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="htele" checked> telemetry</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hpos" checked> position</label><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hwx" checked> weather</label><label style="text-transform:none;letter-spacing:0" class="hopen"><input type="checkbox" id="hrace" checked> race data (order, results, grid, gaps, overtakes, radio)</label></div></div>
-    <div class="field hopen"><label style="text-transform:none;letter-spacing:0"><input type="checkbox" id="hfresh"> download again, ignoring the OpenF1 cache</label></div>
-    <button class="btn primary" id="himport">Import session</button><span class="dim" id="hmsg"></span><div id="hprog"></div></div>
-    <div class="note info">The first import downloads and processes the session (OpenF1 is throttled to 30 requests a minute, so a full field can take several minutes); results are cached locally and re-imports are fast. Historical data never enters your setup experiments.</div></div>
+  <div class="grid g21"><div><div id="hpick"></div></div>
   <div><div class="panel"><h2>Imported sessions</h2><div id="hist-lib"><div class="dim">Loading&hellip;</div></div></div>
     <div class="panel"><h2>Recent imports</h2><div id="hist-jobs"><div class="dim">Loading&hellip;</div></div></div>
-    <div class="panel"><h2>About this data</h2><p class="hint">OpenF1 (free, from 2023) and FastF1 (F1TV account, from 2018) are unofficial sources of Formula 1 timing and telemetry data. Neither is affiliated with Formula 1, and coverage varies by year and session. OpenF1 supplies no steering, no corner positions and no lap deletions. Car telemetry is sampled at the timing feed's rate; weather is sampled sparsely. Historical sessions contain no car setup configuration, so they are kept separate from the TRIALFORGE setup experiments.</p><p class="hint" id="hcache"></p></div></div></div>`;
-  let events = [];
-  const fillEvents = () => {
-    $('#hevent').innerHTML = events.map((e, i) => `<option value="${i}">${esc(e.event)}${e.location ? ` (${esc(e.location)})` : ''}</option>`).join('') || '<option>No events</option>';
-    fillSessions();
-  };
-  const fillSessions = () => {
-    const ev = events[+$('#hevent').value];
-    $('#hsession').innerHTML = (ev?.sessions || []).map((s) => `<option value="${esc(s.type)}">${esc(s.name || s.type)} (${esc(s.type)})</option>`).join('') || '<option>&mdash;</option>';
-  };
-  const provider = () => $('#hprov').value;
-  const loadEvents = async () => {
-    const y = +$('#hyear').value;
-    try { events = await api('GET', `/api/historical/events?year=${y}&provider=${provider()}`); fillEvents(); $('#hist-err').innerHTML = ''; }
-    catch (e) { events = []; fillEvents(); $('#hist-err').innerHTML = errorsBox(e); }
-  };
-  $('#hyear').addEventListener('change', loadEvents);
-  const syncProvider = () => document.querySelectorAll('.hopen').forEach((e) => { e.hidden = provider() !== 'openf1'; });
-  $('#hprov').addEventListener('change', () => {
-    syncProvider();
-    const open = provider() === 'openf1', year = $('#hyear');
-    year.min = open ? '2023' : '2018';
-    if (open && +year.value < 2023) year.value = '2025';
-    $('#hdrivers').innerHTML = '<span class="dim">Pick a session and press "Load drivers" (leave all checked = whole field, or uncheck to select).</span>';
-    loadEvents();
-  });
-  $('#hevent').addEventListener('change', fillSessions);
-  $('#hloaddrv').addEventListener('click', async () => {
-    const ev = events[+$('#hevent').value];
-    if (!ev) return;
-    $('#hdrivers').innerHTML = '<span class="dim">Loading drivers&hellip;</span>';
-    try {
-      const ds = await api('GET', `/api/historical/drivers?year=${+$('#hyear').value}&event=${encodeURIComponent(ev.event)}&session=${encodeURIComponent($('#hsession').value)}&provider=${provider()}`);
-      $('#hdrivers').innerHTML = ds.length ? `<div class="row" style="gap:14px">${ds.map((d) => `<label style="text-transform:none;letter-spacing:0"><input type="checkbox" class="hdrv" value="${esc(d.code)}" checked> ${esc(d.code)} <span class="dim">${esc(d.name)}</span></label>`).join('')}</div>` : '<span class="dim">No drivers returned.</span>';
-    } catch (e) { $('#hdrivers').innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
-  });
-  $('#himport').addEventListener('click', async () => {
-    const ev = events[+$('#hevent').value];
-    if (!ev) { $('#hist-err').innerHTML = errorsBox(new Error('pick a Grand Prix first')); return; }
-    const drivers = [...document.querySelectorAll('.hdrv:checked')].map((c) => c.value);
-    const body = { provider: provider(), year: +$('#hyear').value, event: ev.event, session: $('#hsession').value, drivers,
-      include_telemetry: $('#htele').checked, include_position: $('#hpos').checked, include_weather: $('#hwx').checked,
-      include_race_data: $('#hrace').checked, refresh_cache: $('#hfresh').checked };
-    try {
-      const r = await api('POST', '/api/historical/import', body);
-      $('#hmsg').textContent = r.duplicate ? (r.state === 'COMPLETED' ? 'already imported (no download needed)' : 'this import is already running') : 'import started';
-      trackImport(r.import_id);
-    } catch (e) { $('#hist-err').innerHTML = errorsBox(e); }
-  });
-  // progress of one durable import job (it survives a server restart); cancel / retry from here
-  const trackImport = (jid) => {
-    const tick = async () => {
-      let j;
-      try { j = await api('GET', `/api/historical/imports/${jid}`); } catch (e) { $('#hprog').innerHTML = errorsBox(e); return; }
-      const active = !['COMPLETED', 'FAILED', 'CANCELLED'].includes(j.state);
-      $('#hprog').innerHTML = `<div class="note ${j.state === 'FAILED' ? '' : 'info'}"><b>${esc(j.state)}</b> &middot; ${esc(j.detail || '')}${j.error ? ` &middot; <span class="badc">${esc(j.error_code || '')}: ${esc(j.error)}</span>` : ''}
-        ${active ? ' <button class="btn small" id="hcancel" type="button">Cancel</button>' : ''}${['FAILED', 'CANCELLED'].includes(j.state) ? ' <button class="btn small" id="hretry" type="button">Retry</button>' : ''}</div>`;
-      $('#hcancel')?.addEventListener('click', async () => { try { await api('POST', `/api/historical/imports/${jid}/cancel`); } catch (e) { $('#hist-err').innerHTML = errorsBox(e); } });
-      $('#hretry')?.addEventListener('click', async () => {
-        try { const n = await api('POST', `/api/historical/imports/${jid}/retry`); trackImport(n.import_id); } catch (e) { $('#hist-err').innerHTML = errorsBox(e); }
-      });
-      if (j.state === 'COMPLETED') { $('#hmsg').textContent = 'done'; loadLibrary(); loadJobs(); return; }
-      if (!active) { $('#hmsg').textContent = j.state.toLowerCase(); loadJobs(); return; }
-      setTimeout(tick, 1500);
-    };
-    tick();
-  };
+    <div class="panel"><h2>About this data</h2><p class="hint">OpenF1 (free, from 2023) and FastF1 (F1TV account, from 2018) are unofficial sources of Formula 1 timing and telemetry data. Neither is affiliated with Formula 1, and coverage varies by year and session. OpenF1 supplies no steering, no corner positions and no lap deletions. Car telemetry is sampled at the timing feed's rate; weather is sampled sparsely. Historical sessions contain no car setup configuration, so they are kept separate from the TRIALFORGE setup experiments.</p></div></div></div>`;
+  const picker = HistPicker.mount($('#hpick'), { api, errorsBox, toast, navigate: false, onChange: () => { loadLibrary(); loadJobs(); } });
   const loadJobs = async () => {
     try {
       const jobs = await api('GET', '/api/historical/imports?limit=10');
@@ -669,9 +615,9 @@ async function viewHist() {
         <td class="mono">${esc(j.request.year)} ${esc(j.request.event)} ${esc(j.request.session)}<div class="dim">${esc(PROVIDER_LABEL[j.request.provider || 'fastf1'] || '')} &middot; ${esc((j.created_at || '').slice(0, 16).replace('T', ' '))}</div></td>
         <td>${esc(j.state)}${j.error_code ? `<div class="badc mono">${esc(j.error_code)}</div>` : ''}</td><td class="dim">${esc(j.error || j.detail || '')}</td>
         <td><button class="btn small hjob" data-id="${esc(j.import_id)}" type="button">Show</button></td></tr>`).join('')}</tbody></table>` : '<div class="empty">No imports yet.</div>';
-      document.querySelectorAll('.hjob').forEach((b) => b.addEventListener('click', () => trackImport(b.dataset.id)));
+      document.querySelectorAll('.hjob').forEach((b) => b.addEventListener('click', () => picker.track(b.dataset.id)));
       const running = jobs.find((j) => !['COMPLETED', 'FAILED', 'CANCELLED'].includes(j.state));
-      if (running && !$('#hprog').innerHTML) trackImport(running.import_id);
+      if (running && !$('#hprog').innerHTML) picker.track(running.import_id);
     } catch (e) { $('#hist-jobs').innerHTML = errorsBox(e); }
   };
   const loadLibrary = async () => {
@@ -683,21 +629,8 @@ async function viewHist() {
         : '<div class="empty">No historical sessions imported yet.</div>';
     } catch (e) { $('#hist-lib').innerHTML = errorsBox(e); }
   };
-  const loadCache = async () => {
-    try {
-      const c = await api('GET', '/api/historical/openf1/cache');
-      $('#hcache').innerHTML = `${esc(c.files)} cached OpenF1 answers (${esc((c.bytes / 1e6).toFixed(1))} MB), kept ${esc(c.ttl_days)} days${c.newest ? `, newest ${esc(c.newest.replace('T', ' ').slice(0, 16))} UTC` : ''}. <button class="btn small" id="hclear" type="button">Clear cache</button>`;
-      $('#hclear').addEventListener('click', async () => {
-        if (!window.confirm('Delete the cached OpenF1 downloads? Imported sessions are kept; the next import downloads again.')) return;
-        try { await api('DELETE', '/api/historical/openf1/cache'); toast('OpenF1 cache cleared', true); loadCache(); } catch (e) { $('#hist-err').innerHTML = errorsBox(e); }
-      });
-    } catch (e) { $('#hcache').textContent = ''; }
-  };
-  syncProvider();
-  await loadEvents();
   await loadLibrary();
   await loadJobs();
-  loadCache();
 }
 
 async function viewHistSession(id, tab) {
@@ -797,8 +730,6 @@ async function viewHistSession(id, tab) {
     await HistRace.race(body, api, id, m);
   } else if (tab === 'strategy' && m.provider === 'openf1') {
     await HistRace.strategy(body, api, id, m, await api('GET', `/api/historical/sessions/${id}/laps`));
-  } else if (tab === 'championship' && m.provider === 'openf1') {
-    await HistRace.championship(body, api, id, m);
   } else if (tab === 'weather') {
     const [wx, laps] = await Promise.all([api('GET', `/api/historical/sessions/${id}/weather`), api('GET', `/api/historical/sessions/${id}/laps`)]);
     const s = wx.samples || [];

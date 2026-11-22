@@ -122,7 +122,10 @@ class HistoricalService:
     # ------------------------------------------------------------- schedule browsing
     def events(self, year: int, provider: str = "fastf1") -> list[dict]:
         if provider == "openf1":
-            meetings = openf1_importer.meetings_for(self.openf1, year)
+            openf1_importer.check_year(year)
+            meetings = self.openf1.get("meetings", {"year": year})
+            if not openf1_normalizer.schedule_frame(meetings).shape[0]:
+                return []  # a season OpenF1 has not published yet is an empty list, not an error
             return openf1_normalizer.event_list(meetings, self.openf1.get("sessions", {"year": year}))
         schedule = self.client.get_schedule(year)
         if schedule is None or schedule.empty:

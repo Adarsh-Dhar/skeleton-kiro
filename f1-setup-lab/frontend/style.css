@@ -72,3 +72,8 @@ label.chk.dim{color:var(--dim)}.insp-ch{gap:10px 16px;margin:10px 0}
 .insp-read{margin:8px 0 12px;height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px}  /* fixed: hovering never shifts the charts */.insp-read td,.insp-read th{padding:3px 8px}
 
 [hidden]{display:none!important}
+
+.modecards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin:10px 0 14px}
+.modecard{display:flex;flex-direction:column;gap:4px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--panel,#12161c);color:inherit;text-decoration:none}
+.modecard b{font-size:14px}.modecard .tag{align-self:flex-start;margin:0}.modecard:hover{border-color:#6b7280}
+.modecard.on{border-color:var(--red);box-shadow:0 0 0 1px var(--red) inset}

@@ -23,6 +23,8 @@ def dedupe_key(payload: dict) -> str:
     openf1 = payload.get("provider", "fastf1") != "fastf1"
     prefix = f"{payload['provider']}|" if openf1 else ""  # FastF1 keys stay as stored
     flags += f"|race{int(bool(payload.get('include_race_data', True)))}" if openf1 else ""
+    if openf1 and payload.get("race_datasets") is not None:
+        flags += "|ds=" + ",".join(sorted(set(payload["race_datasets"])))
     return f"{prefix}{int(payload['year'])}|{str(payload['event']).strip().lower()}|{str(payload['session']).strip().upper()}|{drivers}|{flags}"
 
 

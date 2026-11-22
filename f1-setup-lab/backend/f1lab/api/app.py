@@ -58,6 +58,15 @@ def _issue(field: str, message: str) -> dict:
     return {"field": field, "message": message}
 
 
+class _NoCacheStaticFiles(StaticFiles):
+    """The app's own HTML/JS/CSS must never be served from a stale browser cache after an update."""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
 def create_app(db_path: str | None = None, frontend_dir: str | None = None, fastf1_client_factory=None,
                openf1_client_factory=None) -> FastAPI:
     """The factories and ``db_path`` are for tests; production uses the root database (TRIALFORGE_DB), FastF1 and OpenF1."""
@@ -396,5 +405,5 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, fast
     # ------------------------------------------------------------ frontend
     fe = Path(frontend_dir or os.environ.get("F1LAB_FRONTEND_DIR", DEFAULT_FRONTEND))
     if fe.is_dir():
-        app.mount("/", StaticFiles(directory=fe, html=True), name="frontend")
+        app.mount("/", _NoCacheStaticFiles(directory=fe, html=True), name="frontend")
     return app

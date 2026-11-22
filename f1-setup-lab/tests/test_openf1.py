@@ -221,7 +221,7 @@ def test_import_stores_provider_labelled_partial_session(tmp_path):
     wx = repo.weather(SID)
     assert len(wx) == 5 and "rainfall_flag" in wx.columns and "rainfall_mm" not in wx.columns
     assert m["pit_stops"] == [{"driver": "HAM", "lap_number": 3, "date": m["pit_stops"][0]["date"], "lane_duration_s": 22.5, "stop_duration_s": 2.4}]
-    assert m["race_control"][0]["flag"] == "GREEN"
+    assert m["race_control"][1]["flag"] == "GREEN" and len(m["race_control"]) == 4
 
 
 def test_car_data_is_requested_in_30_minute_windows(tmp_path):
@@ -583,7 +583,9 @@ def test_dataset_endpoint_returns_rows_coverage_and_filters(api):
     assert champ["rows"] == [] and champ["available"] is False and champ["coverage"]["status"] == "empty" and "beta" in champ["coverage"]["note"]
     pit = api.get(f"/api/historical/sessions/{SID}/datasets/pit_stops").json()
     assert pit["count"] == 1 and pit["rows"][0]["lane_duration_s"] == 22.5
-    assert api.get(f"/api/historical/sessions/{SID}/datasets/race_control").json()["count"] == 1
+    rc = api.get(f"/api/historical/sessions/{SID}/datasets/race_control").json()["rows"]
+    assert len(rc) == 4 and [(r["driver"], r["driver_source"]) for r in rc] == [(None, None), (None, None), ("HAM", "message"), ("VER", "provided")]
+    assert rc[0]["time_s"] < 0  # sent before the session start OpenF1 publishes
     assert api.get(f"/api/historical/sessions/{SID}/datasets/nonsense").status_code == 422
     assert api.get("/api/historical/sessions/missing/datasets/intervals").status_code == 404
 
@@ -622,3 +624,55 @@ def test_race_data_flag_changes_the_dedupe_key():
     b = dedupe_key({"provider": "openf1", "year": 2025, "event": "x", "session": "R", "include_race_data": False})
     assert a != b and a.endswith("|race1") and b.endswith("|race0")
     assert dedupe_key({"year": 2025, "event": "x", "session": "R", "include_race_data": False}) == "2025|x|R|*|111"  # FastF1 unchanged
+
+
+# ------------------------------------------------------------------------------------------- choosing individual datasets
+NO_SAMPLES = {"include_position": False, "include_telemetry": False}
+
+
+def test_only_the_chosen_datasets_are_requested(tmp_path):
+    client, fake = fake_client(tmp_path / "c")
+    m = import_session_openf1(client, _repo(tmp_path), {**PAYLOAD, **NO_SAMPLES, "race_datasets": ["session_result", "pit"]})
+    eps = m["coverage"]["endpoints"]
+    assert set(eps) >= {"laps", "drivers", "session_result", "pit", "weather"} and not ({"intervals", "overtakes", "stints", "race_control", "race_position"} & set(eps))
+    assert m["requested_datasets"] == ["pit", "session_result"] and set(m["datasets"]) == {"session_result"}
+    assert not any(f"/{e}?" in u for u in fake.calls for e in ("intervals", "overtakes", "stints", "race_control", "position", "team_radio", "starting_grid"))
+
+
+def test_no_race_datasets_chosen_means_no_race_data_at_all(tmp_path):
+    m = import_session_openf1(fake_client(tmp_path / "c")[0], _repo(tmp_path), {**PAYLOAD, **NO_SAMPLES, "race_datasets": []})
+    assert m["race_data_included"] is False and m["requested_datasets"] == [] and m["datasets"] == {}
+
+
+def test_a_stored_session_satisfies_a_narrower_request_but_not_a_wider_one(tmp_path):
+    repo = _repo(tmp_path)
+    client, _ = fake_client(tmp_path / "c")
+    import_session_openf1(client, repo, {**PAYLOAD, **NO_SAMPLES, "race_datasets": ["session_result", "pit"]})
+    assert import_session_openf1(client, repo, {**PAYLOAD, **NO_SAMPLES, "race_datasets": ["pit"]}, force=False)["reused"] is True
+    wider = import_session_openf1(client, repo, {**PAYLOAD, **NO_SAMPLES, "race_datasets": ["session_result", "overtakes"]}, force=False)
+    assert "reused" not in wider and "overtakes" in wider["requested_datasets"]
+
+
+def test_the_request_model_validates_dataset_names_and_the_key_includes_them():
+    from pydantic import ValidationError
+
+    from f1lab.integrations.historical.jobs import dedupe_key
+    from f1lab.integrations.historical.schemas import HistoricalImportRequest
+
+    with pytest.raises(ValidationError):
+        HistoricalImportRequest(provider="openf1", year=2025, event="x", session="R", race_datasets=["nonsense"])
+    a = HistoricalImportRequest(provider="openf1", year=2025, event="x", session="R", race_datasets=["pit", "session_result"])
+    b = HistoricalImportRequest(provider="openf1", year=2025, event="x", session="R", race_datasets=["session_result", "pit"])
+    c = HistoricalImportRequest(provider="openf1", year=2025, event="x", session="R")
+    assert dedupe_key(a.model_dump()) == dedupe_key(b.model_dump()) != dedupe_key(c.model_dump())
+    assert dedupe_key(c.model_dump()).endswith("|race1")  # omitted = all datasets, unchanged key
+
+
+def test_api_imports_a_chosen_driver_subset_and_reports_the_session_id(api):
+    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1", "drivers": ["VER"], "race_datasets": ["session_result"]})
+    job = _wait(api, r.json()["import_id"])
+    assert job["state"] == "COMPLETED" and job["session_id"] == SID
+    m = api.get(f"/api/historical/sessions/{SID}").json()
+    assert [d["code"] for d in m["drivers"]] == ["VER"] and m["all_drivers"] is False and m["provider"] == "openf1"
+    assert m["upstream"]["session_key"] == 99 and m["upstream"]["meeting_key"] == 1001  # real OpenF1 identifiers are kept
+    assert [d["number"] for d in m["drivers"]] == ["1"]

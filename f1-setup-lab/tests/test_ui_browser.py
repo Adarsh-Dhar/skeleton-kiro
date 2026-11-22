@@ -37,8 +37,8 @@ def page(live):
 
 def fresh(page, hash_):
     """Hash-only navigation to the current hash does not re-render; force a clean page."""
-    page.goto(page.base + "/")
-    page.evaluate(f"location.hash = '{hash_}'")
+    page.goto(page.base + "/about:blank")  # leave the current page, then load the target directly (no redirect race)
+    page.goto(page.base + "/" + hash_)
     page.reload()
 
 
@@ -49,7 +49,7 @@ def shot(page, name, full=True):
 
 
 def test_full_workflow(page):
-    page.goto(page.base)
+    page.goto(page.base + "/#/dashboard")
     assert "SYNTHETIC DATA" in page.inner_text(".synthetic")
     page.wait_for_selector("text=No experiments yet")
     shot(page, "01-dashboard-empty")
@@ -124,7 +124,7 @@ def test_full_workflow(page):
     shot(page, "09-report")
 
     # ---- dashboard shows the experiment ----------------------------------------------------------
-    page.click("nav >> text=Dashboard")
+    page.click("nav >> text=Experiments")
     page.wait_for_selector("#dash table")
     assert "Wing & suspension screening" in page.inner_text("#dash")
     assert re.search(r"\d\d\.\d{3} s", page.inner_text("#dash"))
@@ -133,7 +133,7 @@ def test_full_workflow(page):
 
 
 def test_invalid_configuration_is_explained_in_the_ui(page):
-    fresh(page, "#/new")
+    fresh(page, "#/new/synthetic")
     page.wait_for_selector("#f")
     page.fill('[data-lo="front_wing"]', "40")
     page.fill('[data-hi="front_wing"]', "10")
@@ -151,7 +151,7 @@ def test_invalid_configuration_is_explained_in_the_ui(page):
 
 
 def test_failed_runs_are_visible_and_can_be_retried(page):
-    fresh(page, "#/new")
+    fresh(page, "#/new/synthetic")
     page.wait_for_selector("#f")
     page.fill("#name", "Fault demo")
     page.fill("#fault", "1")

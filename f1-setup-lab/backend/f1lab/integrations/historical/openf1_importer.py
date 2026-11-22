@@ -99,7 +99,8 @@ def covers(manifest: dict, payload: dict) -> bool:
         return False
     if payload.get("include_weather", True) and "weather" not in ch:
         return False
-    return not (payload.get("include_race_data", True) and not manifest.get("race_data_included"))
+    legacy = set(N.OPTIONAL_DATASETS) if manifest.get("race_data_included") else set(N.STRATEGY_DATASETS)  # manifests written before dataset selection
+    return N.requested_datasets(payload) <= set(manifest.get("requested_datasets") or legacy)
 
 
 def _chunks(start, end):
@@ -201,9 +202,10 @@ def import_session_openf1(client: OpenF1Client, repo: HistoricalRepository, payl
     if not laps_raw:
         raise HistoricalImportError(NO_LAP_DATA, "OpenF1 has no lap timing data for this session (it may not be published yet)")
     checkpoint()
-    stints_raw = optional("stints", "stints", {"session_key": sk})
-    pit_raw = optional("pit", "pit", {"session_key": sk})
-    rc_raw = optional("race_control", "race_control", {"session_key": sk})
+    asked = N.requested_datasets(payload)
+    stints_raw = optional("stints", "stints", {"session_key": sk}) if "stints" in asked else []
+    pit_raw = optional("pit", "pit", {"session_key": sk}) if "pit" in asked else []
+    rc_raw = optional("race_control", "race_control", {"session_key": sk}) if "race_control" in asked else []
     weather_raw = optional("weather", "weather", {"session_key": sk}) if payload.get("include_weather", True) else []
     checkpoint()
 
@@ -222,7 +224,7 @@ def import_session_openf1(client: OpenF1Client, repo: HistoricalRepository, payl
 
     # ---- race data: running order, results, grid, gaps, overtakes, radio, championships (all optional)
     datasets: dict[str, tuple[list[dict], str | None]] = {}
-    include_race = bool(payload.get("include_race_data", True))
+    include_race = bool(payload.get("include_race_data", True)) and bool(asked & set(N.RACE_DATASETS))
     if include_race:
         say("PROCESSING", "downloading running order, results, grid, gaps and radio")
         by = {"session_key": sk}
@@ -238,9 +240,10 @@ def import_session_openf1(client: OpenF1Client, repo: HistoricalRepository, payl
                      ("drivers_championship", "drivers_championship", by, lambda r: N.drivers_championship(r, drivers_all), "beta endpoint"),
                      ("teams_championship", "teams_championship", by, lambda r: N.teams_championship(r), "beta endpoint")]
         else:
-            for name in ("starting_grid", *N.RACE_ONLY):
+            for name in (n for n in ("starting_grid", *N.RACE_ONLY) if n in asked):
                 coverage["endpoints"][name] = {"endpoint": name, "rows": 0, "status": "not_applicable", "requests": 0, "cache_hits": 0, "fetched_at": None,
                                                "note": "only published for race and sprint sessions"}
+        plan = [p for p in plan if p[0] in asked]
         for name, endpoint, filters, norm, note in plan:
             checkpoint()
             if filters is None:
@@ -305,7 +308,7 @@ def import_session_openf1(client: OpenF1Client, repo: HistoricalRepository, payl
     info = N.session_info(meeting, sess, year, code, N.round_number(meetings, meeting))
     manifest = N.build_manifest(info, drivers, channels, sid)
     manifest.update(corners=[], all_drivers=not wanted, warnings=warnings, coverage=coverage, partial=partial,
-                    race_control=N.race_control(rc_raw, t0), pit_stops=N.pit_stops(pit_raw, drivers), race_data_included=include_race,
+                    race_control=N.race_control(rc_raw, t0, drivers_all), pit_stops=N.pit_stops(pit_raw, drivers), race_data_included=include_race, requested_datasets=sorted(asked),
                     datasets={n: {"rows": len(r), "fetched_at": f} for n, (r, f) in datasets.items()},
                     upstream={"provider": "openf1", "base_url": BASE_URL, "meeting_key": meeting["meeting_key"], "session_key": sk,
                               "network_requests": client.network_requests, "cache_hits": client.cache_hits})

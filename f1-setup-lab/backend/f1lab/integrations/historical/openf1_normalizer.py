@@ -7,6 +7,7 @@ the few values computed here (per-lap ``distance_m``, the lap a sample belongs t
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -37,6 +38,21 @@ COORDINATE_NOTE = ("x, y, z are OpenF1 'location' values: approximate positions 
 # OpenF1 files each dataset under the session type it belongs to (checked against the live API):
 RACE_ONLY = ("intervals", "overtakes", "drivers_championship", "teams_championship")
 GRID_SESSION_NAMES = {"R": ("qualifying",), "S": ("sprint qualifying", "sprint shootout")}
+# Datasets an import can include or leave out (the lap table is always imported). The first eight need "race data".
+RACE_DATASETS = ("race_position", "session_result", "starting_grid", "intervals", "overtakes", "team_radio", "drivers_championship", "teams_championship")
+STRATEGY_DATASETS = ("stints", "pit", "race_control")
+OPTIONAL_DATASETS = RACE_DATASETS + STRATEGY_DATASETS
+
+
+def requested_datasets(payload: dict) -> set[str]:
+    """Names of the optional datasets a request asks for. ``race_datasets`` None means all of them."""
+    chosen = payload.get("race_datasets")
+    allowed = set(OPTIONAL_DATASETS) if chosen is None else set(chosen) & set(OPTIONAL_DATASETS)
+    if not payload.get("include_race_data", True):
+        allowed -= set(RACE_DATASETS)
+    return allowed
+
+
 BETA_ENDPOINTS = ("drivers_championship", "teams_championship")
 
 DERIVED = [
@@ -301,12 +317,24 @@ def normalize_weather(rows: list[dict], t0: datetime | None) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
-def race_control(rows: list[dict], t0: datetime | None) -> list[dict]:
+_CAR_IN_MESSAGE = re.compile(r"\bCARS? (\d{1,2}) \(([A-Z]{3})\)")
+
+
+def race_control(rows: list[dict], t0: datetime | None, drivers: list[dict] | None = None) -> list[dict]:
+    """Race control messages. OpenF1 often leaves ``driver_number`` empty although the text names the car
+    ("CAR 44 (HAM) LAP DELETED ..."), so ``driver`` is the provided driver when there is one and otherwise the car named in the
+    message (``driver_source`` says which); a message about the track or a sector has no driver."""
+    codes = _codes(drivers or [])
     out = []
     for r in sorted(rows, key=lambda r: str(r.get("date") or ""))[:MAX_RACE_CONTROL]:
+        message = str(r.get("message") or "")[:300]
+        number = _int(r.get("driver_number"))
+        mentioned = [codes.get(n, abbr) for n, abbr in _CAR_IN_MESSAGE.findall(message)]
+        driver, source = (_driver(codes, number), "provided") if number is not None else ((mentioned[0], "message") if mentioned else (None, None))
         out.append({"time_s": _rel_s(parse_dt(r.get("date")), t0), "date": r.get("date"), "category": r.get("category"),
-                    "flag": r.get("flag"), "scope": r.get("scope"), "lap_number": _int(r.get("lap_number")),
-                    "driver_number": _int(r.get("driver_number")), "message": str(r.get("message") or "")[:300]})
+                    "flag": r.get("flag"), "scope": r.get("scope"), "sector": _int(r.get("sector")), "lap_number": _int(r.get("lap_number")),
+                    "qualifying_phase": _int(r.get("qualifying_phase")), "driver_number": number, "driver": driver, "driver_source": source,
+                    "cars_in_message": list(dict.fromkeys(mentioned)), "message": message})
     return out
 
 

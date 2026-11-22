@@ -25,7 +25,19 @@ class HistoricalImportRequest(BaseModel):
     include_position: bool = True
     include_weather: bool = True
     include_race_data: bool = Field(True, description="OpenF1 only: also fetch running order, results, grid, gaps, overtakes, team radio and championships")
+    race_datasets: list[str] | None = Field(None, max_length=11, description="OpenF1 only: which optional datasets to fetch "
+                                            "(race_position, session_result, starting_grid, intervals, overtakes, team_radio, drivers_championship, "
+                                            "teams_championship, stints, pit, race_control); omitted means all")
     refresh_cache: bool = Field(False, description="OpenF1 only: ignore cached answers and download everything again")
+
+    @model_validator(mode="after")
+    def _datasets_known(self):
+        known = ("race_position", "session_result", "starting_grid", "intervals", "overtakes", "team_radio", "drivers_championship",
+                 "teams_championship", "stints", "pit", "race_control")
+        bad = [n for n in self.race_datasets or [] if n not in known]
+        if bad:
+            raise ValueError(f"unknown dataset(s): {', '.join(bad)}; choose from {', '.join(known)}")
+        return self
 
     @model_validator(mode="after")
     def _provider_years(self):
