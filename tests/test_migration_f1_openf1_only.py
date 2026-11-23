@@ -1,4 +1,4 @@
-"""Migration 8: F1 SETUP LAB keeps only OpenF1 historical data.
+"""Migration 8 (Migration 9 then recreates the retired tables): F1 SETUP LAB keeps only OpenF1 historical data.
 
 Its setup experiments (every SDK row of experiments owned by f1-setup-lab) and its retired tables are removed, together with
 historical sessions and import jobs of other providers. WATTWISE LAB experiments and every OpenF1 session stay.
@@ -9,7 +9,8 @@ import json
 
 from sqlalchemy import text
 
-from db import create_db_engine, current_version, migrate
+from db import create_db_engine, current_version
+from db.migrations import migrate
 
 RETIRED = ("f1_udp_packet", "f1_udp_recording", "f1_stint_telemetry", "f1_stint_evidence", "f1_probe_report", "f1_setup_mapping_confirmation")
 
@@ -55,8 +56,8 @@ def test_f1_experiments_and_retired_tables_go_while_wattwise_and_openf1_stay(tmp
     e = _version7_database(tmp_path / "t.db")
     assert current_version(e) == 7
     migrate(e)
-    assert current_version(e) == 8
-    assert not (set(RETIRED) & _tables(e))
+    assert current_version(e) == 9
+    assert set(RETIRED) <= _tables(e)  # migration 9 recreates the tables migration 8 dropped
     with e.connect() as c:
         q = lambda sql: c.execute(text(sql)).all()  # noqa: E731
         assert q("SELECT experiment_id FROM experiments") == [("ww-exp",)]
@@ -69,8 +70,8 @@ def test_f1_experiments_and_retired_tables_go_while_wattwise_and_openf1_stay(tmp
         assert c.execute(text("PRAGMA foreign_key_check")).all() == []
 
 
-def test_a_fresh_database_reaches_version_8_without_the_retired_tables(tmp_path):
+def test_a_fresh_database_reaches_version_9_with_the_restored_tables(tmp_path):
     e = create_db_engine(tmp_path / "fresh.db")
     migrate(e)
-    assert current_version(e) == 8 and not (set(RETIRED) & _tables(e))
+    assert current_version(e) == 9 and set(RETIRED) <= _tables(e)
     assert migrate(e) == []  # idempotent

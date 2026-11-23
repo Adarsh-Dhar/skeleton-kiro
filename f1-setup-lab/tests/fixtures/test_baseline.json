@@ -1,0 +1,60 @@
+{
+  "recorded_by": "task 1.5 of f1-setup-lab-restoration",
+  "tree_state": "no app code changed; only fixtures, manifests, goldens script and pyproject extras differ from HEAD",
+  "environment": {
+    "python": "3.12.0",
+    "pandas": "2.3.3",
+    "sdk": {"package": "trialforge-core", "version": "0.2.1"},
+    "root_package": {"package": "trialforge-db", "version": "0.1.0", "install": "editable, workspace root"},
+    "venv": "root .venv (f1-setup-lab/.venv lacks httpx2 for TestClient)"
+  },
+  "suites": {
+    "root": {
+      "command": ".venv/bin/python -m pytest tests -q -rs",
+      "passed": 52,
+      "failed": 0,
+      "skipped": 1,
+      "errors": 0
+    },
+    "f1": {
+      "command": "cd f1-setup-lab && ../.venv/bin/python -m pytest tests -q -rs",
+      "passed": 95,
+      "failed": 0,
+      "skipped": 5,
+      "errors": 0,
+      "per_module_collected": {
+        "tests/test_openf1.py": 61,
+        "tests/test_openf1_fixtures.py": 25,
+        "tests/test_ui_openf1.py": 7,
+        "tests/test_historical_repository.py": 6,
+        "tests/test_frontend_build.py": 1
+      }
+    }
+  },
+  "historical_test_count": {
+    "tests/test_historical_repository.py": 6,
+    "note": "Only test_historical_repository.py covers the historical repository today. Total F1 collected tests: 100."
+  },
+  "opt_in_skipped_tests": {
+    "f1": {
+      "reason": "set RUN_NETWORK_TESTS=1 to contact api.openf1.org",
+      "location": "f1-setup-lab/tests/test_openf1.py:393 (skipif on RUN_NETWORK_TESTS)",
+      "tests": [
+        "tests/test_openf1.py::test_live_openf1_import[2023-Bahrain-R]",
+        "tests/test_openf1.py::test_live_openf1_import[2024-Monza-Q]",
+        "tests/test_openf1.py::test_live_openf1_import[2024-Miami-S]",
+        "tests/test_openf1.py::test_live_openf1_import[2025-Abu Dhabi-R]",
+        "tests/test_openf1.py::test_live_openf1_import[2026-Paulo-R]"
+      ]
+    },
+    "root_extra_skip": {
+      "reason": "full install+start smoke test is opt-in (RUN_START_SMOKE=1; needs network for pip)",
+      "location": "tests/test_start_scripts.py:107",
+      "note": "Root suite skip, outside the 5 F1 opt-in skips."
+    }
+  },
+  "notes": [
+    "Design D9 recorded 88 passed / 5 skipped for the F1 suite; the current tree has 95 passed / 5 skipped because test_openf1_fixtures.py and related tests were added since. The audit's pandas 3.0 failure does not reproduce on pandas 2.3.3.",
+    "A StarletteDeprecationWarning about httpx vs httpx2 appears in both suites."
+  ]
+}

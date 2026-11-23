@@ -48,10 +48,9 @@ def test_check_reports_python_sdk_venv_port_and_root_db(name, tmp_path):
     r = run(SCRIPTS[name], "check", env={PORT_VARS[name]: str(free_port()), "TRIALFORGE_DB": str(tmp_path / "t.db"), "TRIALFORGE_DIST_DIR": str(tmp_path / "dist")})
     assert r.returncode == 0, r.stderr
     assert "python:" in r.stdout and "venv:" in r.stdout
-    if name == "wattwise":
-        assert "missing (would be built)" in r.stdout  # no wheel in the empty dist dir
-    else:
-        assert "sdk:     not used by F1 SETUP LAB" in r.stdout and "wheel:" not in r.stdout
+    # both apps use the SDK wheel: the report names it and says it would be built from the empty dist dir
+    assert "wheel:" in r.stdout and "missing (would be built)" in r.stdout and "trialforge_core-" in r.stdout
+    assert "sdk:     not used" not in r.stdout
     assert f"db:      {tmp_path / 't.db'}" in r.stdout
 
 
@@ -163,3 +162,221 @@ def test_start_all_check_stop_status_and_unknown_command():
     assert "not running" in run(sa, "stop", env=env).stdout
     assert run(sa, "status", env=env).returncode == 1
     assert run(sa, "frobnicate").returncode == 1
+
+
+# ------------------------------------------------------------------ wheel failure, health check and release script (task 9.4)
+import json
+import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+COMMON = ROOT / "scripts" / "lib" / "common.sh"
+FAKE_SDK = "9.9.9"
+
+
+def listening(port: int) -> bool:
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        return s.connect_ex(("127.0.0.1", port)) == 0
+
+
+def pid_dead(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return True
+    return False
+
+
+class FakeHealth:
+    """A fake backend: serves /api/health with the given JSON body (or a raw non-JSON answer when body is None)."""
+
+    def __init__(self, body):
+        outer = self
+
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                data = json.dumps(outer.body).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def log_message(self, *a):
+                pass
+
+        self.body = body
+        self.server = HTTPServer(("127.0.0.1", 0), H)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def health_check(port: int, timeout: float = 2, child: int | None = None) -> subprocess.CompletedProcess:
+    """Run the real health_check from common.sh against the repository SDK version."""
+    sdk = subprocess.run(["bash", "-c", f"source '{COMMON}'; sdk_version"], capture_output=True, text=True).stdout.strip()
+    assert sdk
+    cmd = f"source '{COMMON}'; health_check '{sys.executable}' {port} {child or os.getpid()} {timeout}"
+    r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
+    r.sdk = sdk  # type: ignore[attr-defined]
+    return r
+
+
+def repo_sdk_version() -> str:
+    return subprocess.run(["bash", "-c", f"source '{COMMON}'; sdk_version"], capture_output=True, text=True).stdout.strip()
+
+
+def test_health_check_passes_when_trialforge_matches_the_repository_sdk():
+    srv = FakeHealth({"status": "ok", "trialforge": repo_sdk_version()})
+    try:
+        r = health_check(srv.port)
+    finally:
+        srv.close()
+    assert r.returncode == 0 and r.stdout.strip() == ""
+
+
+def test_health_check_names_the_cause_for_each_failure():
+    sdk = repo_sdk_version()
+    srv = FakeHealth({"status": "ok", "trialforge": "0.0.1-other"})
+    try:
+        r = health_check(srv.port)
+        assert r.returncode == 1 and "0.0.1-other" in r.stdout and sdk in r.stdout
+        srv.body = {"status": "ok"}
+        r = health_check(srv.port)
+        assert r.returncode == 1 and "no 'trialforge' field" in r.stdout
+    finally:
+        srv.close()
+    r = health_check(free_port(), timeout=2)  # nothing listens
+    assert r.returncode == 1 and "no response" in r.stdout
+    gone = subprocess.Popen(["true"])
+    gone.wait()
+    r = health_check(free_port(), timeout=2, child=gone.pid)
+    assert r.returncode == 1 and "exited" in r.stdout
+
+
+@pytest.fixture
+def fake_tree(tmp_path):
+    """A throw-away copy of the start script and common.sh with a stubbed venv, so run_app can be exercised without pip or network.
+
+    The venv python passes pip/db.migrate calls and reports the SDK version; the app entry point is a fake backend whose
+    /api/health body comes from FAKE_HEALTH (or it never listens when FAKE_HEALTH is 'none')."""
+    root = tmp_path / "repo"
+    (root / "scripts" / "lib").mkdir(parents=True)
+    shutil.copy(ROOT / "scripts" / "start-f1.sh", root / "scripts")
+    shutil.copy(COMMON, root / "scripts" / "lib")
+    sdk_dir = root / "skeleton" / "packages" / "trialforge-core"
+    sdk_dir.mkdir(parents=True)
+    (sdk_dir / "pyproject.toml").write_text(f'[project]\nname = "trialforge-core"\nversion = "{FAKE_SDK}"\n')
+    (root / "pyproject.toml").write_text("[project]\nname = \"root\"\n")
+    app = root / "f1-setup-lab"
+    (app / ".venv" / "bin").mkdir(parents=True)
+    (app / "pyproject.toml").write_text("[project]\nname = \"f1\"\n")
+    py = app / ".venv" / "bin" / "python"
+    py.write_text(
+        "#!/bin/bash\n"
+        'for a in "$@"; do case "$a" in pip|db.migrate) exit 0;; esac; done\n'
+        f'case "$*" in *importlib.metadata*) echo {FAKE_SDK}; exit 0;; esac\n'
+        f'exec "{sys.executable}" "$@"\n'
+    )
+    py.chmod(0o755)
+    entry = app / ".venv" / "bin" / "f1-setup-lab"
+    entry.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys, time\n"
+        "from http.server import BaseHTTPRequestHandler, HTTPServer\n"
+        "open(os.environ['FAKE_PID_FILE'], 'w').write(str(os.getpid()))\n"
+        "port = int(sys.argv[sys.argv.index('--port') + 1])\n"
+        "mode = os.environ['FAKE_HEALTH']\n"
+        "if mode == 'none':\n"
+        "    time.sleep(120)\n"
+        "body = json.dumps(json.loads(mode)).encode()\n"
+        "class H(BaseHTTPRequestHandler):\n"
+        "    def do_GET(self):\n"
+        "        self.send_response(200); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)\n"
+        "    def log_message(self, *a): pass\n"
+        "HTTPServer(('127.0.0.1', port), H).serve_forever()\n"
+    )
+    entry.chmod(0o755)
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    return root, dist, tmp_path
+
+
+def start_fake(fake_tree, health: str, *, wheel: bool = True, timeout: int = 3, **extra):
+    root, dist, tmp = fake_tree
+    if wheel:
+        (dist / f"trialforge_core-{FAKE_SDK}-py3-none-any.whl").write_text("")
+    port = free_port()
+    env = {"F1_PORT": str(port), "TRIALFORGE_DB": str(tmp / "t.db"), "TRIALFORGE_DIST_DIR": str(dist), "HEALTH_TIMEOUT": str(timeout),
+           "FAKE_HEALTH": health, "FAKE_PID_FILE": str(tmp / "child.pid"), "PYTHON_BIN": sys.executable, **extra}
+    return port, env
+
+
+@pytest.mark.parametrize(
+    "health, cause",
+    [
+        (json.dumps({"status": "ok", "trialforge": "0.0.1-other"}), "0.0.1-other"),
+        (json.dumps({"status": "ok"}), "no 'trialforge' field"),
+        ("none", "no response"),
+    ],
+    ids=["differing", "missing-field", "no-response"],
+)
+def test_start_fails_naming_the_cause_and_stops_the_backend(fake_tree, health, cause):
+    port, env = start_fake(fake_tree, health, timeout=2)
+    r = run(fake_tree[0] / "scripts" / "start-f1.sh", "start", env=env)
+    assert r.returncode == 1
+    assert "health check failed" in r.stderr and cause in r.stderr
+    child = int((fake_tree[2] / "child.pid").read_text())
+    assert pid_dead(child) and not listening(port)
+    assert not (fake_tree[2] / "pids" / "f1.pid").exists()
+
+
+def test_start_keeps_running_when_health_matches(fake_tree):
+    port, env = start_fake(fake_tree, json.dumps({"status": "ok", "trialforge": FAKE_SDK}), timeout=5)
+    p = subprocess.Popen(["bash", str(fake_tree[0] / "scripts" / "start-f1.sh"), "start"], env={**os.environ, **env},
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        deadline = time.time() + 20
+        while time.time() < deadline and not listening(port):
+            time.sleep(0.2)
+        assert listening(port)
+        time.sleep(1.5)  # past the first health poll: a failed check would have stopped the backend
+        assert p.poll() is None and listening(port)
+    finally:
+        p.terminate()
+        try:
+            p.communicate(timeout=15)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.communicate()
+    assert not listening(port)
+
+
+def test_empty_wheel_directory_exits_1_and_never_starts_the_backend(fake_tree, tmp_path):
+    root, dist, tmp = fake_tree
+    port, env = start_fake(fake_tree, "none", wheel=False)
+    shim = tmp / "python-no-venv"  # the wheel build needs a build venv; refuse to create one (no network, no build)
+    shim.write_text(f'#!/bin/bash\nif [[ "$1" == "-m" && "$2" == "venv" ]]; then exit 1; fi\nexec "{sys.executable}" "$@"\n')
+    shim.chmod(0o755)
+    env["PYTHON_BIN"] = str(shim)
+    assert list(dist.iterdir()) == []
+    r = run(root / "scripts" / "start-f1.sh", "start", env=env)
+    assert r.returncode == 1
+    assert "could not create a build environment" in r.stderr
+    assert "Starting" not in r.stdout
+    assert not (tmp / "child.pid").exists() and not listening(port)
+    assert not list(dist.glob("*.whl"))
+
+
+def test_release_check_compares_the_sdk_for_both_apps():
+    path = ROOT / "scripts" / "check-release.sh"
+    assert subprocess.run(["bash", "-n", str(path)]).returncode == 0
+    text = path.read_text()
+    assert "F1 does not use the SDK" not in text and "not used by F1" not in text
+    assert "both apps use the installed SDK $SDK_VERSION" in text
+    assert "the SDK version, for both apps" in text
+    assert 'body.get("trialforge") != sdk' in text and "F1 SETUP LAB and WATTWISE LAB need it" in text

@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import sys
 
+from db.backup import backup_hook
 from db.config import resolve_db_url
 from db.engine import create_db_engine
 from db.migrations import current_version, latest_version, migrate
+from db.migrations.runner import MigrationError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -18,7 +20,11 @@ def main(argv: list[str] | None = None) -> int:
     engine = create_db_engine(url)
     print(f"database: {url}")
     if not a.status:
-        applied = migrate(engine)
+        try:
+            applied = migrate(engine, before_apply=backup_hook)
+        except MigrationError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
         for m in applied:
             print(f"applied migration {m.version}: {m.name}")
         if not applied:

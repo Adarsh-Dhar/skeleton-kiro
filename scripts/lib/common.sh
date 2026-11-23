@@ -155,6 +155,44 @@ install_app() {
     info "trialforge-core $have OK"
 }
 
+# ---------------------------------------------------------------- health
+# health_check PYTHON PORT CHILD_PID TIMEOUT_SECONDS
+# Polls /api/health until it answers. Prints nothing and returns 0 when the `trialforge` field equals the repository SDK version;
+# otherwise prints the cause and returns 1 (no answer in time, process exited, field missing, version mismatch).
+health_check() {
+    local py="$1" port="$2" child="$3" timeout="$4" want
+    want="$(sdk_version)"
+    "$py" - "$port" "$child" "$timeout" "$want" <<'EOF'
+import json, os, sys, time, urllib.request
+
+port, child, timeout, want = int(sys.argv[1]), int(sys.argv[2]), float(sys.argv[3]), sys.argv[4]
+deadline = time.monotonic() + timeout
+body = None
+while True:
+    try:
+        os.kill(child, 0)
+    except OSError:
+        print("the process exited before /api/health answered")
+        sys.exit(1)
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=2) as r:
+            body = json.loads(r.read().decode("utf-8"))
+        break
+    except Exception:
+        if time.monotonic() >= deadline:
+            print(f"no response from /api/health within {sys.argv[3]} s")
+            sys.exit(1)
+        time.sleep(0.25)
+got = body.get("trialforge") if isinstance(body, dict) else None
+if got is None:
+    print("/api/health has no 'trialforge' field")
+    sys.exit(1)
+if str(got) != want:
+    print(f"/api/health reports trialforge {got} but the installed SDK is {want}")
+    sys.exit(1)
+EOF
+}
+
 # ---------------------------------------------------------------- main entry
 # run_app NAME LABEL APP_DIR PORT_VAR DEFAULT_PORT ENTRYPOINT [start|stop|status|check] [SDK: yes|no]
 run_app() {
@@ -206,6 +244,21 @@ run_app() {
     echo "$child" > "$(pid_file "$name")"
     trap 'kill -TERM "$child" 2>/dev/null || true' INT TERM
     trap 'rm -f "$(pid_file "$name")"' EXIT
+    if [[ "$sdk" == yes ]]; then
+        local cause
+        if ! cause="$(health_check "$venv/bin/python" "$port" "$child" "${HEALTH_TIMEOUT:-30}")"; then
+            echo "error: $label health check failed: $cause" >&2
+            kill -TERM "$child" 2>/dev/null || true
+            local i
+            for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+                pid_alive "$child" || break
+                sleep 0.25
+            done
+            pid_alive "$child" && kill -KILL "$child" 2>/dev/null || true
+            wait "$child" 2>/dev/null || true
+            exit 1
+        fi
+    fi
     local rc=0
     wait "$child" || rc=$?
     # first wait returns early when a trapped signal arrives; wait again so the server can shut down cleanly

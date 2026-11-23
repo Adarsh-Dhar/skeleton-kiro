@@ -8,20 +8,31 @@
 </head>
 <body>
 <div class="stripe"></div>
+<div class="fixed-head">
 <header class="top">
-  <a class="brand" href="#/hist"><span class="logo">F1</span><span class="brand-text"><b>SETUP LAB</b><small>historical Formula 1 data from OpenF1</small></span></a>
+  <a class="brand" href="#/dashboard"><span class="logo">F1</span><span class="brand-text"><b>SETUP LAB</b><small>setup engineering, live simulator and historical F1</small></span></a>
   <nav id="nav">
-    <a href="#/hist" data-nav="hist">Historical F1</a>
-    <a href="#/sessions" data-nav="sessions">Imported sessions</a>
+    <div class="nav-group"><h2 class="nav-head">Setup Engineering</h2>
+      <a href="#/dashboard" data-nav="dashboard">Dashboard</a>
+      <a href="#/new" data-nav="new">New experiment</a>
+      <a href="#/telemetry" data-nav="telemetry">Telemetry import</a></div>
+    <div class="nav-group"><h2 class="nav-head">Live Simulator</h2>
+      <a href="#/live" data-nav="live">Live simulator</a></div>
+    <div class="nav-group"><h2 class="nav-head">Historical F1</h2>
+      <a href="#/hist" data-nav="hist">Historical F1</a>
+      <a href="#/sessions" data-nav="sessions">Imported sessions</a></div>
   </nav>
   <div class="api" id="api-status" title="backend status"><i class="led"></i><span>connecting</span></div>
 </header>
-<div class="banner" id="banner" role="note">HISTORICAL F1 DATA from OpenF1 (unofficial, not affiliated with Formula 1).</div>
-<main id="view" aria-live="polite"></main>
+<div class="banner" id="banner" role="note"></div>
+</div>
+<main id="view" aria-live="polite"><div id="view-error"></div><div id="view-body"></div></main>
 <div id="toast" class="toast" hidden></div>
 <script src="charts.js"></script>
+<script src="inspector.js"></script>
 <script src="hist_race.js"></script>
 <script src="hist_picker.js"></script>
+<script src="setup_lab.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

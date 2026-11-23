@@ -9,17 +9,17 @@ The workspace holds two independent applications that share one database. The SD
 
 | App | Port | Domain | What it does |
 |---|---|---|---|
-| [**F1 SETUP LAB**](f1-setup-lab/README.md) | 8001 | Formula 1 | Imports real historical Formula 1 sessions from [OpenF1](https://openf1.org) (free, 2023 onwards) and analyses them: laps, telemetry, track map, running order, results, gaps, pit stops, race control, team radio, weather. It does not use the SDK. |
+| [**F1 SETUP LAB**](f1-setup-lab/README.md) | 8001 | Formula 1 | Three workspaces, built on the SDK: **Setup Engineering** (setup experiments on a synthetic vehicle model or imported telemetry), **Live Simulator** (stints recorded from EA SPORTS F1 25 UDP telemetry) and **Historical F1** (real sessions imported from [OpenF1](https://openf1.org), free, 2023 onwards: laps, telemetry, track map, running order, results, gaps, pit stops, race control, team radio, weather) |
 | [**WATTWISE LAB**](wattwise-lab/README.md) | 8002 | Household electricity | Household/EV model + simulator adapter, tariffs, smart-meter import and baseline, electricity screens, built on the SDK |
 
-How WATTWISE uses the SDK: it builds an `ExperimentSpec`, registers an app-owned adapter in an `AdapterRegistry`, and calls `ExperimentService`
+How both apps use the SDK: each builds an `ExperimentSpec`, registers an app-owned adapter in an `AdapterRegistry`, and calls `ExperimentService`
 (design, execute through `LocalBackgroundRunner`, `ingest_measurements`, `analyse`, `optimise`, `report`). It imports only the SDK's public
 top-level API, from the installed wheel, never from the source tree. The SDK is frozen: nothing in this release changes it.
 
 ## Install and run
 
 Requires Python 3.11 or newer (`PYTHON_BIN` selects the interpreter). Each start script creates or reuses the app's virtual environment,
-installs the root database package and the app (WATTWISE also gets the SDK wheel, built if missing, and its version is checked), refuses an
+installs the SDK wheel (built if missing; a missing or failed install stops the start) and the root database package and the app, and checks the SDK version reported by `/api/health`, refuses an
 occupied port with a clear message, migrates the root database and starts the server:
 
 ```bash
@@ -46,17 +46,18 @@ migrations (`python -m db.migrate [--status]`), and the app-scoped view of the S
 
 | Tables | Owner | Contents |
 |---|---|---|
-| `experiments`, `runs`, `measurements`, … | SDK (created by the unmodified `SQLiteExperimentRepository`) | WATTWISE experiments |
+| `experiments`, `runs`, `measurements`, … | SDK (created by the unmodified `SQLiteExperimentRepository`) | WATTWISE and F1 setup experiments |
 | `app_experiment_owner`, `app_schema_version` | `db` | which app owns each experiment (an app sees only its own); schema version |
-| `f1_*` | F1 SETUP LAB | OpenF1 historical sessions (laps, telemetry, track location, weather, race datasets) and import jobs |
+| `f1_*` | F1 SETUP LAB | OpenF1 historical sessions (laps, telemetry, track location, weather, race datasets) and import jobs (`f1_hist_*`, `f1_import_job`); UDP recordings, stint evidence and telemetry, probe reports and setup-mapping confirmations |
 | `ww_*` | WATTWISE LAB | household settings, tariff library, historical meter imports and readings |
 
 There are no other stores: no per-app databases, Parquet files, JSON tariff file, evidence files or browser storage. Two things outside the
 database are not application data: the OpenF1 answer cache (`data/openf1-cache/`) and WATTWISE's bundled demo CSVs.
 
-**F1 SETUP LAB 2.0 keeps only OpenF1 data.** Migration 8 (run automatically on start) removes the F1 setup experiments, their game and
-simulator tables, and any FastF1 sessions or import jobs from an existing database; OpenF1 sessions and every WATTWISE row are kept. Back up
-`data/trialforge.db` first if you want to keep the old F1 experiments.
+**F1 SETUP LAB 2.1 has setup engineering, the live simulator and the historical data.** Migration 9
+(run automatically on start) recreates the setup-engineering tables, and the database is first copied to `data/backups/<UTC time>/`. FastF1 is not supported:
+migration 8 removed any FastF1 sessions and import jobs, and historical data comes from OpenF1 only. OpenF1 sessions, WATTWISE rows and the SDK
+tables are kept.
 
 **Upgrading WATTWISE from an earlier version** (with `wattwise.db`, `tariffs.json`):
 
@@ -73,6 +74,8 @@ Re-running is safe. Household settings in a browser are uploaded the next time W
 | Label | Where it comes from |
 |---|---|
 | F1 `HISTORICAL F1 · OPENF1` | real Formula 1 timing and telemetry from the free, unofficial OpenF1 API; values estimated from it are listed per session |
+| F1 `SYNTHETIC` | everything the F1 Simulator produces: an invented vehicle model, not real telemetry |
+| F1 simulator-recorded | stints driven in EA SPORTS F1 25 and read from its UDP output: video-game data, not a real car |
 | WATTWISE `synthetic` | the built-in example household |
 | WATTWISE `historical_measured` | your imported meter readings (`…_priced` = priced with the tariff you entered) |
 | WATTWISE `projected` | model estimate for a schedule |
@@ -89,7 +92,7 @@ scripts/check-release.sh
 Works from a clean checkout (needs Python 3.11+ and access to PyPI). It creates its own environment, `.run/release-venv` (recreated on every
 run; `--reuse` keeps it), builds the TRIALFORGE wheel into `skeleton/dist/`, installs that wheel with its test extras, the root database
 package and both apps with their test dependencies, and checks that WATTWISE uses the SDK from that environment's `site-packages` (not the
-source tree) and that F1 SETUP LAB depends on neither the SDK nor FastF1. It then builds the other packages, lints, compiles every Python file, checks JavaScript and shell syntax, runs the SDK, root,
+source tree) and that F1 SETUP LAB also uses the installed SDK and does not depend on FastF1. It then builds the other packages, lints, compiles every Python file, checks JavaScript and shell syntax, runs the SDK, root,
 F1 and WATTWISE test suites and the browser tests (when Playwright's Chromium is installed; `INSTALL_CHROMIUM=1` downloads it), and prints
 PASSED / FAILED / SKIPPED / UNAVAILABLE separately. Opt-in: `RUN_NETWORK_TESTS=1` (real OpenF1 imports of five sessions from 2023 to 2026,
 no account; takes several minutes), `RUN_START_SMOKE=1` (startup smoke, below). The real-household check is always listed as a SKIPPED manual
@@ -129,10 +132,27 @@ Ownership is defined once, in `skeleton/.kiro/ownership.json`. After editing it,
 legacy patterns. [`skeleton/.kiro/agents/README.md`](skeleton/.kiro/agents/README.md) has the ownership map, the handoff protocol and the
 multi-agent test results, including what can only be confirmed inside the Kiro IDE.
 
+## F1 live behaviours not tested against the game
+
+FastF1 is not supported; F1 SETUP LAB's historical data comes from OpenF1. Live UDP capture needs EA SPORTS F1 25 running and sending
+packets. These behaviours are verified only with recorded packets and have **not been tested against the live game**:
+
+* F1 25 packet decoding
+* 2026 Season Pack packet decoding
+* receiver packet counting (good, malformed and wrong-format packets)
+* live stint recording and top-speed tracking
+* stint acceptance and rejection against the target setup
+* session change during a stint
+* raw UDP recording and replay
+* legacy `.f1raw` file import
+* setup-field probing and setup-mapping verification (`probe_setup.py`, `verify_setup_mapping.py`)
+* UDP recording inspection (`inspect_udp_recording.py`)
+
 ## Manual acceptance gates
 
 These need you, your data or your bill. The code prepares them but cannot complete them truthfully:
 
+* **F1 SETUP LAB:** run the live behaviours listed above against the running game, and confirm each setup-factor mapping against the garage screen.
 * **WATTWISE:** import a real smart-meter export (7–30 days, 15/30-minute intervals; supply a sample header if the format is not recognised);
   enter your real tariff and household/EV parameters; compare the computed cost of a billed period with the bill; run a recommended schedule at
   home and import those readings to the run before claiming a saving.
@@ -151,6 +171,6 @@ data/trialforge.db  the database (created on first start; not committed)
 scripts/            start scripts, release check, legacy migration
 tests/              root tests (database, migrations, scoping, start scripts, legacy migration)
 skeleton/           the TRIALFORGE SDK (frozen) and its docs
-f1-setup-lab/       F1 SETUP LAB (historical F1 data from OpenF1)
+f1-setup-lab/       F1 SETUP LAB (setup engineering, live simulator, historical F1 data from OpenF1)
 wattwise-lab/       WATTWISE LAB
 ```

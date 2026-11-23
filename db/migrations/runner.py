@@ -8,11 +8,12 @@ The SDK's own tables (experiments, runs, ...) are not managed here; ``SQLiteExpe
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import Connection, Engine, text
 
+from db.backup import BackupError
 from db.engine import immediate_transaction
 
 VERSION_TABLE = "app_schema_version"
@@ -56,8 +57,17 @@ def current_version(engine: Engine) -> int:
             return _version_in(conn)
 
 
-def migrate(engine: Engine, target: int | None = None, migrations: Sequence | None = None) -> list[AppliedMigration]:
-    """Apply pending migrations up to ``target`` (default: latest). Returns what was applied by this call."""
+def migrate(
+    engine: Engine,
+    target: int | None = None,
+    migrations: Sequence | None = None,
+    before_apply: Callable[[Engine, object], object] | None = None,
+) -> list[AppliedMigration]:
+    """Apply pending migrations up to ``target`` (default: latest). Returns what was applied by this call.
+
+    ``before_apply(engine, migration)`` is called before the transaction of each migration that is still pending
+    (e.g. ``db.backup.backup_hook``). If it raises, nothing of that migration runs; ``BackupError`` becomes ``MigrationError``.
+    """
     ms = sorted(_migrations() if migrations is None else migrations, key=lambda m: m.version)
     versions = [m.version for m in ms]
     if len(set(versions)) != len(versions):
@@ -67,6 +77,11 @@ def migrate(engine: Engine, target: int | None = None, migrations: Sequence | No
     for m in ms:
         if m.version > goal:
             break
+        if before_apply is not None and m.version > current_version(engine):
+            try:
+                before_apply(engine, m)
+            except BackupError as exc:
+                raise MigrationError(f"backup before migration {m.version} ({m.name}) failed, nothing was changed: {exc}") from exc
         try:
             with immediate_transaction(engine) as conn:
                 conn.exec_driver_sql(

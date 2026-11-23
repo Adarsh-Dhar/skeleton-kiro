@@ -1,14 +1,22 @@
-/* F1 SETUP LAB single-page app (no build step): real historical Formula 1 sessions from OpenF1. All dynamic text is escaped with esc(). */
+/* F1 SETUP LAB single-page app (no build step): setup engineering, live simulator and historical Formula 1 (OpenF1). All dynamic text is escaped with esc().
+   Shared helpers and the router live here; the setup and simulator views are in setup_lab.js (loaded first). */
 const esc = Charts.esc, fmt = Charts.f;
 const $ = (s, r = document) => r.querySelector(s);
-const view = () => $('#view');
+const view = () => $('#view-body');  // views render into this nested container; #view-error holds failures so earlier data stays
 let META = null;
 class ApiError extends Error { constructor(status, issues) { super(issues.map((i) => i.message).join('; ')); this.status = status; this.issues = issues; } }
 async function api(method, path, body) {
-  const res = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  let res;
+  try { res = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined }); }
+  catch (_) { throw new ApiError(0, [{ field: 'request', message: 'request failed' }]); }
   const ct = res.headers.get('content-type') || '';
-  const data = ct.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new ApiError(res.status, Array.isArray(data.detail) ? data.detail : [{ field: 'request', message: String(data.detail || res.statusText) }]);
+  let data;
+  try { data = ct.includes('json') ? await res.json() : await res.text(); } catch (_) { data = null; }
+  if (!res.ok) {
+    const d = data && typeof data === 'object' ? data.detail : null;
+    throw new ApiError(res.status, Array.isArray(d) ? d : [{ field: 'request', message: String(d || 'request failed') }]);
+  }
+  if (data === null) throw new ApiError(res.status, [{ field: 'request', message: 'request failed' }]);
   return data;
 }
 function toast(msg, ok = false) {
@@ -46,17 +54,31 @@ async function reloadIfUpdated() {
   } catch (_) { /* offline backend: keep the current code */ }
   return false;
 }
+/* Banner: the synthetic notice on Simulator views, the game-mode notice on Live views, the historical notice on Historical F1 views. */
+function showNotice(mode) { if (typeof setBanner === 'function') setBanner(mode); }
+const EXP_TABS = { design: 'viewDesign', runs: 'viewRuns', telemetry: 'viewExpTelemetry', analysis: 'viewAnalysis', optimise: 'viewOptimise', report: 'viewReport' };
 async function route() {
   if (await reloadIfUpdated()) return;
+  clearInterval(pollTimer);
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+  const err = $('#view-error'); err.innerHTML = '';
   try {
     if (!META) META = await api('GET', '/api/meta');
-    $('#banner').textContent = META.notice;
-    if (!parts.length) { location.replace('#/hist'); return; }  // the import page is the landing page
-    if (parts[0] === 'hist') { setNav(parts[1] ? 'sessions' : 'hist'); return parts[1] ? await viewHistSession(parts[1], parts[2] || 'overview') : await viewHist(); }
-    if (parts[0] === 'sessions') { setNav('sessions'); return await viewSessions(); }
-    view().innerHTML = '<div class="empty"><h2>Page not found</h2><p>F1 SETUP LAB shows real Formula 1 sessions from OpenF1.</p><a href="#/hist">Import a session</a> &middot; <a href="#/sessions">Imported sessions</a></div>';
-  } catch (e) { view().innerHTML = errorsBox(e) + '<p><a href="#/hist">Back to Historical F1</a></p>'; }
+    if (!parts.length) { location.replace('#/dashboard'); return; }
+    const head = parts[0];
+    if (head === 'dashboard') { setNav('dashboard'); showNotice('synthetic'); return await viewDashboard(); }
+    if (head === 'new') { setNav('new'); showNotice('synthetic'); return parts[1] === 'live' ? await viewNewLive() : await viewNew(); }
+    if (head === 'live') { setNav('live'); showNotice(LIVE); return await viewLive(); }
+    if (head === 'telemetry') { setNav('telemetry'); showNotice('synthetic'); return await viewTelemetryStandalone(); }
+    if (head === 'e' && parts[1]) {
+      const fn = { viewDesign, viewRuns, viewExpTelemetry, viewAnalysis, viewOptimise, viewReport }[EXP_TABS[parts[2] || 'design']];
+      if (fn) { setNav('dashboard'); showNotice('synthetic'); return await fn(parts[1]); }
+    }
+    if (head === 'hist') { setNav(parts[1] ? 'sessions' : 'hist'); showNotice('historical'); return parts[1] ? await viewHistSession(parts[1], parts[2] || 'overview') : await viewHist(); }
+    if (head === 'sessions') { setNav('sessions'); showNotice('historical'); return await viewSessions(); }
+    showNotice('historical');
+    view().innerHTML = '<div class="empty"><h2>Page not found</h2><p>This page does not exist in F1 SETUP LAB.</p><a href="#/dashboard">Dashboard</a> &middot; <a href="#/hist">Import a session</a> &middot; <a href="#/sessions">Imported sessions</a></div>';
+  } catch (e) { err.innerHTML = errorsBox(e) + '<p><a href="#/dashboard">Back to dashboard</a></p>'; }
 }
 window.addEventListener('hashchange', route);
 
@@ -237,6 +259,6 @@ function histTraceCharts(samples) {
 
 /* -------------------------------------------------------------------- boot */
 (async () => {
-  try { await api('GET', '/api/health'); setLed('ok', 'online · OpenF1'); } catch (_) { setLed('bad', 'backend offline'); }
+  try { await api('GET', '/api/health'); setLed('ok', 'online'); } catch (_) { setLed('bad', 'backend offline'); }
   route();
 })();

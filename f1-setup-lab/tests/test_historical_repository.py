@@ -45,8 +45,9 @@ def test_dtypes_nulls_and_extra_columns_round_trip(tmp_path):
         assert str(back[c].dtype) == str(laps[c].dtype), c
     assert pd.isna(back.lap_number.iloc[2]) and pd.isna(back.lap_time_s.iloc[1])
     assert back.is_deleted.tolist()[:2] == [False, True] and pd.isna(back.is_deleted.iloc[2])
-    assert back.deleted_reason.iloc[1] == "track limits" and back.deleted_reason.iloc[0] is None
-    assert back.new_provider_column.tolist() == ["a", None, "c"]
+    assert back.deleted_reason.iloc[1] == "track limits" and pd.isna(back.deleted_reason.iloc[0])  # None (object) or NaN (pandas 3 str)
+    got = back.new_provider_column.tolist()
+    assert got[0] == "a" and got[2] == "c" and pd.isna(got[1])
 
 
 def test_missing_channels_stay_missing(tmp_path):

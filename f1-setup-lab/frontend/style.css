@@ -70,3 +70,10 @@ label.chk.dim{color:var(--dim)}.insp-ch{gap:10px 16px;margin:10px 0}
 
 [hidden]{display:none!important}
 
+.fixed-head{position:sticky;top:0;z-index:50}
+nav{gap:18px}.nav-group{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.nav-head{flex-basis:100%;margin:0;font-size:10px;letter-spacing:.14em;color:var(--dim);padding-left:14px}
+.banner.simrec{background:#0c2233;color:#8fd0ff;border-bottom-color:#1d4a6b}
+.chip.synthetic{color:var(--amber);border-color:#6b5112}.chip.simrec{color:#8fd0ff;border-color:#1d4a6b}
+.coded{display:inline-block;min-width:34px;text-align:center;border-radius:3px;font:11px var(--mono);padding:1px 4px}.coded.m1{background:#14304d;color:#9ccfff}.coded.p1{background:#4d1b14;color:#ffb199}.coded.z{background:#222;color:#aaa}
+#view-error:empty{display:none}

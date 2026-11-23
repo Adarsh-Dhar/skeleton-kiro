@@ -1,5 +1,5 @@
-"""Both apps share one database file. WATTWISE LAB only sees its own experiments (F1 SETUP LAB keeps none: it stores OpenF1
-historical sessions), and neither app touches the other's data."""
+"""Both apps share one database file. Each app only sees its own experiments (F1 SETUP LAB also stores OpenF1 historical
+sessions), and neither app touches the other's data."""
 from __future__ import annotations
 
 import time
@@ -64,7 +64,8 @@ def test_both_apps_run_on_one_file_without_touching_each_other(path):
         assert ww.post("/api/experiments/ww-run/execute").status_code == 202
         assert _wait(ww, "ww-run")["counts"]["completed"] > 0
         assert f1.get("/api/historical/sessions").json() == []  # F1 keeps historical sessions, not experiments
-        assert f1.get("/api/experiments").status_code == 404
+        assert f1.get("/api/experiments").json() == []  # F1 has its own experiments; WATTWISE's are not listed
+        assert f1.get("/api/experiments/ww-run").status_code == 404
     with TestClient(create_f1(path)), TestClient(create_ww(path)) as ww:  # restart: nothing lost, nothing claimed by F1
         assert [e["id"] for e in ww.get("/api/experiments").json()] == ["ww-run"]
     with create_db_engine(path).connect() as c:

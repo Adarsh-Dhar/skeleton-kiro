@@ -62,27 +62,27 @@ def ready(page, hash_):
 
 
 # ------------------------------------------------------------------------------------------------ New experiment
-def test_the_app_opens_on_historical_f1_and_has_nothing_else(page):
-    page.goto(page.base + "/")
+def test_the_app_has_six_nav_entries_and_historical_f1_shows_only_its_own_notice(page):
+    page.goto(page.base + "/#/hist")
     page.wait_for_selector("#hprov")
-    assert page.url.endswith("#/hist")
-    assert "HISTORICAL F1 DATA" in page.inner_text("#banner").upper() and "SYNTHETIC" not in page.inner_text("body").upper()
-    assert [a.inner_text().lower() for a in page.locator("#nav a").all()] == ["historical f1", "imported sessions"]  # upper-cased by CSS
+    assert "HISTORICAL F1 DATA" in page.inner_text("#banner").upper() and "SYNTHETIC" not in page.inner_text("#banner").upper()
+    assert [a.inner_text().lower() for a in page.locator("#nav a").all()] == [
+        "dashboard", "new experiment", "telemetry import", "live simulator", "historical f1", "imported sessions"]  # upper-cased by CSS
+    assert [h.inner_text().lower() for h in page.locator("#nav .nav-head").all()] == ["setup engineering", "live simulator", "historical f1"]
     body = page.inner_text("body").lower()
-    for gone in ("experiment", "simulator", "ea sports", "f1 25", "fastf1", "udp"):
+    for gone in ("fastf1", "wind direction"):
         assert gone not in body, gone
-    for old in ("#/new", "#/new/synthetic", "#/new/live", "#/dashboard", "#/live", "#/telemetry", "#/e/x/design"):
+    for old in ("#/nope", "#/e/x/nope"):
         page.goto(page.base + "/about:blank")
         page.goto(page.base + "/" + old)
         page.wait_for_selector("#view .empty")
         assert "page not found" in page.inner_text("#view").lower(), old
     page.click("#view a:has-text('Import a session')")
     page.wait_for_selector("#hprov")
-    page.click("a.brand")
+    page.click("#nav a[data-nav=hist]")
     page.wait_for_selector("#hprov")
     # the app's own files are not served from a stale browser cache
     assert page.evaluate("fetch('/app.js').then(r => r.headers.get('cache-control'))") == "no-cache"
-    assert page.evaluate("fetch('/api/experiments').then(r => r.status)") == 404
     assert page.errors == []
 
 

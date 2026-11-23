@@ -21,7 +21,10 @@ def create_tables(conn: Connection, *names: str) -> None:
     import db.models  # noqa: F401  (registers every table on Base.metadata)
 
     for name in names:
-        Base.metadata.tables[name].create(conn, checkfirst=True)
+        try:
+            Base.metadata.tables[name].create(conn, checkfirst=True)
+        except Exception as exc:
+            raise RuntimeError(f"creating table {name} failed: {exc}") from exc
 
 
 def _m001_owner(conn: Connection) -> None:
@@ -38,7 +41,8 @@ def _m003_f1_import_jobs(conn: Connection) -> None:
 
 def _m004_f1_retired(conn: Connection) -> None:
     """Retired. It created F1 tables for a feature that has since been removed (see migration 8, which drops them). It stays in
-    the list, doing nothing, so the version numbers of existing databases keep their meaning."""
+    the list, doing nothing, so the version numbers of existing databases keep their meaning. Migration 9 recreates the tables
+    that migration 8 removed."""
 
 
 def _m005_ww_household_tariffs(conn: Connection) -> None:
@@ -63,7 +67,7 @@ SDK_EXPERIMENT_TABLES = ("state_log", "jobs", "processed_measurements", "measure
 def _m008_f1_openf1_only(conn: Connection) -> None:
     """F1 SETUP LAB keeps only OpenF1 historical data: remove its setup experiments (every SDK row of the experiments the
     ``app_experiment_owner`` table assigns to F1 SETUP LAB), drop its retired tables, and remove historical sessions and import
-    jobs of any provider other than OpenF1. WATTWISE LAB experiments are not touched."""
+    jobs of any provider other than OpenF1. WATTWISE LAB experiments are not touched. This was a one-time cleanup."""
     import json
 
     from sqlalchemy import text
@@ -90,6 +94,12 @@ def _m008_f1_openf1_only(conn: Connection) -> None:
                 conn.execute(text("DELETE FROM f1_import_job WHERE import_id = :i"), {"i": import_id})
 
 
+def _m009_f1_setup_restored(conn: Connection) -> None:
+    """Restore the F1 SETUP LAB setup-engineering tables (parents first). Idempotent: existing tables are left alone."""
+    create_tables(conn, "app_experiment_owner", "f1_udp_recording", "f1_udp_packet", "f1_stint_evidence",
+                  "f1_stint_telemetry", "f1_probe_report", "f1_setup_mapping_confirmation")
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "experiment owner table", _m001_owner),
     Migration(2, "f1 historical sessions", _m002_f1_historical),
@@ -99,4 +109,5 @@ MIGRATIONS: list[Migration] = [
     Migration(6, "wattwise historical meter-data library", _m006_ww_meter_library),
     Migration(7, "f1 historical per-session datasets (race position, results, grid, intervals, ...)", _m007_f1_hist_datasets),
     Migration(8, "f1 keeps only OpenF1 historical data: remove its experiments and retired tables", _m008_f1_openf1_only),
+    Migration(9, "f1 setup lab restored: owner table and six setup-engineering tables", _m009_f1_setup_restored),
 ]

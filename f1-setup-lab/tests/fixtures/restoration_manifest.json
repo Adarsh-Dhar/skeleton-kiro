@@ -1,0 +1,62 @@
+{
+  "archive_vs_git_mismatches": [],
+  "cross_check_commit": "dfa519e",
+  "current_tree": {
+    "f1-setup-lab/scripts/import_historical.py": "3660504033d430da09074b54a39bf1811c072fcf93260229e4f0dcd5fc46a702",
+    "f1-setup-lab/scripts/refresh_openf1_fixtures.py": "b7bf938c27620f9953cf78092f27f612980620ee139fea84de864933a85c6517"
+  },
+  "files": {
+    "f1-setup-lab/backend/f1lab/adapters/__init__.py": "97a2f93d4ca028116e1a6205cd78c12a32d72a5ebe783eaa8214b065b0d362a8",
+    "f1-setup-lab/backend/f1lab/adapters/sim_adapter.py": "d0fa116e79b8aed2deab3ee603e0834ae97a6fd78d3fa58b2b8674f0811806c0",
+    "f1-setup-lab/backend/f1lab/adapters/telemetry.py": "5c8ebd24114ae5f8d9aa1ce077debb4ba29bd8d6da3e40590a7fb408508e1694",
+    "f1-setup-lab/backend/f1lab/adapters/vehicle_model.py": "194e2de592e43fa4a9e2508745b7be71a282dd97a62f5ed5d4d2ca513929cda6",
+    "f1-setup-lab/backend/f1lab/api/schemas.py": "f8c185d6fbce3570715884f7ab1ddf427a314d0292cb6f90d7d0fb1ff15b2785",
+    "f1-setup-lab/backend/f1lab/catalogs/__init__.py": "6ba36494f398a4f1e539dc3d0d82dbcfbe5f853fac553fd4d00ea88ec29de0f8",
+    "f1-setup-lab/backend/f1lab/catalogs/ea_f1_25.py": "0a3afbe8a11f937a889bba24beae2fa1a7d02eb0fd203de7a27554a862bad440",
+    "f1-setup-lab/backend/f1lab/catalogs/verification.py": "93c32fc122979be1e2a4669daeeee582908ded2fa4a082e3746319782054436d",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/__init__.py": "951407479fb9bd5c7c9faa62f9e93d746468475fee65dac6d4f22aca070bffde",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/capture.py": "33605dc6ddebf1bbbbc690dd1f54c52f4dd1ba3348669ab2c7da9f796c802955",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/evidence.py": "9cec92adc27e02b651c5b40b90dc3552f983a0e1a45c67205f3c7486d062a26b",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/live.py": "2d733a3a4843187991926e22af8cc3367e3fc62b24d9b1facdc4cff471e8b19c",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/measurements.py": "c2eb0aae4ae1daf8b63a8fdd73876f4b3ca35f2f04c074067e4d84bba0181538",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/probe.py": "ad8fb8e41bcbd50486a009a1e160807e72156e70d6e16669ed42cded8403c5b3",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/protocols/__init__.py": "4d5982dd8da5bbb3b426bdc4f81bbef31012ce8629dcca49a421f7a5dac4c045",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/protocols/f1_25.py": "c052aed65e39005da9a98e0e0f7fad445f2332d2c22b0565f648faa411f23bd5",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/protocols/f1_25_2026.py": "b6eca034c007d13dfe3088897b03c65d87e5f3c66a9fbb3d1efb0acd2e07529d",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/receiver.py": "8603a5f2d75e523ac18ddb18c95a4525021f457e152b0d3c0833e21413282f40",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/recorder.py": "7ea4fd1cdc3132393a68fded9df5ac95f8f4a3ec46290553e335cc09b1b1395d",
+    "f1-setup-lab/backend/f1lab/integrations/game_udp/telemetry.py": "77292f0c2b7af8f103b69cc9d4d3fa220e53baef4fad7ec39b8c5667454f24f8",
+    "f1-setup-lab/backend/f1lab/services/__init__.py": "4337f55f89c3496e63430041ef2b889941120d53c1881f806738397516271d8e",
+    "f1-setup-lab/backend/f1lab/services/lab.py": "7b5f58336c8c432d6061ec0bfbe32c939bb861765bf5a2bf65039670f2e44630",
+    "f1-setup-lab/backend/f1lab/services/narrative.py": "be5179d1f9a1f8273bf4a5ee6e0edf1f0213e2085ca6c4bc7aadd465eb793163",
+    "f1-setup-lab/backend/f1lab/services/report_html.py": "3a8f47944deb5f7b91b133c36b8f8e12d0e1ad57b54192cd1759d56eda5839a7",
+    "f1-setup-lab/frontend/inspector.js": "cb0649e7c70436708d0e2c8e9dbd07a07e49982b2525b428e60e7b43c8755e7b",
+    "f1-setup-lab/scripts/inspect_udp_recording.py": "aadd9ea2e4cf7dffa5ab615867b848132eebcb7b9e5883755780e02aa6a5dc33",
+    "f1-setup-lab/scripts/probe_setup.py": "0d2f5c636653baf3edeb2d050aaef875d41886dfbe4e2820f6fbafc97d7a2b8c",
+    "f1-setup-lab/scripts/verify_setup_mapping.py": "c34a8bc992bf2beba3a58b16825dba35051795f38f96d26adf316ee39778c785",
+    "f1-setup-lab/tests/test_api_workflow.py": "7a656f93209a2b5a79497e1037956045a3bf08f4e83b4ed84e0a2e9b52c2b6c4",
+    "f1-setup-lab/tests/test_csv_timestamps.py": "535b4c82d2788a263106448377b8a4bffa4784f628b108a15fdc89978fd92cf0",
+    "f1-setup-lab/tests/test_game_udp.py": "40e0d19d5fbabb6aa2e5552a16b4181efb8f4e6bec1bd3aaec251b76fd33f302",
+    "f1-setup-lab/tests/test_live_mode.py": "9792f4b79eac839db4e34361111dace28f12695005ae54d0e3c2afd9d458d452",
+    "f1-setup-lab/tests/test_probe_and_verification.py": "901ad021766b1a73fbbff3f940b06d9f2f09974ee145279010276ca1f0981dfd",
+    "f1-setup-lab/tests/test_protocol_2026.py": "c8269b078edbd63d9ae16afd7cec8b238438d6270e69fdd411168dcd8688a841",
+    "f1-setup-lab/tests/test_stint_measurements.py": "27d277a7fdf53611e5e5d0cae74cc1b23bc25c440fef8d89316d59ab407f11cc",
+    "f1-setup-lab/tests/test_vehicle_and_telemetry.py": "bcff103c907817cedae78f700c9e36c098385afbfdf6bc2c70c8723f01e1336c",
+    "f1-setup-lab/tests/udp_packets.py": "4df4b9404225d4c67b2c0713c09e47b3b8f27831a8d292aefb701c92ea6ce3e2"
+  },
+  "modified_on_restore": {
+    "f1-setup-lab/tests/test_telemetry_inspector.py": {
+      "archive_sha256": "7e671fe74a351c605100773ac15bb44e1a57f8cd12f048acdc4ff7ef1def05b2",
+      "note": "test_frontend_loads_the_inspector reads app.js + setup_lab.js because the frontend split (design section 7) moved telemetry code from app.js to setup_lab.js (task 6.1); byte-identity not expected"
+    },
+    "f1-setup-lab/tests/test_notices.py": {
+      "archive_sha256": "f9c60ff04f76ba340a0fd3753915f70ec806b4a95b4a41fe493d51a59bcf089a",
+      "note": "restored with edits (design D2 / task 6.1); byte-identity not expected"
+    },
+    "f1-setup-lab/tests/test_verification_scripts.py": {
+      "archive_sha256": "966bfd1da02ab6e42367af89bbcec1c5521a74b88aeb7a32ad51de6f1807ae25",
+      "note": "restored with edits (design D2 / task 6.1); byte-identity not expected"
+    }
+  },
+  "source": "~/Downloads/skeleton-kiro-main (1).zip unzipped to /tmp/rel/skeleton-kiro-main"
+}

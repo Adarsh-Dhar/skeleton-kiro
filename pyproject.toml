@@ -10,6 +10,8 @@ dependencies = [
   "SQLAlchemy>=2.0,<3",
   "pandas>=2.0",
 ]
+[project.optional-dependencies]
+test = ["hypothesis>=6"]
 [project.scripts]
 trialforge-db = "db.migrate:main"
 [tool.setuptools.packages.find]

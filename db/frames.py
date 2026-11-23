@@ -81,6 +81,8 @@ def _restore(s: pd.Series, dtype: str) -> pd.Series:
             return pd.to_numeric(s, errors="coerce").astype(dtype)
         if dtype == "string":
             return s.astype("string")
+        if dtype == "str":  # pandas >= 3 default string dtype (schema stored as "str")
+            return s.astype("str")
     except (TypeError, ValueError):
         return s
     return s.astype(object).where(pd.notna(s), None)
