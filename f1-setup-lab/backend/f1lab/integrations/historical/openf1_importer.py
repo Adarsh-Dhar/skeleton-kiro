@@ -1,4 +1,4 @@
-"""Import one historical session from OpenF1 into the same normalized storage the FastF1 importer uses."""
+"""Import one historical session from OpenF1 into the normalized historical storage."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ CHUNK = timedelta(minutes=30)  # car_data / location are requested in windows th
 
 def check_year(year: int) -> None:
     if year < MIN_YEAR:
-        raise HistoricalImportError(INVALID_REQUEST, f"OpenF1 historical data starts in {MIN_YEAR}; use the FastF1 provider for {year}")
+        raise HistoricalImportError(INVALID_REQUEST, f"OpenF1 historical data starts in {MIN_YEAR}; {year} is not available")
 
 
 RECENT_SESSION = timedelta(hours=48)  # a session this fresh may still be gaining data: cached answers are re-checked after an hour
@@ -45,7 +45,7 @@ def meetings_for(client: OpenF1Client, year: int, cancel=None, **kw) -> list[dic
 
 
 def resolve_meeting(meetings: list[dict], event: str) -> dict:
-    """Map a user-supplied event string to an OpenF1 meeting (same matching rules as the FastF1 schedule)."""
+    """Map a user-supplied event string to an OpenF1 meeting (exact name first, then partial name or location)."""
     name = resolve_event(N.schedule_frame(meetings), event)
     meeting = next((m for m in meetings if m.get("meeting_name") == name), None)
     if meeting is None:

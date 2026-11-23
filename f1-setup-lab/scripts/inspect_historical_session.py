@@ -13,7 +13,7 @@ import json
 import sys
 
 import _common  # noqa: F401  (path + database bootstrap)
-from _common import cache_dir_for, root_engine
+from _common import root_engine
 
 from f1lab.integrations.historical.repository import HistoricalRepository
 from f1lab.integrations.historical.service import POSITION_CHANNELS, TELEMETRY_CHANNELS
@@ -62,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--db", default=None)
     a = ap.parse_args(argv)
     engine, url = root_engine(a.db)
-    repo = HistoricalRepository(engine, cache_dir_for(url))
+    repo = HistoricalRepository(engine)
     if not a.session_id:
         sessions = repo.list_sessions()
         for s in sessions:

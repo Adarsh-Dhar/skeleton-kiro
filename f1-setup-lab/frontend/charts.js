@@ -29,47 +29,7 @@ const Charts = (() => {
   }
   const wrap = (W, H, body, label) => `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label || 'chart')}">${body}</svg>`;
 
-  /** points:[{x,y,cls,title}], step:[{x,y}], lines:[{h|v,label}], shade:{x0,x1,y0,y1,cls} */
-  function scatter(o) {
-    const pts = o.points || [];
-    if (!pts.length) return '<div class="empty">No data yet.</div>';
-    const xs = pts.map((p) => p.x).concat((o.lines || []).filter((l) => l.v !== undefined).map((l) => l.v)),
-      ys = pts.map((p) => p.y).concat((o.lines || []).filter((l) => l.h !== undefined).map((l) => l.h));
-    const fr = frame(o, xs, ys), { X, Y, W, H, m } = fr;
-    let b = fr.g;
-    if (o.shade) {
-      const s = o.shade, sx0 = X(s.x0 ?? fr.x0), sx1 = X(s.x1 ?? fr.x1), sy0 = Y(s.y1 ?? fr.y1), sy1 = Y(s.y0 ?? fr.y0);
-      b += `<rect x="${Math.min(sx0, sx1)}" y="${Math.min(sy0, sy1)}" width="${Math.abs(sx1 - sx0)}" height="${Math.abs(sy1 - sy0)}" fill="#ff4d4d" opacity=".10"/>`;
-    }
-    (o.lines || []).forEach((l) => {
-      if (l.h !== undefined) b += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(l.h)}" y2="${Y(l.h)}" stroke="#ffb400" stroke-dasharray="5 4"/><text x="${W - m.r - 4}" y="${Y(l.h) - 5}" text-anchor="end" style="fill:#ffb400">${esc(l.label || '')}</text>`;
-      if (l.v !== undefined) b += `<line y1="${m.t}" y2="${H - m.b}" x1="${X(l.v)}" x2="${X(l.v)}" stroke="#ffb400" stroke-dasharray="5 4"/><text x="${X(l.v) + 4}" y="${m.t + 10}" style="fill:#ffb400">${esc(l.label || '')}</text>`;
-    });
-    if (o.step && o.step.length) b += `<polyline fill="none" stroke="#ffb400" stroke-width="2" points="${o.step.map((p) => `${X(p.x)},${Y(p.y)}`).join(' ')}"/>`;
-    pts.forEach((p) => { b += `<circle class="${p.cls || 'pt-other'}" cx="${X(p.x)}" cy="${Y(p.y)}" r="${p.r || 4.5}" opacity=".9"><title>${esc(p.title || '')}</title></circle>`; });
-    return wrap(W, H, b, o.label);
-  }
 
-  /** items:[{label,value,lo,hi,sig}] centred on zero; negative (faster) = green when goodNegative */
-  function bars(o) {
-    const items = o.items || [];
-    if (!items.length) return '<div class="empty">No effects available.</div>';
-    const W = o.width || 640, rowH = 34, H = items.length * rowH + 46, m = { l: 150, r: 20, t: 8, b: 34 };
-    const ext = Math.max(...items.flatMap((i) => [Math.abs(i.value), Math.abs(i.lo ?? 0), Math.abs(i.hi ?? 0)])) * 1.1 || 1;
-    const X = scale(-ext, ext, m.l, W - m.r);
-    let b = '';
-    niceTicks(-ext, ext, 6).forEach((t) => { b += `<line class="grid" x1="${X(t)}" x2="${X(t)}" y1="${m.t}" y2="${H - m.b}"/><text x="${X(t)}" y="${H - m.b + 15}" text-anchor="middle">${f(t, 2)}</text>`; });
-    b += `<line class="axis" x1="${X(0)}" x2="${X(0)}" y1="${m.t}" y2="${H - m.b}"/>`;
-    items.forEach((it, i) => {
-      const y = m.t + i * rowH + 6, h = rowH - 14;
-      const good = o.goodNegative ? it.value < 0 : it.value > 0, col = it.sig ? (good ? '#2ecc71' : '#ff4d4d') : '#5b6572';
-      b += `<text x="${m.l - 10}" y="${y + h / 2 + 4}" text-anchor="end" style="fill:#e6e9ee">${esc(it.label)}${it.sig ? ' *' : ''}</text>`;
-      b += `<rect x="${Math.min(X(0), X(it.value))}" y="${y}" width="${Math.abs(X(it.value) - X(0))}" height="${h}" fill="${col}" opacity="${it.sig ? 0.9 : 0.55}"><title>${esc(it.label)}: ${f(it.value, 3)}${it.p !== undefined && it.p !== null ? ` (p=${Number(it.p).toPrecision(3)})` : ''}</title></rect>`;
-      if (it.lo !== null && it.lo !== undefined) b += `<line x1="${X(it.lo)}" x2="${X(it.hi)}" y1="${y + h / 2}" y2="${y + h / 2}" stroke="#e6e9ee" stroke-width="1.5"/><line x1="${X(it.lo)}" x2="${X(it.lo)}" y1="${y + 3}" y2="${y + h - 3}" stroke="#e6e9ee"/><line x1="${X(it.hi)}" x2="${X(it.hi)}" y1="${y + 3}" y2="${y + h - 3}" stroke="#e6e9ee"/>`;
-    });
-    if (o.xLabel) b += `<text x="${(m.l + W - m.r) / 2}" y="${H - 2}" text-anchor="middle">${esc(o.xLabel)}</text>`;
-    return wrap(W, H, b, o.label);
-  }
 
   /** series:[{name,color,pts:[{x,y}]}] */
   function lines(o) {
@@ -141,5 +101,5 @@ const Charts = (() => {
     return wrap(W, H, b, 'track map') + `<div class="legend"><span><i style="background:#4aa8ff"></i>slow</span><span><i style="background:#e10600"></i>fast</span><span>S/F = start/finish</span><span>amber = corner numbers</span></div>`;
   }
 
-  return { scatter, bars, lines, sectors, trackMap, esc, f };
+  return { lines, sectors, trackMap, esc, f };
 })();

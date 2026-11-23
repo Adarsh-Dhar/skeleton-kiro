@@ -1,7 +1,6 @@
-"""HistoricalDataService: coordinates FastF1 imports (background jobs) and session queries.
+"""HistoricalService: coordinates OpenF1 imports (background jobs) and queries on stored sessions.
 
-Historical sessions and import jobs live in the root database (``f1_hist_*``, ``f1_import_job``) and are completely
-separate from the TRIALFORGE experiment tables: they are for analysis/benchmarking, never setup-response measurements.
+Historical sessions and import jobs live in the root database (``f1_hist_*``, ``f1_import_job``).
 """
 
 from __future__ import annotations
@@ -15,16 +14,14 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import Engine
 
+from f1lab.errors import Conflict, NotFound
 from f1lab.integrations.historical import openf1_importer, openf1_normalizer
-from f1lab.integrations.historical.fastf1_client import FastF1Client, cache_stats
 from f1lab.integrations.historical.importer import (
     CANCELLED,
     NETWORK_TIMEOUT,
     ImportCancelled,
     _session_code,
     classify,
-    import_session,
-    resolve_event,
 )
 from f1lab.integrations.historical.jobs import ACTIVE, ImportJobStore, dedupe_key
 from f1lab.integrations.historical.openf1_client import OpenF1Client
@@ -39,25 +36,6 @@ DATASETS = ("race_position", "session_result", "starting_grid", "intervals", "ov
             "drivers_championship", "teams_championship")
 MANIFEST_DATASETS = ("pit_stops", "race_control")  # small lists kept in the session manifest
 POSITION_CHANNELS = ("distance_m", "session_time_s", "x_m", "y_m", "z_m", "speed_kph")
-
-# FastF1 schedule session names -> session type codes accepted by get_session()
-SESSION_NAME_TO_TYPE = {
-    "practice 1": "FP1", "practice 2": "FP2", "practice 3": "FP3",
-    "qualifying": "Q", "sprint qualifying": "SQ", "sprint": "S", "race": "R",
-}
-
-
-def _schedule_sessions(row) -> list[dict]:
-    """One schedule row -> [{type, name, date}] for each non-empty SessionN column."""
-    out = []
-    for i in range(1, 6):
-        name = row.get(f"Session{i}")
-        if name is None or (isinstance(name, float) and pd.isna(name)) or str(name).strip() == "":
-            continue
-        code = SESSION_NAME_TO_TYPE.get(str(name).strip().lower())
-        date = row.get(f"Session{i}Date")
-        out.append({"type": code, "name": str(name), "date": str(date) if date is not None and not pd.isna(date) else ""})
-    return out
 
 
 def _thin(df: pd.DataFrame, limit: int) -> pd.DataFrame:
@@ -79,21 +57,18 @@ def _records(df: pd.DataFrame, limit: int | None = None, channels: tuple[str, ..
 
 
 class HistoricalService:
-    """``engine`` is the root database; ``cache_dir`` is FastF1's download cache (reused by every import).
-    OpenF1 responses are cached next to it in ``openf1-cache``."""
+    """``engine`` is the root database; ``cache_dir`` holds the cached OpenF1 answers (reused by every import)."""
 
-    def __init__(self, engine: Engine, cache_dir: str | Path, client_factory: Callable[[], Any] | None = None,
-                 job_timeout_s: float = 1800.0, openf1_client_factory: Callable[[], Any] | None = None) -> None:
-        self.repo = HistoricalRepository(engine, cache_dir)
-        self.openf1_cache_dir = Path(cache_dir).parent / "openf1-cache"
+    def __init__(self, engine: Engine, cache_dir: str | Path, openf1_client_factory: Callable[[], Any] | None = None,
+                 job_timeout_s: float = 1800.0) -> None:
+        self.repo = HistoricalRepository(engine)
+        self.openf1_cache_dir = Path(cache_dir)
         self.jobs = ImportJobStore(engine)
-        self._client: FastF1Client | None = None
-        self._client_factory = client_factory
         self._openf1: OpenF1Client | None = None
         self._openf1_factory = openf1_client_factory
         self._driver_cache: dict[tuple, list[dict]] = {}
         self._tasks: dict[str, asyncio.Task] = {}
-        self._gate = asyncio.Semaphore(1)  # one FastF1 import at a time (FastF1 is not designed for concurrent loads)
+        self._gate = asyncio.Semaphore(1)  # one import at a time: they share OpenF1's request budget
         self.job_timeout_s = job_timeout_s
 
     def recover(self) -> int:
@@ -108,77 +83,32 @@ class HistoricalService:
         self._tasks.clear()
 
     @property
-    def client(self) -> FastF1Client:
-        if self._client is None:
-            self._client = self._client_factory() if self._client_factory else FastF1Client(self.repo.cache_dir)
-        return self._client
-
-    @property
     def openf1(self) -> OpenF1Client:
         if self._openf1 is None:
             self._openf1 = self._openf1_factory() if self._openf1_factory else OpenF1Client(self.openf1_cache_dir)
         return self._openf1
 
     # ------------------------------------------------------------- schedule browsing
-    def events(self, year: int, provider: str = "fastf1") -> list[dict]:
-        if provider == "openf1":
-            openf1_importer.check_year(year)
-            meetings = self.openf1.get("meetings", {"year": year})
-            if not openf1_normalizer.schedule_frame(meetings).shape[0]:
-                return []  # a season OpenF1 has not published yet is an empty list, not an error
-            return openf1_normalizer.event_list(meetings, self.openf1.get("sessions", {"year": year}))
-        schedule = self.client.get_schedule(year)
-        if schedule is None or schedule.empty:
-            return []
-        out = []
-        for _, row in schedule.iterrows():
-            out.append({
-                "event": row.get("EventName"),
-                "official_event": row.get("OfficialEventName"),
-                "location": row.get("Location"),
-                "circuit": row.get("Location"),
-                "country": row.get("Country"),
-                "round": row.get("RoundNumber"),
-                "sessions": _schedule_sessions(row),
-            })
-        return out
+    def events(self, year: int) -> list[dict]:
+        openf1_importer.check_year(year)
+        meetings = self.openf1.get("meetings", {"year": year})
+        if not openf1_normalizer.schedule_frame(meetings).shape[0]:
+            return []  # a season OpenF1 has not published yet is an empty list, not an error
+        return openf1_normalizer.event_list(meetings, self.openf1.get("sessions", {"year": year}))
 
-    def sessions_for_event(self, year: int, event: str, provider: str = "fastf1") -> list[dict]:
-        if provider == "openf1":
-            meeting = openf1_importer.resolve_meeting(openf1_importer.meetings_for(self.openf1, year), event)
-            return openf1_normalizer.schedule_sessions(self.openf1.get("sessions", {"meeting_key": meeting["meeting_key"]}))
-        schedule = self.client.get_schedule(year)
-        name = resolve_event(schedule, event)
-        row = schedule[schedule["EventName"] == name].iloc[0]
-        return _schedule_sessions(row)
+    def sessions_for_event(self, year: int, event: str) -> list[dict]:
+        meeting = openf1_importer.resolve_meeting(openf1_importer.meetings_for(self.openf1, year), event)
+        return openf1_normalizer.schedule_sessions(self.openf1.get("sessions", {"meeting_key": meeting["meeting_key"]}))
 
-    async def drivers_preview(self, year: int, event: str, session: str, provider: str = "fastf1") -> list[dict]:
-        """Driver list for a schedule session, without a full telemetry import (laps only)."""
+    async def drivers_preview(self, year: int, event: str, session: str) -> list[dict]:
+        """Driver list of a session, without importing anything."""
         code = _session_code(session)
-        key = (provider, year, event.strip().lower(), code)
-        if key in self._driver_cache:
-            return self._driver_cache[key]
-        if provider == "openf1":
-            drivers = await asyncio.to_thread(openf1_importer.preview, self.openf1, year, event, session)
-            self._driver_cache[key] = drivers
-            return drivers
-        schedule = await asyncio.to_thread(self.client.get_schedule, year)
-        event_name = await asyncio.to_thread(resolve_event, schedule, event)
-        sess = await asyncio.to_thread(
-            self.client.load_session, year, event_name, code,
-            laps=True, telemetry=False, weather=False, messages=False, circuit_info=False)
-        from f1lab.integrations.historical import normalizer as N
-        drivers = N.driver_list(sess)
-        self._driver_cache[key] = drivers
-        return drivers
+        key = (year, event.strip().lower(), code)
+        if key not in self._driver_cache:
+            self._driver_cache[key] = await asyncio.to_thread(openf1_importer.preview, self.openf1, year, event, session)
+        return self._driver_cache[key]
 
     # ------------------------------------------------------------- imports
-    @staticmethod
-    def _not_found(what: str):
-        from f1lab.services.lab import NotFound
-
-        return NotFound(what)
-
     async def start_import(self, req: HistoricalImportRequest, force: bool = False) -> dict:
         """Queue an import. A request identical to one already running, or one already completed whose session is
         still stored, returns that job (``duplicate: true``) instead of downloading again, unless ``force``."""
@@ -217,13 +147,8 @@ class HistoricalService:
             def should_cancel() -> bool:
                 return timed_out or jobs.cancel_requested(import_id)
 
-            openf1 = payload.get("provider", "fastf1") == "openf1"
-            stats = openf1_cache_stats if openf1 else cache_stats
-            cache_dir = self.openf1_cache_dir if openf1 else self.repo.cache_dir
-            label = "OpenF1" if openf1 else "FastF1"
-            before = stats(cache_dir)
-            run, client = (import_session_openf1, self.openf1) if openf1 else (import_session, self.client)
-            work = asyncio.to_thread(run, client, self.repo, payload, progress, should_cancel=should_cancel, force=force)
+            before = openf1_cache_stats(self.openf1_cache_dir)
+            work = asyncio.to_thread(import_session_openf1, self.openf1, self.repo, payload, progress, should_cancel=should_cancel, force=force)
             try:
                 manifest = await asyncio.wait_for(asyncio.shield(work), timeout=self.job_timeout_s)
             except TimeoutError:
@@ -241,13 +166,13 @@ class HistoricalService:
             except Exception as exc:  # network errors, missing data, bad driver codes
                 jobs.update(import_id, state="FAILED", error_code=classify(exc), error=str(exc) or type(exc).__name__, detail="failed")
                 return
-            after = stats(cache_dir)
+            after = openf1_cache_stats(self.openf1_cache_dir)
             if manifest.get("reused"):
                 note = "already stored; reused without downloading"
             elif after["bytes"] > before["bytes"]:
-                note = f"import complete; downloaded {round((after['bytes'] - before['bytes']) / 1e6, 1)} MB into the {label} cache"
+                note = f"import complete; downloaded {round((after['bytes'] - before['bytes']) / 1e6, 1)} MB into the OpenF1 cache"
             else:
-                note = f"import complete; served from the {label} cache (no new downloads)"
+                note = "import complete; served from the OpenF1 cache (no new downloads)"
             if manifest.get("warnings"):
                 note += "; warnings: " + "; ".join(manifest["warnings"][:5])
             jobs.update(import_id, state="COMPLETED", detail=note, session_id=manifest["session_id"], error=None, error_code=None)
@@ -255,7 +180,7 @@ class HistoricalService:
     def import_status(self, import_id: str) -> dict:
         job = self.jobs.get(import_id)
         if job is None:
-            raise self._not_found(import_id)
+            raise NotFound(import_id)
         return job
 
     def list_imports(self, limit: int = 50) -> list[dict]:
@@ -264,8 +189,6 @@ class HistoricalService:
     def cancel_import(self, import_id: str) -> dict:
         job = self.import_status(import_id)
         if job["state"] not in ACTIVE:
-            from f1lab.services.lab import Conflict
-
             raise Conflict(f"import {import_id} is {job['state']}; only queued or running imports can be cancelled")
         self.jobs.request_cancel(import_id)
         if import_id not in self._tasks:  # not running in this process (should not happen after recover())
@@ -277,9 +200,9 @@ class HistoricalService:
     async def retry_import(self, import_id: str) -> dict:
         job = self.import_status(import_id)
         if job["state"] not in ("FAILED", "CANCELLED"):
-            from f1lab.services.lab import Conflict
-
             raise Conflict(f"import {import_id} is {job['state']}; only failed or cancelled imports can be retried")
+        if (job["request"].get("provider") or "openf1") != "openf1":
+            raise Conflict(f"import {import_id} used a data provider this app no longer supports; start a new OpenF1 import instead")
         active = self.jobs.find_active(dedupe_key(job["request"]))
         if active is not None:
             return {**active, "duplicate": True}
@@ -289,14 +212,14 @@ class HistoricalService:
 
     def delete_session(self, sid: str) -> dict:
         if not self.repo.delete_session(sid):
-            raise self._not_found(sid)
+            raise NotFound(sid)
         return {"deleted": sid}
 
     # ------------------------------------------------------------- stored sessions
     def _manifest(self, sid: str) -> dict:
         m = self.repo.manifest(sid)
         if m is None:
-            raise self._not_found(sid)
+            raise NotFound(sid)
         return m
 
     def list_sessions(self) -> list[dict]:

@@ -2,15 +2,12 @@
 
 A session is written in ONE transaction: its rows, its per-frame column lists and finally ``status='complete'``.
 A failed or interrupted import therefore leaves nothing behind, and only complete sessions are listed or opened.
-
-The FastF1 download cache (FastF1's own HTTP cache, not application data) stays a directory: ``cache_dir``.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -42,7 +39,7 @@ def slug(text: str) -> str:
     return _SAFE.sub("-", str(text).lower()).strip("-") or "x"
 
 
-def session_id(year: int, event: str, session_type: str, provider: str = "fastf1") -> str:
+def session_id(year: int, event: str, session_type: str, provider: str = "openf1") -> str:
     """Deterministic, path-safe session id; the provider is part of it so two providers never overwrite each other."""
     return f"{slug(provider)}-{year}-{slug(event)}-{slug(session_type)}"
 
@@ -54,9 +51,8 @@ def _check(sid: str) -> str:
 
 
 class HistoricalRepository:
-    def __init__(self, engine: Engine, cache_dir: str | Path) -> None:
+    def __init__(self, engine: Engine) -> None:
         self.engine = engine
-        self.cache_dir = Path(cache_dir)
 
     # ----------------------------------------------------------------- writes
     def save_session(self, sid: str, manifest: dict, laps: pd.DataFrame, weather: pd.DataFrame,
@@ -72,7 +68,7 @@ class HistoricalRepository:
         with immediate_transaction(self.engine) as conn:
             conn.execute(delete(HistSession).where(HistSession.session_id == sid))  # cascades to frames and rows
             conn.execute(HistSession.__table__.insert().values(
-                session_id=sid, status="importing", provider=manifest.get("provider", "fastf1"), year=manifest.get("year"),
+                session_id=sid, status="importing", provider=manifest.get("provider", "openf1"), year=manifest.get("year"),
                 event=manifest.get("event"), session_type=manifest.get("session_type"), manifest_json=json.dumps(manifest, default=str)))
             for kind, driver, df in frames:
                 if df is None or df.empty:

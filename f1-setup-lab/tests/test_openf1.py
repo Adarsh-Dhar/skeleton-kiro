@@ -194,7 +194,7 @@ def test_laps_get_stint_compound_tyre_life_and_pit_flags():
 def _repo(tmp_path):
     e = create_db_engine(tmp_path / "trialforge.db")
     migrate(e)
-    return HistoricalRepository(e, tmp_path / "fastf1-cache")
+    return HistoricalRepository(e)
 
 
 def test_import_stores_provider_labelled_partial_session(tmp_path):
@@ -311,23 +311,23 @@ def _wait(c, jid, timeout=30):
 
 
 def test_event_listing_skips_testing_and_numbers_rounds(api):
-    ev = api.get("/api/historical/events", params={"year": 2025, "provider": "openf1"}).json()
+    ev = api.get("/api/historical/events", params={"year": 2025}).json()
     assert [e["event"] for e in ev] == ["Bahrain Grand Prix", "Abu Dhabi Grand Prix"]
     assert [e["round"] for e in ev] == [1, 2]
     assert [(s["type"], s["name"]) for s in ev[1]["sessions"]] == [("Q", "Qualifying"), ("R", "Race")]
-    sess = api.get("/api/historical/event-sessions", params={"year": 2025, "event": "Abu Dhabi", "provider": "openf1"}).json()
+    sess = api.get("/api/historical/event-sessions", params={"year": 2025, "event": "Abu Dhabi"}).json()
     assert [s["type"] for s in sess] == ["Q", "R"]
-    drv = api.get("/api/historical/drivers", params={"year": 2025, "event": "Abu Dhabi", "session": "R", "provider": "openf1"}).json()
+    drv = api.get("/api/historical/drivers", params={"year": 2025, "event": "Abu Dhabi", "session": "R"}).json()
     assert {d["code"] for d in drv} == {"HAM", "VER"}
 
 
 def test_api_flow_import_browse_and_dedupe(api):
-    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"})
+    r = api.post("/api/historical/import", json={**PAYLOAD})
     assert r.status_code == 202, r.text
     job = _wait(api, r.json()["import_id"])
     assert job["state"] == "COMPLETED", job
     assert job["session_id"] == SID and "OpenF1 cache" in job["detail"] and "warnings" in job["detail"]
-    dup = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"}).json()
+    dup = api.post("/api/historical/import", json={**PAYLOAD}).json()
     assert dup["duplicate"] is True and dup["import_id"] == job["import_id"]
     listing = api.get("/api/historical/sessions").json()
     assert [(s["session_id"], s["provider"]) for s in listing] == [(SID, "openf1")]
@@ -340,44 +340,43 @@ def test_api_flow_import_browse_and_dedupe(api):
     assert api.get(f"/api/historical/sessions/{SID}/position", params={"driver": "VER"}).json()["count"] == 0
 
 
-def test_fastf1_and_openf1_sessions_do_not_collide():
-    assert session_id(2025, "Abu Dhabi Grand Prix", "R") == "fastf1-2025-abu-dhabi-grand-prix-r"
-    assert session_id(2025, "Abu Dhabi Grand Prix", "R", "openf1") == SID
+def test_session_ids_carry_the_provider():
+    assert session_id(2025, "Abu Dhabi Grand Prix", "R") == SID == session_id(2025, "Abu Dhabi Grand Prix", "R", "openf1")
 
 
 def test_openf1_before_2023_is_rejected_by_the_api(api):
-    r = api.post("/api/historical/import", json={**PAYLOAD, "year": 2022, "provider": "openf1"})
+    r = api.post("/api/historical/import", json={**PAYLOAD, "year": 2022})
     assert r.status_code == 422 and "2023" in r.text
 
 
-def test_unknown_provider_is_rejected(api):
-    assert api.post("/api/historical/import", json={**PAYLOAD, "provider": "other"}).status_code == 422
-    assert api.get("/api/historical/events", params={"year": 2025, "provider": "other"}).status_code == 422
+def test_other_providers_and_seasons_before_openf1_are_rejected(api):
+    for provider in ("fastf1", "other"):
+        assert api.post("/api/historical/import", json={**PAYLOAD, "provider": provider}).status_code == 422
+    assert api.get("/api/historical/events", params={"year": 2022}).status_code == 422
 
 
 def test_upstream_failure_when_browsing_is_a_502_with_a_code(tmp_path):
     fake = FakeOpenF1()
     fake.fail_endpoint["meetings"] = (500, b"down")
     with TestClient(create_app(str(tmp_path / "t.db"), openf1_client_factory=lambda: fake_client(tmp_path / "c", fake, retries=0)[0])) as c:
-        r = c.get("/api/historical/events", params={"year": 2025, "provider": "openf1"})
+        r = c.get("/api/historical/events", params={"year": 2025})
         assert r.status_code == 502 and r.json()["code"] == NETWORK_ERROR
 
 
 def test_failed_job_carries_the_error_code(api):
     api.fake.drop_laps = True
-    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"})
+    r = api.post("/api/historical/import", json={**PAYLOAD})
     job = _wait(api, r.json()["import_id"])
     assert job["state"] == "FAILED" and job["error_code"] == NO_LAP_DATA
 
 
-def test_default_provider_is_fastf1_and_keys_are_unchanged():
+def test_the_request_defaults_to_openf1():
     from f1lab.integrations.historical.jobs import dedupe_key
     from f1lab.integrations.historical.schemas import HistoricalImportRequest
 
     req = HistoricalImportRequest(year=2024, event="Monza", session="Q")
-    assert req.provider == "fastf1"
-    assert dedupe_key(req.model_dump()) == "2024|monza|Q|*|111"
-    assert dedupe_key({**req.model_dump(), "provider": "openf1"}) == "openf1|2024|monza|Q|*|111|race1"
+    assert req.provider == "openf1"
+    assert dedupe_key(req.model_dump()) == "openf1|2024|monza|Q|*|111|race1"
 
 
 # ------------------------------------------------------------------------------------------- live (opt-in)
@@ -573,7 +572,7 @@ def test_a_session_that_just_finished_does_not_trust_old_cached_answers(tmp_path
 
 # --- API
 def test_dataset_endpoint_returns_rows_coverage_and_filters(api):
-    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"})
+    r = api.post("/api/historical/import", json={**PAYLOAD})
     assert _wait(api, r.json()["import_id"])["state"] == "COMPLETED"
     res = api.get(f"/api/historical/sessions/{SID}/datasets/session_result").json()
     assert res["count"] == 2 and res["available"] is True and res["coverage"]["status"] == "ok" and res["provider"] == "openf1"
@@ -591,7 +590,7 @@ def test_dataset_endpoint_returns_rows_coverage_and_filters(api):
 
 
 def test_intervals_are_thinned_per_driver_when_over_the_limit(api):
-    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"})
+    r = api.post("/api/historical/import", json={**PAYLOAD})
     _wait(api, r.json()["import_id"])
     full = api.get(f"/api/historical/sessions/{SID}/datasets/intervals", params={"limit": 0}).json()
     assert full["count"] == 5 and not full["thinned"]
@@ -600,7 +599,7 @@ def test_intervals_are_thinned_per_driver_when_over_the_limit(api):
 
 
 def test_cache_endpoints_report_and_clear(api):
-    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"})
+    r = api.post("/api/historical/import", json={**PAYLOAD})
     _wait(api, r.json()["import_id"])
     info = api.get("/api/historical/openf1/cache").json()
     assert info["files"] > 5 and info["bytes"] > 0 and info["ttl_days"] == pytest.approx(30)
@@ -610,9 +609,9 @@ def test_cache_endpoints_report_and_clear(api):
 
 
 def test_refresh_cache_request_is_never_deduplicated_against_a_finished_job(api):
-    first = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1"}).json()
+    first = api.post("/api/historical/import", json={**PAYLOAD}).json()
     _wait(api, first["import_id"])
-    again = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1", "refresh_cache": True}).json()
+    again = api.post("/api/historical/import", json={**PAYLOAD, "refresh_cache": True}).json()
     assert again["duplicate"] is False and again["import_id"] != first["import_id"]
     assert _wait(api, again["import_id"])["state"] == "COMPLETED"
 
@@ -620,10 +619,10 @@ def test_refresh_cache_request_is_never_deduplicated_against_a_finished_job(api)
 def test_race_data_flag_changes_the_dedupe_key():
     from f1lab.integrations.historical.jobs import dedupe_key
 
-    a = dedupe_key({"provider": "openf1", "year": 2025, "event": "x", "session": "R", "include_race_data": True})
-    b = dedupe_key({"provider": "openf1", "year": 2025, "event": "x", "session": "R", "include_race_data": False})
+    a = dedupe_key({"year": 2025, "event": "x", "session": "R", "include_race_data": True})
+    b = dedupe_key({"year": 2025, "event": "x", "session": "R", "include_race_data": False})
     assert a != b and a.endswith("|race1") and b.endswith("|race0")
-    assert dedupe_key({"year": 2025, "event": "x", "session": "R", "include_race_data": False}) == "2025|x|R|*|111"  # FastF1 unchanged
+    assert dedupe_key({"year": 2025, "event": "x", "session": "R", "include_race_data": False}) == b  # a missing provider means OpenF1
 
 
 # ------------------------------------------------------------------------------------------- choosing individual datasets
@@ -669,7 +668,7 @@ def test_the_request_model_validates_dataset_names_and_the_key_includes_them():
 
 
 def test_api_imports_a_chosen_driver_subset_and_reports_the_session_id(api):
-    r = api.post("/api/historical/import", json={**PAYLOAD, "provider": "openf1", "drivers": ["VER"], "race_datasets": ["session_result"]})
+    r = api.post("/api/historical/import", json={**PAYLOAD, "drivers": ["VER"], "race_datasets": ["session_result"]})
     job = _wait(api, r.json()["import_id"])
     assert job["state"] == "COMPLETED" and job["session_id"] == SID
     m = api.get(f"/api/historical/sessions/{SID}").json()

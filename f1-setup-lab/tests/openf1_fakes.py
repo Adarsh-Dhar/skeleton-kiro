@@ -1,4 +1,4 @@
-"""A fake OpenF1 server: ``fetch(url, timeout)`` answers like api.openf1.org for one synthetic race (session 99).
+"""A fake OpenF1 server: ``fetch(url, timeout)`` answers like api.openf1.org for one made-up race (session 99).
 
 HAM (#44) has car data and location. VER (#1) has car data but no location data (OpenF1 answers 404 "No results found").
 Nothing here contacts the network.

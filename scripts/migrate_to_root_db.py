@@ -5,23 +5,20 @@
     python scripts/migrate_to_root_db.py --delete-legacy    # ... and delete the legacy stores if verification passed
 
 Legacy stores (defaults; override with the options):
-  f1-setup-lab/data/f1lab.db              SDK experiment tables of F1 SETUP LAB
   wattwise-lab/data/wattwise.db           SDK experiment tables of WATTWISE LAB
-  f1-setup-lab/data/historical/sessions/  FastF1 sessions as Parquet (needs pyarrow to read)
-  f1-setup-lab/data/evidence/             stint evidence JSON + decoded telemetry .jsonl.gz
-  f1-setup-lab/data/sessions/*/raw.f1raw  raw UDP captures
   wattwise-lab/data/tariffs.json          tariff library
-The FastF1 download cache (f1-setup-lab/data/historical/fastf1-cache) is a library cache, not app data: with
---delete-legacy it is moved to data/fastf1-cache so nothing has to be downloaded again.
+
+F1 SETUP LAB has no legacy store to migrate: it keeps only OpenF1 historical sessions, which are imported straight into the
+root database.
+
 Browser localStorage cannot be read from here: WATTWISE uploads it once automatically the next time it is opened.
 
-Re-running is safe: experiments/sessions/evidence already in the root database are skipped. Exit code 0 only when
+Re-running is safe: experiments and tariffs already in the root database are skipped. Exit code 0 only when
 verification passed.
 """
 from __future__ import annotations
 
 import argparse
-import gzip
 import json
 import shutil
 import sqlite3
@@ -32,12 +29,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT), str(ROOT / "f1-setup-lab" / "backend"), str(ROOT / "wattwise-lab" / "backend")]
+sys.path[:0] = [str(ROOT), str(ROOT / "wattwise-lab" / "backend")]
 
 
 from db import create_db_engine, migrate, resolve_db_url  # noqa: E402
 from db.config import sqlite_file_path  # noqa: E402
-from db.models.common import APP_F1, APP_WATTWISE  # noqa: E402
+from db.models.common import APP_WATTWISE  # noqa: E402
 
 SDK_TABLES = ["experiments", "plans", "runs", "measurements", "processed_measurements", "analyses", "recommendations", "reports", "jobs", "state_log"]
 AUTO_PK = {"analyses": "seq", "recommendations": "seq", "reports": "seq", "jobs": "job_id", "state_log": "seq"}
@@ -149,114 +146,6 @@ def verify_sdk(prepared: Path, label: str, app: str, target: Path, rep: Report) 
         conn.close()
 
 
-# ------------------------------------------------------------------------------------------- F1 historical Parquet
-def _read_parquet(p: Path):
-    import pandas as pd
-
-    try:
-        return pd.read_parquet(p)
-    except ImportError as exc:  # pyarrow is no longer an app dependency
-        raise SystemExit("legacy Parquet sessions found: install pyarrow for the migration only (pip install pyarrow)") from exc
-
-
-def legacy_session_frames(d: Path):
-    import pandas as pd
-
-    manifest = json.loads((d / "manifest.json").read_text())
-    laps = _read_parquet(d / "laps.parquet") if (d / "laps.parquet").exists() else pd.DataFrame()
-    weather = _read_parquet(d / "weather.parquet") if (d / "weather.parquet").exists() else pd.DataFrame()
-    codes = {str(x.get("code", "")).upper(): str(x.get("code")) for x in manifest.get("drivers", [])}
-    tel = {codes.get(p.stem.upper(), p.stem.upper()): _read_parquet(p) for p in sorted((d / "telemetry").glob("*.parquet"))}
-    pos = {codes.get(p.stem.upper(), p.stem.upper()): _read_parquet(p) for p in sorted((d / "position").glob("*.parquet"))}
-    return manifest, laps, weather, tel, pos
-
-
-def migrate_historical(sessions_dir: Path, engine, rep: Report, verify_only: bool = False) -> None:
-    from f1lab.integrations.historical.repository import HistoricalRepository
-
-    repo = HistoricalRepository(engine, sessions_dir.parent / "fastf1-cache")
-    for d in sorted(p for p in sessions_dir.iterdir() if p.is_dir()):
-        if not (d / "manifest.json").exists():
-            rep.say(f"  skipped {d.name}: no manifest.json (an import that never completed)")
-            continue
-        manifest, laps, weather, tel, pos = legacy_session_frames(d)
-        sid = manifest.get("session_id") or d.name
-        if not verify_only:
-            if repo.exists(sid):
-                rep.say(f"  session {sid} already in the root database, skipped")
-            else:
-                repo.save_session(sid, manifest, laps, weather, tel, pos)
-                rep.count("historical sessions")
-                rep.say(f"  session {sid}: {len(laps)} laps, {sum(len(x) for x in tel.values())} telemetry samples")
-            continue
-        if not repo.exists(sid):
-            rep.bad(f"historical session {sid} missing from the root database")
-            continue
-        pairs = [("laps", laps, repo.laps(sid)), ("weather", weather, repo.weather(sid))]
-        pairs += [(f"telemetry/{k}", v, repo.telemetry(sid, k)) for k, v in tel.items()]
-        pairs += [(f"position/{k}", v, repo.position(sid, k)) for k, v in pos.items()]
-        for name, old, new in pairs:
-            if len(old) != len(new) or (len(old) and list(old.columns) != list(new.columns)):
-                rep.bad(f"session {sid} {name}: {len(old)} legacy rows / {len(new)} stored, columns {list(old.columns)} vs {list(new.columns)}")
-        rep.say(f"  ok session {sid}: {len(pairs)} frames")
-
-
-# ------------------------------------------------------------------------------------------- F1 evidence + raw UDP
-def migrate_evidence(evidence_dir: Path, engine, rep: Report, verify_only: bool = False) -> None:
-    from f1lab.integrations.game_udp.evidence import load_evidence, save_evidence, save_telemetry_series, telemetry_series_count
-
-    for p in sorted(evidence_dir.glob("*/*.json")):
-        if p.name.endswith(".telemetry.jsonl.gz"):
-            continue
-        exp, run = p.parent.name, p.stem
-        payload = json.loads(p.read_text())
-        series = p.with_suffix(".telemetry.jsonl.gz")
-        records = []
-        if series.exists():
-            with gzip.open(series, "rt", encoding="utf-8") as fh:
-                records = [json.loads(line) for line in fh if line.strip()]
-        if verify_only:
-            stored = load_evidence(engine, exp, run)
-            # telemetry_series pointed at the old .jsonl.gz file and now points at the table: compare everything else
-            same = stored is not None and {k: v for k, v in stored.items() if k != "telemetry_series"} == \
-                {k: v for k, v in json.loads(json.dumps(payload, default=str)).items() if k != "telemetry_series"}
-            if not same:
-                rep.bad(f"evidence {exp}/{run} differs in the root database")
-            if telemetry_series_count(engine, exp, run) != len(records):
-                rep.bad(f"evidence {exp}/{run}: {len(records)} telemetry samples, {telemetry_series_count(engine, exp, run)} stored")
-            continue
-        if load_evidence(engine, exp, run) is not None:
-            rep.say(f"  evidence {exp}/{run} already migrated, skipped")
-            continue
-        if records:
-            save_telemetry_series(engine, exp, run, records)
-            payload["telemetry_series"] = {"table": "f1_stint_telemetry", "samples": len(records), "migrated_from": series.name}
-        save_evidence(engine, exp, run, payload)
-        rep.count("stint evidence")
-    if verify_only:
-        rep.say(f"  ok evidence: {len(list(evidence_dir.glob('*/*.json')))} file(s) checked")
-
-
-def migrate_raw(sessions_dir: Path, engine, rep: Report, verify_only: bool = False) -> None:
-    from f1lab.integrations.game_udp.recorder import import_raw_file, read_raw, read_raw_file
-
-    for p in sorted(sessions_dir.glob("*/raw.f1raw")):
-        rid = p.parent.name
-        n_file = sum(1 for _ in read_raw_file(p))
-        n_db = sum(1 for _ in read_raw(engine, rid))
-        if verify_only:
-            if n_file != n_db:
-                rep.bad(f"raw recording {rid}: {n_file} packets in the file, {n_db} stored")
-            else:
-                rep.say(f"  ok raw recording {rid}: {n_file} packets")
-            continue
-        if n_db:
-            rep.say(f"  raw recording {rid} already migrated, skipped")
-            continue
-        import_raw_file(engine, p, rid, note="migrated from legacy .f1raw")
-        rep.count("raw UDP recordings")
-
-
 # ------------------------------------------------------------------------------------------- WATTWISE tariffs.json
 def migrate_tariffs(path: Path, engine, rep: Report, verify_only: bool = False) -> None:
     from wattwise.adapters.household_model import DEFAULT_TARIFFS
@@ -282,34 +171,11 @@ def migrate_tariffs(path: Path, engine, rep: Report, verify_only: bool = False) 
 # ------------------------------------------------------------------------------------------- main
 @dataclass
 class Legacy:
-    f1_db: Path
     ww_db: Path
-    f1_data: Path
     tariffs: Path
 
-    @property
-    def hist_sessions(self) -> Path:
-        return self.f1_data / "historical" / "sessions"
-
-    @property
-    def ff1_cache(self) -> Path:
-        return self.f1_data / "historical" / "fastf1-cache"
-
-    @property
-    def evidence(self) -> Path:
-        return self.f1_data / "evidence"
-
-    @property
-    def raw_sessions(self) -> Path:
-        return self.f1_data / "sessions"
-
     def stores(self) -> list[tuple[str, Path]]:
-        out = []
-        for name, p in (("F1 SDK database", self.f1_db), ("WATTWISE SDK database", self.ww_db), ("F1 historical Parquet", self.hist_sessions),
-                        ("F1 stint evidence", self.evidence), ("F1 raw UDP captures", self.raw_sessions), ("WATTWISE tariffs.json", self.tariffs)):
-            if p.exists():
-                out.append((name, p))
-        return out
+        return [(name, p) for name, p in (("WATTWISE SDK database", self.ww_db), ("WATTWISE tariffs.json", self.tariffs)) if p.exists()]
 
 
 def run_all(legacy: Legacy, target: Path, rep: Report, verify_only: bool) -> None:
@@ -319,13 +185,12 @@ def run_all(legacy: Legacy, target: Path, rep: Report, verify_only: bool) -> Non
 
     SQLiteExperimentRepository(f"sqlite:///{target}").engine.dispose()  # SDK tables exist in the root database
     with tempfile.TemporaryDirectory() as td:
-        for db_path, app in ((legacy.f1_db, APP_F1), (legacy.ww_db, APP_WATTWISE)):
+        for db_path, app in ((legacy.ww_db, APP_WATTWISE),):
             if db_path.exists():
                 rep.say(f"{'verify' if verify_only else 'migrate'} {db_path}")
                 prepared = prepared_copy(db_path, Path(td))
                 (verify_sdk if verify_only else migrate_sdk)(prepared, db_path.name, app, target, rep)
-    for p, fn in ((legacy.hist_sessions, migrate_historical), (legacy.evidence, migrate_evidence), (legacy.raw_sessions, migrate_raw),
-                  (legacy.tariffs, migrate_tariffs)):
+    for p, fn in ((legacy.tariffs, migrate_tariffs),):
         if p.exists():
             rep.say(f"{'verify' if verify_only else 'migrate'} {p}")
             fn(p, engine, rep, verify_only)
@@ -336,7 +201,7 @@ def backup(legacy: Legacy, target: Path, backup_root: Path, rep: Report) -> Path
     dest = backup_root / datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     dest.mkdir(parents=True, exist_ok=False)
     for name, p in legacy.stores():
-        to = dest / name.lower().replace(" ", "-").replace(".", "-") / p.name  # one folder per store (two are called 'sessions')
+        to = dest / name.lower().replace(" ", "-").replace(".", "-") / p.name  # one folder per store
         to.parent.mkdir(parents=True, exist_ok=True)
         if p.suffix == ".db":
             src, dst = sqlite3.connect(p), sqlite3.connect(to)
@@ -366,25 +231,12 @@ def delete_legacy(legacy: Legacy, target: Path, rep: Report) -> None:
         else:
             p.unlink()
         rep.say(f"deleted {name}: {p}")
-    if legacy.ff1_cache.exists():  # a download cache, not app data: keep it where the app now looks for it
-        new_cache = target.parent / "fastf1-cache"
-        if new_cache.exists():
-            shutil.rmtree(legacy.ff1_cache)
-            rep.say(f"removed the old FastF1 cache {legacy.ff1_cache} ({new_cache} already exists)")
-        else:
-            shutil.move(str(legacy.ff1_cache), str(new_cache))
-            rep.say(f"moved the FastF1 download cache to {new_cache}")
-    hist = legacy.f1_data / "historical"
-    if hist.exists() and not any(hist.iterdir()):
-        hist.rmdir()
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--target", default=None, help="root database (default: TRIALFORGE_DB or <repo>/data/trialforge.db)")
-    ap.add_argument("--f1-db", default=str(ROOT / "f1-setup-lab" / "data" / "f1lab.db"))
     ap.add_argument("--ww-db", default=str(ROOT / "wattwise-lab" / "data" / "wattwise.db"))
-    ap.add_argument("--f1-data", default=str(ROOT / "f1-setup-lab" / "data"), help="F1 data dir holding historical/, evidence/, sessions/")
     ap.add_argument("--tariffs", default=str(ROOT / "wattwise-lab" / "data" / "tariffs.json"))
     ap.add_argument("--backup-dir", default=None, help="default: <target dir>/backups")
     ap.add_argument("--dry-run", action="store_true", help="rehearse on a temporary copy of the root database; change nothing")
@@ -395,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
     target = sqlite_file_path(resolve_db_url(a.target))
     if target is None:
         ap.error("the root database must be a SQLite file")
-    legacy = Legacy(Path(a.f1_db), Path(a.ww_db), Path(a.f1_data), Path(a.tariffs))
+    legacy = Legacy(Path(a.ww_db), Path(a.tariffs))
     rep = Report()
     stores = legacy.stores()
     rep.say(f"root database: {target}")

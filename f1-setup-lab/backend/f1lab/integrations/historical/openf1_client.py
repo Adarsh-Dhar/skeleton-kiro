@@ -85,7 +85,7 @@ def _ssl_context() -> ssl.SSLContext:
         import certifi
 
         return ssl.create_default_context(cafile=certifi.where())
-    except ImportError:  # pragma: no cover - certifi comes with requests (a FastF1 dependency)
+    except ImportError:  # pragma: no cover - certifi is a declared dependency
         return ssl.create_default_context()
 
 

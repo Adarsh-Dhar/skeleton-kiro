@@ -3,14 +3,14 @@
 #
 # It builds its own virtual environment (default .run/release-venv, recreated on every run), builds the TRIALFORGE wheel from
 # skeleton/packages/trialforge-core, installs that wheel (with its test extras), the root database package and both
-# applications with their test dependencies, then runs every check. Each check is reported as PASSED, FAILED, SKIPPED
-# (deliberately not run: opt-in network tests, real-game and real-household gates) or UNAVAILABLE (a tool is missing).
+# applications with their test dependencies, then runs every check. WATTWISE LAB uses the SDK; F1 SETUP LAB (historical data
+# from OpenF1) does not. Each check is reported as PASSED, FAILED, SKIPPED (deliberately not run: opt-in network tests and the
+# real-household gate) or UNAVAILABLE (a tool is missing).
 # Exit 1 if anything FAILED. Skipped and unavailable checks are never passes.
 #
 # Usage:  scripts/check-release.sh [--reuse]      --reuse keeps an existing release venv (faster, not a clean run)
 # Env:    PYTHON_BIN (interpreter >= 3.11 used to create the venv), RELEASE_VENV (venv path)
-# Opt-in: RUN_NETWORK_TESTS=1 (real FastF1 download, FASTF1_TIMEOUT seconds, default 600; needs F1_USERNAME/F1_PASSWORD of an
-#         F1TV Access/Pro/Premium account; plus real OpenF1 imports of five sessions (2023-2026, no account; several minutes)), RUN_START_SMOKE=1 (start both apps with
+# Opt-in: RUN_NETWORK_TESTS=1 (real OpenF1 imports of five sessions, 2023-2026, no account; several minutes), RUN_START_SMOKE=1 (start both apps with
 #         scripts/start-*.sh on F1_PORT/WATTWISE_PORT, default 8001/8002, against a throw-away database; occupied ports are
 #         reported UNAVAILABLE and never touched; STARTUP_TIMEOUT seconds per app, default 900), INSTALL_CHROMIUM=1 (download Playwright's Chromium if missing; otherwise browser tests are UNAVAILABLE)
 # Needs network access to PyPI to install dependencies.
@@ -48,7 +48,7 @@ pytest_run() {  # pytest_run NAME DIR ARGS...
     local name="$1" dir="$2"; shift 2
     local f="$LOG/$(echo "$name" | tr -c 'a-zA-Z0-9' '_').log"
     printf '%-58s ' "$name"
-    # the real FastF1 download and the full start smoke run once, as their own checks below, not again inside pytest
+    # the real OpenF1 imports and the full start smoke run once, as their own checks below, not again inside pytest
     (cd "$dir" && env -u RUN_NETWORK_TESTS -u RUN_START_SMOKE "$PY" -m pytest -q -p no:cacheprovider -rs "$@" </dev/null) >"$f" 2>&1
     local rc=$?
     local summary; summary="$(grep -E '^[0-9]+ (passed|failed)|passed|failed' "$f" | tail -1)"
@@ -94,7 +94,7 @@ smoke_stop() {  # smoke_stop NAME  -- stop one app this check started
 }
 smoke_cleanup() { smoke_stop f1; smoke_stop wattwise; }
 
-health_ok() {  # health_ok PORT APP TIMEOUT  -- poll /api/health until HTTP 200 with the expected app and SDK version
+health_ok() {  # health_ok PORT APP TIMEOUT  -- poll /api/health until HTTP 200 with the expected app (and SDK version, for WATTWISE)
     "$PY" - "$1" "$2" "$3" "$SDK_VERSION" <<'EOF'
 import json, sys, time, urllib.request
 port, app, timeout, sdk = int(sys.argv[1]), sys.argv[2], float(sys.argv[3]), sys.argv[4]
@@ -107,11 +107,12 @@ while time.time() < end:
                 last = f"HTTP {r.status}"
             elif body.get("app") != app:
                 sys.exit(f"port {port} answers as {body.get('app')!r}, not {app!r}")
-            elif body.get("trialforge") != sdk:
+            elif app == "wattwise-lab" and body.get("trialforge") != sdk:
                 sys.exit(f"{app} runs trialforge {body.get('trialforge')}, expected {sdk}")
             else:
-                print(f"HTTP 200, {app}, trialforge {sdk}")
-                print(f"trialforge loaded from {body.get('trialforge_path')}", file=sys.stderr)
+                print(f"HTTP 200, {app}" + (f", trialforge {sdk}" if app == "wattwise-lab" else ", historical data from OpenF1"))
+                if body.get("trialforge_path"):
+                    print(f"trialforge loaded from {body.get('trialforge_path')}", file=sys.stderr)
                 sys.exit(0)
     except OSError as exc:
         last = str(exc)
@@ -200,7 +201,7 @@ rm -f "$WHEEL"   # always rebuilt from the current source
 run "build SDK wheel trialforge-core $SDK_VERSION" "$PY" -m build --wheel --outdir "$DIST_DIR" skeleton/packages/trialforge-core
 run "install SDK wheel with test extras" "$PY" -m pip install -q --force-reinstall "$WHEEL[test,verify]"
 run "install root database package (trialforge-db)" "$PY" -m pip install -q -e .
-run "install F1 SETUP LAB + test dependencies" "$PY" -m pip install -q -e "./f1-setup-lab[test,migrate]"
+run "install F1 SETUP LAB + test dependencies" "$PY" -m pip install -q -e "./f1-setup-lab[test]"
 run "install WATTWISE LAB + test dependencies" "$PY" -m pip install -q -e "./wattwise-lab[test]"
 if [[ ${#FAILED[@]} -gt 0 ]]; then
     echo "The release environment could not be built (network access to PyPI?); no further checks were run."
@@ -214,7 +215,7 @@ run "build wattwise-lab wheel" "$PY" -m pip wheel --no-deps -q -w "$TMP/dist" ./
 
 # ---------------------------------------------------------------- imports and SDK version
 run "import both applications" "$PY" -c "import f1lab.api.app, wattwise.api.app, db"
-run "both apps use the installed SDK $SDK_VERSION from site-packages" "$PY" - "$SDK_VERSION" "$VENV" <<'EOF'
+run "WATTWISE uses the installed SDK $SDK_VERSION from site-packages; F1 does not use it" "$PY" - "$SDK_VERSION" "$VENV" <<'EOF'
 import sys, importlib.metadata as md, json
 from pathlib import Path
 import trialforge
@@ -229,9 +230,11 @@ for mod in (f1lab, wattwise):
 assert trialforge.__version__ == want, f"installed trialforge {trialforge.__version__} != repository SDK {want}"
 assert "site-packages" in Path(trialforge.__file__).as_posix(), f"trialforge imported from {trialforge.__file__}, not the installed package"
 from packaging.requirements import Requirement
-for app in ("f1-setup-lab", "wattwise-lab"):
-    reqs = [Requirement(r) for r in (md.requires(app) or []) if r.startswith("trialforge-core")]
-    assert reqs and reqs[0].specifier.contains(want), f"{app} does not accept trialforge-core {want}: {reqs}"
+reqs = [Requirement(r) for r in (md.requires("wattwise-lab") or []) if r.startswith("trialforge-core")]
+assert reqs and reqs[0].specifier.contains(want), f"wattwise-lab does not accept trialforge-core {want}: {reqs}"
+assert not [r for r in (md.requires("f1-setup-lab") or []) if r.startswith(("trialforge-core", "fastf1"))], "f1-setup-lab still depends on the SDK or FastF1"
+import f1lab.api.app as f1app
+assert "trialforge" not in f1app.__dict__ and not any(m == "fastf1" or m.startswith("fastf1.") for m in sys.modules), "F1 imports the SDK or FastF1"
 print("ok", want)
 EOF
 
@@ -253,7 +256,7 @@ run "startup scripts: bash syntax" bash -c 'bash -n scripts/start-f1.sh && bash 
 pytest_run "SDK tests (trialforge-core)" skeleton/packages/trialforge-core
 pytest_run "SDK workspace tests (skeleton/tests)" skeleton tests
 pytest_run "root tests (db, scoping, start scripts, migration)" . tests
-pytest_run "F1 SETUP LAB backend tests" f1-setup-lab --ignore=tests/test_ui_browser.py
+pytest_run "F1 SETUP LAB backend tests" f1-setup-lab --ignore=tests/test_ui_openf1.py
 pytest_run "WATTWISE LAB backend tests" wattwise-lab --ignore=tests/test_ui_browser.py
 chromium_ok() { "$PY" -c "from playwright.sync_api import sync_playwright as s
 with s() as p: p.chromium.launch().close()" >/dev/null 2>&1; }
@@ -261,19 +264,12 @@ if ! chromium_ok && [[ -n "${INSTALL_CHROMIUM:-}" ]]; then
     run "install Playwright Chromium" "$PY" -m playwright install chromium
 fi
 if chromium_ok; then
-    pytest_run "F1 SETUP LAB browser tests (Chromium)" f1-setup-lab tests/test_ui_browser.py tests/test_ui_openf1.py
+    pytest_run "F1 SETUP LAB browser tests (Chromium)" f1-setup-lab tests/test_ui_openf1.py
     pytest_run "WATTWISE LAB browser tests (Chromium)" wattwise-lab tests/test_ui_browser.py
 else
     unavailable "browser tests (both apps)" "Chromium for this Playwright version is not installed; rerun with INSTALL_CHROMIUM=1"
 fi
 if [[ -n "${RUN_NETWORK_TESTS:-}" ]]; then
-    printf '%-58s ' "real FastF1 import (smoke_fastf1_import.py)"
-    (cd f1-setup-lab && "$PY" scripts/smoke_fastf1_import.py --timeout "${FASTF1_TIMEOUT:-600}" --db "$TMP/smoke.db" </dev/null) >"$LOG/smoke.log" 2>&1
-    case $? in
-        0) PASSED+=("real FastF1 import"); echo "PASSED" ;;
-        3) SKIPPED+=("real FastF1 import: $(tail -1 "$LOG/smoke.log")"); echo "SKIPPED ($(tail -1 "$LOG/smoke.log"))" ;;
-        *) FAILED+=("real FastF1 import"); echo "FAILED  (log: $LOG/smoke.log)" ;;
-    esac
     printf '%-58s ' "real OpenF1 imports (5 sessions, 2023-2026)"
     (cd f1-setup-lab && RUN_NETWORK_TESTS=1 "$PY" -m pytest -q -p no:cacheprovider -rs tests/test_openf1.py -k live </dev/null) >"$LOG/openf1-live.log" 2>&1
     case $? in
@@ -281,7 +277,6 @@ if [[ -n "${RUN_NETWORK_TESTS:-}" ]]; then
         *) FAILED+=("real OpenF1 import"); echo "FAILED  (log: $LOG/openf1-live.log)" ;;
     esac
 else
-    skip "real FastF1 import (smoke_fastf1_import.py)" "opt-in: RUN_NETWORK_TESTS=1; needs an F1TV Access/Pro/Premium login in F1_USERNAME/F1_PASSWORD"
     skip "real OpenF1 imports (5 sessions, 2023-2026)" "opt-in: RUN_NETWORK_TESTS=1"
 fi
 if [[ -n "${RUN_START_SMOKE:-}" ]]; then
@@ -289,7 +284,6 @@ if [[ -n "${RUN_START_SMOKE:-}" ]]; then
 else
     skip "startup smoke: both apps via start scripts on 8001/8002" "opt-in: RUN_START_SMOKE=1"
 fi
-skip "real EA SPORTS F1 25 UDP session and setup-mapping probe" "manual gate: needs the game (scripts/probe_setup.py --guided)"
 skip "real household meter export, tariff and bill reconciliation" "manual gate: needs your data"
 
 summary_and_exit

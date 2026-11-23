@@ -62,64 +62,48 @@ def ready(page, hash_):
 
 
 # ------------------------------------------------------------------------------------------------ New experiment
-def test_opening_the_app_lands_on_real_historical_data_not_the_synthetic_dashboard(page):
+def test_the_app_opens_on_historical_f1_and_has_nothing_else(page):
     page.goto(page.base + "/")
     page.wait_for_selector("#hprov")
-    assert page.url.endswith("#/new") and page.locator(".modecard[data-mode=hist].on").count() == 1
-    banner = page.inner_text("#banner").upper()
-    assert "HISTORICAL" in banner and "SYNTHETIC DATA" not in banner
-    page.click("nav >> text=Experiments")  # the synthetic experiments are one click away
-    page.wait_for_selector("text=No experiments yet")
-    assert "SYNTHETIC" in page.inner_text("#banner").upper()
+    assert page.url.endswith("#/hist")
+    assert "HISTORICAL F1 DATA" in page.inner_text("#banner").upper() and "SYNTHETIC" not in page.inner_text("body").upper()
+    assert [a.inner_text().lower() for a in page.locator("#nav a").all()] == ["historical f1", "imported sessions"]  # upper-cased by CSS
+    body = page.inner_text("body").lower()
+    for gone in ("experiment", "simulator", "ea sports", "f1 25", "fastf1", "udp"):
+        assert gone not in body, gone
+    for old in ("#/new", "#/new/synthetic", "#/new/live", "#/dashboard", "#/live", "#/telemetry", "#/e/x/design"):
+        page.goto(page.base + "/about:blank")
+        page.goto(page.base + "/" + old)
+        page.wait_for_selector("#view .empty")
+        assert "page not found" in page.inner_text("#view").lower(), old
+    page.click("#view a:has-text('Import a session')")
+    page.wait_for_selector("#hprov")
     page.click("a.brand")
     page.wait_for_selector("#hprov")
     # the app's own files are not served from a stale browser cache
     assert page.evaluate("fetch('/app.js').then(r => r.headers.get('cache-control'))") == "no-cache"
+    assert page.evaluate("fetch('/api/experiments').then(r => r.status)") == 404
+    assert page.errors == []
 
 
 def test_a_tab_opened_before_an_update_reloads_itself_on_the_next_click(page):
-    """Regression: switching pages only changes the #hash, so a tab opened before an update kept the old JavaScript (where
-    New experiment still opened the historical screen) until the user reloaded by hand."""
+    """Switching pages only changes the #hash, so a tab opened before an update would keep the old JavaScript until reloaded
+    by hand. The tab compares the server's frontend fingerprint on every page change and reloads when it differs."""
     builds = iter(["old-build", "new-build"])
     page.route("**/api/frontend-build", lambda r: r.fulfill(status=200, content_type="application/json",
                                                              body=json.dumps({"build": next(builds, "new-build"), "files": 6})))
-    page.goto(page.base + "/#/dashboard")
-    page.wait_for_selector("text=No experiments yet")
+    page.goto(page.base + "/#/sessions")
+    page.wait_for_selector("text=No sessions imported yet")
     page.evaluate("window.__marker = 'tab-before-update'")
-    page.click("#nav a[data-nav=new]")  # the fingerprint differs now: the tab reloads instead of running old code
-    page.wait_for_selector("#f")
+    page.click("#nav a[data-nav=hist]")  # the fingerprint differs now: the tab reloads instead of running old code
+    page.wait_for_selector("#hprov")
     assert page.evaluate("window.__marker === undefined")  # a real reload happened
-    assert page.url.endswith("#/new/synthetic")
+    assert page.url.endswith("#/hist")
     page.unroute("**/api/frontend-build")
 
 
-def test_new_experiment_links_open_the_experiment_form_and_the_logo_opens_real_data(page):
-    page.goto(page.base + "/#/dashboard")
-    page.click("text=Configure my own")  # empty dashboard
-    page.wait_for_selector("#f")
-    page.goto(page.base + "/#/dashboard")
-    page.click("#nav a[data-nav=new]")
-    page.wait_for_selector("#f")
-    assert page.url.endswith("#/new/synthetic") and "generate design" in page.inner_text("#f").lower()
-    page.click(".modecard[data-mode=hist]")  # the other sources are one click away from the form
-    page.wait_for_selector("#hprov")
-
-
-def test_real_historical_data_is_the_default_new_experiment_source(page):
-    page.goto(page.base + "/#/new")
-    page.wait_for_selector("#hprov")
-    cards = page.locator(".modecard")
-    assert cards.count() == 3
-    assert [c.get_attribute("data-mode") for c in cards.all()] == ["hist", "synthetic", "live"]
-    assert "on" in page.get_attribute(".modecard[data-mode=hist]", "class").split() and "Recommended" in page.inner_text(".modecard[data-mode=hist]")
-    assert "Requires game" in page.inner_text(".modecard[data-mode=live]") and "Simulated data" in page.inner_text(".modecard[data-mode=synthetic]")
-    assert page.input_value("#hprov") == "openf1" and "free" in page.inner_text("#hprov").lower()
-    assert "HISTORICAL" in page.inner_text("#banner").upper() and page.locator("#f").count() == 0  # not the synthetic experiment form
-    assert "no car setup" in page.inner_text("#view").lower()
-
-
-def test_new_experiment_import_one_driver_and_open_the_analysis(page):
-    ready(page, "#/new")
+def test_import_one_driver_and_open_the_analysis(page):
+    ready(page, "#/hist")
     # seasons run from the provider's first year to the current one; the newest season without data steps back to the latest with data
     years = page.eval_on_selector_all("#hyear option", "os => os.map(o => +o.value)")
     assert years == sorted(years, reverse=True) and years[-1] == 2023
@@ -158,16 +142,13 @@ def test_new_experiment_import_one_driver_and_open_the_analysis(page):
     assert m["provider"] == "openf1" and m["session_id"] == SID and m["upstream"]["session_key"] == 99 and m["upstream"]["meeting_key"] == 1001
     assert [(d["code"], d["number"], d["name"], d["team"]) for d in m["drivers"]] == [("VER", "1", "Max VERSTAPPEN", "Red Bull Racing")]
     assert "team_radio" not in m["coverage"]["endpoints"] and m["requested_datasets"] and "session_result" in m["requested_datasets"]
-    # no experiment was created by importing historical data
-    exps = page.evaluate("fetch('/api/experiments').then(r => r.json())")
-    assert len(exps if isinstance(exps, list) else exps.get("items", [])) == 0
     assert page.errors == []
 
 
 def test_a_finished_import_does_not_pull_the_user_away_from_another_page(page):
-    """Regression: an import started on New experiment kept polling after the user left, and when it completed it switched
-    the page to the imported session, so clicking New experiment ended up on #/hist/<session>/overview."""
-    ready(page, "#/new")
+    """Regression: an import kept polling after the user left its page, and when it completed it switched the page to the
+    imported session, pulling the user away from wherever they had gone."""
+    ready(page, "#/hist")
     page.wait_for_selector(".hdrv")
     page.select_option("#hsession", "Q")
     page.wait_for_selector(".hdrv")
@@ -175,15 +156,15 @@ def test_a_finished_import_does_not_pull_the_user_away_from_another_page(page):
     try:
         page.click("#himport")
         page.wait_for_function("document.querySelector('#hprog')?.textContent.match(/DOWNLOADING|PROCESSING|QUEUED/)", timeout=15000)
-        page.click("#nav a[data-nav=new]")  # leave while the import is still running
-        page.wait_for_selector("#f")
+        page.click("#nav a[data-nav=sessions]")  # leave while the import is still running
+        page.wait_for_selector("text=Imported sessions")
         jid = page.evaluate("fetch('/api/historical/imports?limit=1').then(r => r.json())")[0]["import_id"]
         end = time.time() + 60
         while page.evaluate(f"fetch('/api/historical/imports/{jid}').then(r => r.json())")["state"] != "COMPLETED":
             assert time.time() < end, "import did not complete"
             page.wait_for_timeout(250)
         page.wait_for_timeout(4000)  # longer than the poll interval plus the auto-open delay
-        assert page.url.endswith("#/new/synthetic") and page.locator("#f").count() == 1
+        assert page.url.endswith("#/sessions")
     finally:
         page.fake.delay_s = 0.0
         # leave the shared test server as it was: later tests import this session themselves
@@ -192,30 +173,26 @@ def test_a_finished_import_does_not_pull_the_user_away_from_another_page(page):
 
 
 def test_changing_a_selection_resets_the_dependent_controls(page):
-    ready(page, "#/new")
+    ready(page, "#/hist")
     page.wait_for_selector(".hdrv")
+    assert page.is_disabled("#hprov") and page.eval_on_selector_all("#hprov option", "os => os.map(o => o.value)") == ["openf1"]
     assert page.is_enabled("#dsgrid") and page.is_enabled("#dsgaps")
     page.select_option("#hsession", "Q")  # qualifying: race-only datasets switch off and the roster reloads
     page.wait_for_function("document.querySelector('#hdrivers').querySelectorAll('.hdrv').length === 2")
     assert page.is_disabled("#dsgrid") and page.is_disabled("#dsgaps") and page.is_enabled("#dsresult")
     assert "race and sprint sessions only" in page.inner_text("#hdshint")
-    page.fill("#hdrvsearch", "ham")
-    page.select_option("#hevent", index=0)  # a different Grand Prix: sessions are rebuilt from it and the driver selection restarts
-    page.wait_for_function("document.querySelectorAll('.hdrv:checked').length >= 0")
-    assert page.input_value("#hsession") in ("R", "Q", "")
-    # switching provider rebuilds the seasons and hides OpenF1-only options
-    page.route("**/api/historical/events?*provider=fastf1*", lambda r: r.fulfill(status=200, content_type="application/json", body="[]"))
-    page.select_option("#hprov", "fastf1")
+    page.select_option("#hevent", index=0)  # a different Grand Prix: its sessions are rebuilt and the roster reloads
+    page.wait_for_function("document.querySelector('#hdrivers').innerText.includes('No drivers') || document.querySelectorAll('.hdrv').length > 0")
+    # a season OpenF1 has not published returns no events and the import button stays off
+    page.route("**/api/historical/events?year=2023", lambda r: r.fulfill(status=200, content_type="application/json", body="[]"))
+    page.select_option("#hyear", "2023")
     page.wait_for_function("document.querySelector('#hevent').innerText.includes('No events')")
-    years = page.eval_on_selector_all("#hyear option", "os => os.map(o => +o.value)")
-    assert years[-1] == 2018 and page.is_hidden("#hfresh") and page.is_hidden("#dsresult") and page.is_disabled("#himport")
-    page.select_option("#hprov", "openf1")
-    assert page.eval_on_selector_all("#hyear option", "os => os.map(o => +o.value)")[-1] == 2023 and page.is_visible("#hfresh")
+    assert page.is_disabled("#himport")
     assert page.errors == []
 
 
 def test_import_failure_is_shown_with_its_code_and_can_be_retried(page):
-    ready(page, "#/new")
+    ready(page, "#/hist")
     page.wait_for_selector(".hdrv")
     page.select_option("#hsession", "Q")
     page.wait_for_selector(".hdrv")
@@ -225,27 +202,13 @@ def test_import_failure_is_shown_with_its_code_and_can_be_retried(page):
         page.wait_for_function("document.querySelector('#hprog')?.textContent.includes('FAILED')", timeout=30000)
         prog = page.inner_text("#hprog")
         assert "NO_LAP_DATA" in prog and "lap timing" in prog.lower() and page.locator("#hretry").count() == 1
-        assert page.url.endswith("#/new")  # a failed import does not navigate away
+        assert page.url.endswith("#/hist")  # a failed import does not navigate away
     finally:
         page.fake.drop_laps = False
 
 
-def test_the_other_two_sources_are_one_click_away_and_unchanged(page):
-    ready(page, "#/new")
-    page.click(".modecard[data-mode=synthetic]")
-    page.wait_for_selector("#f")
-    assert "generate design" in page.inner_text("#f").lower() and page.locator(".modecard.on").get_attribute("data-mode") == "synthetic"
-    page.click(".modecard[data-mode=live]")
-    page.wait_for_function("location.hash === '#/new/live'")
-    page.wait_for_selector(".modecard[data-mode=live].on")
-    assert "Live simulator" in page.inner_text("#view")
-    page.click(".modecard[data-mode=hist]")
-    page.wait_for_selector("#hprov")
-    assert page.errors == []
-
-
 # ------------------------------------------------------------------------------------------------ Historical F1 page
-def test_historical_page_still_imports_the_whole_field_and_shows_every_tab(page):
+def test_import_the_whole_field_and_every_analysis_tab(page):
     ready(page, "#/hist")
     assert page.input_value("#hprov") == "openf1" and page.input_value("#hyear") == "2025"
     page.select_option("#hevent", index=1)
@@ -255,9 +218,10 @@ def test_historical_page_still_imports_the_whole_field_and_shows_every_tab(page)
     page.click("#himport")
     page.wait_for_function("document.querySelector('#hprog')?.textContent.includes('COMPLETED')", timeout=30000)
     assert "OpenF1 cache" in page.inner_text("#hprog")
-    assert page.url.endswith("#/hist")  # this page does not navigate away
+    page.wait_for_url(f"**/#/hist/{SID}/overview", timeout=10000)  # the analysis opens when the import finishes
+    page.click("#nav a[data-nav=sessions]")
     page.wait_for_selector("#hist-lib a.btn")
-    assert "OPENF1" in page.inner_text("#hist-lib")
+    assert SID in page.inner_text("#hist-lib")
     page.click("#hist-lib a.btn")
     page.wait_for_selector(".chip.hist")
     assert page.inner_text(".chip.hist") == "HISTORICAL F1 · OPENF1"

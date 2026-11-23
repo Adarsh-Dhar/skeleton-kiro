@@ -1,5 +1,1 @@
-"""Historical Formula 1 data (FastF1 provider).
-
-This package is deliberately separate from ``game_udp`` and the synthetic simulator: historical sessions are a
-benchmarking/analysis workspace and are never fed into the TRIALFORGE setup-optimisation dataset.
-"""
+"""Historical Formula 1 data from OpenF1: HTTP client, normalizer, importer, database repository, import jobs and the service."""

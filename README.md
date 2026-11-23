@@ -5,23 +5,22 @@ describe factors, objectives and constraints; it generates a design (full/fracti
 runs it through an adapter, ingests and cleans measurements, analyses effects (ANOVA, interactions, confidence intervals), proposes better
 settings (Bayesian optimisation), persists everything and writes reports.
 
-Two independent applications prove the SDK is reusable across unrelated domains. Neither contains experiment machinery of its own, and the SDK
-contains no F1 or electricity knowledge (enforced by tests):
+The workspace holds two independent applications that share one database. The SDK contains no F1 or electricity knowledge (enforced by tests):
 
-| App | Port | Domain | What it adds on top of the SDK |
+| App | Port | Domain | What it does |
 |---|---|---|---|
-| [**F1 SETUP LAB**](f1-setup-lab/README.md) | 8001 | Racing-car setup | Vehicle model + simulator adapter, EA SPORTS F1 25 UDP receiver (live stints), FastF1 and OpenF1 historical sessions, F1 screens |
-| [**WATTWISE LAB**](wattwise-lab/README.md) | 8002 | Household electricity | Household/EV model + simulator adapter, tariffs, smart-meter import and baseline, electricity screens |
+| [**F1 SETUP LAB**](f1-setup-lab/README.md) | 8001 | Formula 1 | Imports real historical Formula 1 sessions from [OpenF1](https://openf1.org) (free, 2023 onwards) and analyses them: laps, telemetry, track map, running order, results, gaps, pit stops, race control, team radio, weather. It does not use the SDK. |
+| [**WATTWISE LAB**](wattwise-lab/README.md) | 8002 | Household electricity | Household/EV model + simulator adapter, tariffs, smart-meter import and baseline, electricity screens, built on the SDK |
 
-How each uses the SDK: both build an `ExperimentSpec`, register an app-owned adapter in an `AdapterRegistry`, and call `ExperimentService`
-(design, execute through `LocalBackgroundRunner`, `ingest_measurements`, `analyse`, `optimise`, `report`). Both import only the SDK's public
+How WATTWISE uses the SDK: it builds an `ExperimentSpec`, registers an app-owned adapter in an `AdapterRegistry`, and calls `ExperimentService`
+(design, execute through `LocalBackgroundRunner`, `ingest_measurements`, `analyse`, `optimise`, `report`). It imports only the SDK's public
 top-level API, from the installed wheel, never from the source tree. The SDK is frozen: nothing in this release changes it.
 
 ## Install and run
 
-Requires Python 3.11 or newer (`PYTHON_BIN` selects the interpreter). Each start script builds the SDK wheel if it is missing, creates or reuses
-the app's virtual environment, installs the SDK wheel, the root database package and the app, checks the installed `trialforge-core` version,
-refuses an occupied port with a clear message, migrates the root database and starts the server:
+Requires Python 3.11 or newer (`PYTHON_BIN` selects the interpreter). Each start script creates or reuses the app's virtual environment,
+installs the root database package and the app (WATTWISE also gets the SDK wheel, built if missing, and its version is checked), refuses an
+occupied port with a clear message, migrates the root database and starts the server:
 
 ```bash
 pnpm run start                 # BOTH apps at once (output prefixed [f1] / [wattwise]); Ctrl+C stops both
@@ -33,7 +32,7 @@ pnpm run start-wattwise        # WATTWISE LAB only,  http://127.0.0.1:8002     W
 
 `pnpm` (or `npm run <name>`) only runs the shell scripts listed in the root `package.json`; there is nothing to install. The same
 commands work without it: `scripts/start-all.sh [start|stop|status|check]`, `scripts/start-f1.sh`, `scripts/start-wattwise.sh` (each
-also accepts `stop`, `status` and `check`, a dry run of interpreter, wheel, venv, port and database).
+also accepts `stop`, `status` and `check`, a dry run of interpreter, wheel (WATTWISE), venv, port and database).
 `pnpm run start` refuses to start if either port is taken and names the process holding it. If you are already running the apps, use
 other ports: `F1_PORT=18001 WATTWISE_PORT=18002 pnpm run start`.
 
@@ -47,15 +46,19 @@ migrations (`python -m db.migrate [--status]`), and the app-scoped view of the S
 
 | Tables | Owner | Contents |
 |---|---|---|
-| `experiments`, `runs`, `measurements`, … | SDK (created by the unmodified `SQLiteExperimentRepository`) | experiments of both apps |
-| `app_experiment_owner`, `app_schema_version` | `db` | which app owns each experiment (each app sees only its own); schema version |
-| `f1_*` | F1 SETUP LAB | historical sessions, import jobs, raw UDP packets, stint evidence and telemetry, probe reports, mapping confirmations |
+| `experiments`, `runs`, `measurements`, … | SDK (created by the unmodified `SQLiteExperimentRepository`) | WATTWISE experiments |
+| `app_experiment_owner`, `app_schema_version` | `db` | which app owns each experiment (an app sees only its own); schema version |
+| `f1_*` | F1 SETUP LAB | OpenF1 historical sessions (laps, telemetry, track location, weather, race datasets) and import jobs |
 | `ww_*` | WATTWISE LAB | household settings, tariff library, historical meter imports and readings |
 
 There are no other stores: no per-app databases, Parquet files, JSON tariff file, evidence files or browser storage. Two things outside the
-database are not application data: the FastF1 and OpenF1 download caches (`data/fastf1-cache/`, `data/openf1-cache/`) and the bundled demo CSVs.
+database are not application data: the OpenF1 answer cache (`data/openf1-cache/`) and WATTWISE's bundled demo CSVs.
 
-**Upgrading from an earlier version** (with `f1lab.db`, `wattwise.db`, Parquet sessions, evidence files, `.f1raw` captures, `tariffs.json`):
+**F1 SETUP LAB 2.0 keeps only OpenF1 data.** Migration 8 (run automatically on start) removes the F1 setup experiments, their game and
+simulator tables, and any FastF1 sessions or import jobs from an existing database; OpenF1 sessions and every WATTWISE row are kept. Back up
+`data/trialforge.db` first if you want to keep the old F1 experiments.
+
+**Upgrading WATTWISE from an earlier version** (with `wattwise.db`, `tariffs.json`):
 
 ```bash
 python scripts/migrate_to_root_db.py --dry-run         # rehearse on a copy, change nothing
@@ -69,15 +72,13 @@ Re-running is safe. Household settings in a browser are uploaded the next time W
 
 | Label | Where it comes from |
 |---|---|
-| F1 `SYNTHETIC` | an invented vehicle model |
-| F1 `SIM-RECORDED` | your own laps in EA SPORTS F1 25 (a video game), decoded from its UDP output |
-| F1 `HISTORICAL F1 · FASTF1` / `HISTORICAL F1 · OPENF1` | real Formula 1 timing/telemetry via the unofficial FastF1 library or the free OpenF1 API; analysis only, never an experiment result |
+| F1 `HISTORICAL F1 · OPENF1` | real Formula 1 timing and telemetry from the free, unofficial OpenF1 API; values estimated from it are listed per session |
 | WATTWISE `synthetic` | the built-in example household |
 | WATTWISE `historical_measured` | your imported meter readings (`…_priced` = priced with the tariff you entered) |
 | WATTWISE `projected` | model estimate for a schedule |
 | WATTWISE `measured_schedule` | readings after actually running a schedule at home |
 
-Savings are only real when measured. Setup-field mappings are only verified when you confirm them from the game screen.
+Savings are only real when measured.
 
 ## Release check
 
@@ -87,18 +88,18 @@ scripts/check-release.sh
 
 Works from a clean checkout (needs Python 3.11+ and access to PyPI). It creates its own environment, `.run/release-venv` (recreated on every
 run; `--reuse` keeps it), builds the TRIALFORGE wheel into `skeleton/dist/`, installs that wheel with its test extras, the root database
-package and both apps with their test dependencies, and checks that both apps use the SDK from that environment's `site-packages` (not the
-source tree). It then builds the other packages, lints, compiles every Python file, checks JavaScript and shell syntax, runs the SDK, root,
+package and both apps with their test dependencies, and checks that WATTWISE uses the SDK from that environment's `site-packages` (not the
+source tree) and that F1 SETUP LAB depends on neither the SDK nor FastF1. It then builds the other packages, lints, compiles every Python file, checks JavaScript and shell syntax, runs the SDK, root,
 F1 and WATTWISE test suites and the browser tests (when Playwright's Chromium is installed; `INSTALL_CHROMIUM=1` downloads it), and prints
-PASSED / FAILED / SKIPPED / UNAVAILABLE separately. Opt-in: `RUN_NETWORK_TESTS=1` (real FastF1 download, needs `F1_USERNAME` /
-`F1_PASSWORD` of an account with an active F1TV Access, Pro or Premium subscription; plus real OpenF1 imports of five sessions from 2023 to 2026, no account; takes several minutes), `RUN_START_SMOKE=1` (startup smoke, below). The real-game and real-household checks are always listed as SKIPPED manual
-gates. Skipped and unavailable checks are not passes.
+PASSED / FAILED / SKIPPED / UNAVAILABLE separately. Opt-in: `RUN_NETWORK_TESTS=1` (real OpenF1 imports of five sessions from 2023 to 2026,
+no account; takes several minutes), `RUN_START_SMOKE=1` (startup smoke, below). The real-household check is always listed as a SKIPPED manual
+gate. Skipped and unavailable checks are not passes.
 
 **Startup smoke (`RUN_START_SMOKE=1`).** Starts F1 SETUP LAB and WATTWISE LAB with the official `scripts/start-f1.sh` and
 `scripts/start-wattwise.sh` on `F1_PORT`/`WATTWISE_PORT` (default 8001/8002) against a throw-away database. It reports each step
 separately:
 
-* each app answers `/api/health` with HTTP 200, the right app name and the installed SDK version;
+* each app answers `/api/health` with HTTP 200 and the right app name (WATTWISE also with the installed SDK version);
 * the server pid owns the port;
 * both apps are healthy together;
 * the shared database is created and migrated;
@@ -130,11 +131,8 @@ multi-agent test results, including what can only be confirmed inside the Kiro I
 
 ## Manual acceptance gates
 
-These need you, your game, your data or your bill. The code prepares them but cannot complete them truthfully:
+These need you, your data or your bill. The code prepares them but cannot complete them truthfully:
 
-* **F1:** enable UDP output in EA SPORTS F1 25 and confirm packets arrive; probe all four setup factors at low and high values and record the
-  decision per game variant (`scripts/probe_setup.py --guided`, `scripts/verify_setup_mapping.py`); drive a baseline stint and the experiment
-  stints; with an F1TV Access/Pro/Premium subscription, set `F1_USERNAME`/`F1_PASSWORD` and import a real FastF1 session (`scripts/smoke_fastf1_import.py`).
 * **WATTWISE:** import a real smart-meter export (7–30 days, 15/30-minute intervals; supply a sample header if the format is not recognised);
   enter your real tariff and household/EV parameters; compare the computed cost of a billed period with the bill; run a recommended schedule at
   home and import those readings to the run before claiming a saving.
@@ -142,7 +140,7 @@ These need you, your game, your data or your bill. The code prepares them but ca
 ## Limitations
 
 SQLite only (one file, WAL; fine for one user and two app processes, not a shared server); no authentication (out of scope); single-process
-servers; the vehicle and household models are deliberately simple; historical F1 data depends on FastF1 and a paid F1TV subscription; tariff and meter
+servers; the household model is deliberately simple; historical F1 data depends on what OpenF1 publishes (2023 onwards); tariff and meter
 formats are generic until configured from your own bill and export; statistical limits are those of the SDK (`skeleton/docs/limitations.md`).
 
 ## Layout
@@ -151,8 +149,8 @@ formats are generic until configured from your own bill and export; statistical 
 db/                 root database package (models, migrations, engine, app scoping)
 data/trialforge.db  the database (created on first start; not committed)
 scripts/            start scripts, release check, legacy migration
-tests/              root tests (database, scoping, start scripts, migration)
+tests/              root tests (database, migrations, scoping, start scripts, legacy migration)
 skeleton/           the TRIALFORGE SDK (frozen) and its docs
-f1-setup-lab/       F1 SETUP LAB
+f1-setup-lab/       F1 SETUP LAB (historical F1 data from OpenF1)
 wattwise-lab/       WATTWISE LAB
 ```

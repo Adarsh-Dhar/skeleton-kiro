@@ -1,10 +1,9 @@
-/* Shared "choose a real Formula 1 session and import it" component. Used by New experiment (Historical F1 data) and by the
-   Historical F1 page. Everything is loaded from the API: seasons are the provider's range, Grand Prix / session / driver lists come from
+/* "Choose a real Formula 1 session and import it" component of the Historical F1 page. Everything is loaded from the API: seasons
+   run from OpenF1's first season to the current one, and the Grand Prix / session / driver lists come from
    /api/historical/events and /api/historical/drivers, never from constants. All dynamic text is escaped with Charts.esc(). */
 const HistPicker = (() => {
   const esc = Charts.esc;
-  const FIRST_YEAR = { openf1: 2023, fastf1: 2018 };
-  const LABEL = { openf1: 'OpenF1 (free, no account, 2023 onwards)', fastf1: 'FastF1 (needs an F1TV account, 2018 onwards)' };
+  const FIRST_YEAR = 2023;  // OpenF1 historical data starts with the 2023 season
   const RACE_ONLY = ['starting_grid', 'intervals,overtakes'];
   /* [element id, label, datasets it stands for (OpenF1 optional datasets), race/sprint only?] */
   const DATASET_CHOICES = [
@@ -20,7 +19,7 @@ const HistPicker = (() => {
     const api = opts.api, errorsBox = opts.errorsBox, toast = opts.toast;
     const year0 = new Date().getFullYear();
     root.innerHTML = `<div class="panel" id="hist-form"><h2>Choose a real session</h2><div id="hist-err"></div>
-      <div class="grid g2"><div class="field"><label for="hprov">Data provider</label><select id="hprov">${Object.entries(LABEL).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('')}</select></div>
+      <div class="grid g2"><div class="field"><label for="hprov">Data provider</label><select id="hprov" disabled><option value="openf1">OpenF1 (free, no account, 2023 onwards)</option></select></div>
         <div class="field"><label for="hyear">Season</label><select id="hyear"></select></div>
         <div class="field"><label for="hevent">Grand Prix</label><select id="hevent"><option>Loading&hellip;</option></select></div>
         <div class="field"><label for="hsession">Session</label><select id="hsession"><option>&mdash;</option></select></div></div>
@@ -31,23 +30,21 @@ const HistPicker = (() => {
         <div class="hint" id="hdrvsum"></div></div>
       <div class="field"><label>Data to import</label><div class="row" style="gap:14px;flex-wrap:wrap">
         ${cb('hlaps', 'Lap times (required)', '', true).replace('<input ', '<input disabled ')}${cb('htele', 'Car telemetry')}${cb('hpos', 'Track location (x/y)')}${cb('hwx', 'Weather')}</div>
-        <div class="row hopen" style="gap:14px;flex-wrap:wrap;margin-top:6px">${DATASET_CHOICES.map(([id, label, ds]) => cb(id, label, `data-ds="${ds}"`)).join('')}</div>
-        <div class="hint hopen" id="hdshint"></div></div>
-      <div class="field hopen">${cb('hfresh', 'download again, ignoring the OpenF1 cache', '', false)}</div>
+        <div class="row" style="gap:14px;flex-wrap:wrap;margin-top:6px">${DATASET_CHOICES.map(([id, label, ds]) => cb(id, label, `data-ds="${ds}"`)).join('')}</div>
+        <div class="hint" id="hdshint"></div></div>
+      <div class="field">${cb('hfresh', 'download again, ignoring the OpenF1 cache', '', false)}</div>
       <button class="btn primary" id="himport" type="button" disabled>Load selected F1 data</button><span class="dim" id="hmsg"></span><div id="hprog"></div></div>
-      <div class="note info">Imports real timing data into the historical library. No experiment runs are created, and this data never enters the setup design or optimiser: it contains no car setup. Results are cached locally; OpenF1 is throttled to 30 requests a minute, so a full field can take several minutes.</div>
+      <div class="note info">Imports real timing data into the local historical library. Results are cached locally; OpenF1 is throttled to 30 requests a minute, so a full field can take several minutes.</div>
       <p class="hint" id="hcache"></p>`;
 
     let events = [], drivers = [], evSeq = 0, drvSeq = 0, timer = null;
-    const provider = () => $('#hprov', root).value;
     const ev = () => events[+$('#hevent', root).value];
     const sess = () => (ev()?.sessions || []).find((s) => s.type === $('#hsession', root).value);
     const err = (e) => { $('#hist-err', root).innerHTML = e ? errorsBox(e) : ''; };
 
-    const syncProvider = () => {
-      root.querySelectorAll('.hopen').forEach((e) => { e.hidden = provider() !== 'openf1'; });
-      const first = FIRST_YEAR[provider()], y = $('#hyear', root);
-      y.innerHTML = Array.from({ length: year0 - first + 1 }, (_, i) => year0 - i).map((v) => `<option value="${v}">${v}</option>`).join('');
+    const fillYears = () => {
+      const y = $('#hyear', root);
+      y.innerHTML = Array.from({ length: year0 - FIRST_YEAR + 1 }, (_, i) => year0 - i).map((v) => `<option value="${v}">${v}</option>`).join('');
     };
     const syncChannels = () => {  // grid, gaps, and overtakes exist for race and sprint sessions only
       const s = sess(), raceLike = !s || ['R', 'S'].includes(s.type);
@@ -100,7 +97,7 @@ const HistPicker = (() => {
       if (!e || !s) return;
       $('#hdrivers', root).innerHTML = '<span class="dim">Loading drivers&hellip;</span>';
       try {
-        const ds = await api('GET', `/api/historical/drivers?year=${+$('#hyear', root).value}&event=${encodeURIComponent(e.event)}&session=${encodeURIComponent(s)}&provider=${provider()}`);
+        const ds = await api('GET', `/api/historical/drivers?year=${+$('#hyear', root).value}&event=${encodeURIComponent(e.event)}&session=${encodeURIComponent(s)}`);
         if (seq !== drvSeq) return;  // a newer selection superseded this answer
         drivers = ds; selected = new Set(ds.map((d) => d.code)); drawDrivers(); err(null);
       } catch (x) {
@@ -113,10 +110,10 @@ const HistPicker = (() => {
       events = []; fillEvents(); drivers = []; selected = new Set(); drawDrivers();
       $('#hevent', root).innerHTML = '<option>Loading&hellip;</option>';
       try {
-        const list = await api('GET', `/api/historical/events?year=${y}&provider=${provider()}`);
+        const list = await api('GET', `/api/historical/events?year=${y}`);
         if (seq !== evSeq) return;
         events = list.filter((e) => (e.sessions || []).length);
-        if (!events.length && stepBack < 2 && y - 1 >= FIRST_YEAR[provider()] && opts.autoLatest !== false && !root.dataset.userYear) {
+        if (!events.length && stepBack < 2 && y - 1 >= FIRST_YEAR && opts.autoLatest !== false && !root.dataset.userYear) {
           $('#hyear', root).value = String(y - 1);  // the newest season may not have a published event yet
           return loadEvents(stepBack + 1);
         }
@@ -124,7 +121,6 @@ const HistPicker = (() => {
       } catch (x) { if (seq === evSeq) { events = []; fillEvents(); err(x); } }
     };
 
-    root.querySelector('#hprov').addEventListener('change', () => { delete root.dataset.userYear; syncProvider(); loadEvents(); });
     root.querySelector('#hyear').addEventListener('change', () => { root.dataset.userYear = '1'; loadEvents(); });
     root.querySelector('#hevent').addEventListener('change', () => { fillSessions(); loadDrivers(); });
     root.querySelector('#hsession').addEventListener('change', () => { syncChannels(); loadDrivers(); });
@@ -134,18 +130,16 @@ const HistPicker = (() => {
 
     /* ------------------------------------------------------------- import + progress */
     const request = () => {
-      const e = ev(), open = provider() === 'openf1';
+      const e = ev();
       const codes = [...selected];
-      const body = { provider: provider(), year: +$('#hyear', root).value, event: e.event, session: $('#hsession', root).value,
+      const body = { provider: 'openf1', year: +$('#hyear', root).value, event: e.event, session: $('#hsession', root).value,
         drivers: codes.length === drivers.length ? [] : codes,  // empty list = the whole field
         include_telemetry: $('#htele', root).checked, include_position: $('#hpos', root).checked, include_weather: $('#hwx', root).checked };
-      if (open) {
-        const ds = [];
-        root.querySelectorAll('[data-ds] input').forEach((i) => { if (i.checked && !i.disabled) ds.push(...i.closest('[data-ds]').dataset.ds.split(',')); });
-        body.race_datasets = ds;
-        body.include_race_data = ds.some((n) => !['stints', 'pit', 'race_control'].includes(n));
-        body.refresh_cache = $('#hfresh', root).checked;
-      }
+      const ds = [];
+      root.querySelectorAll('[data-ds] input').forEach((i) => { if (i.checked && !i.disabled) ds.push(...i.closest('[data-ds]').dataset.ds.split(',')); });
+      body.race_datasets = ds;
+      body.include_race_data = ds.some((n) => !['stints', 'pit', 'race_control'].includes(n));
+      body.refresh_cache = $('#hfresh', root).checked;
       return body;
     };
     const coverageLines = (m) => Object.entries(m.coverage?.endpoints || {}).map(([k, v]) => `${esc(k)}: ${esc(String(v.status).replace('_', ' '))}${v.rows ? ` (${esc(v.rows)})` : ''}`).join(' &middot; ');
@@ -199,8 +193,7 @@ const HistPicker = (() => {
       } catch (_) { $('#hcache', root).textContent = ''; }
     };
 
-    $('#hprov', root).value = 'openf1';  // real data from OpenF1 is the default: free, no account
-    syncProvider();
+    fillYears();
     loadEvents();
     loadCache();
     return { track, stop: () => clearTimeout(timer) };

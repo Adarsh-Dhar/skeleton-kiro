@@ -1,4 +1,5 @@
-"""Task 2: both apps share one database file but only see their own experiments."""
+"""Both apps share one database file. WATTWISE LAB only sees its own experiments (F1 SETUP LAB keeps none: it stores OpenF1
+historical sessions), and neither app touches the other's data."""
 from __future__ import annotations
 
 import time
@@ -10,6 +11,7 @@ from sqlalchemy import text
 from wattwise.api.app import create_app as create_ww
 
 from db import create_db_engine, current_version, latest_version
+from db.scoped import ScopedExperimentRepository
 
 BODY = {"name": "scoping test", "simulator": {"latency_seconds": 0.0}}
 
@@ -24,68 +26,57 @@ def _wait(client, exp_id, timeout=60):
     raise AssertionError("did not finish")
 
 
-@pytest.fixture
-def both(tmp_path):
-    path = str(tmp_path / "trialforge.db")
-    with TestClient(create_f1(path)) as f1, TestClient(create_ww(path)) as ww:
-        yield f1, ww, path
-
-
-def test_each_app_lists_only_its_own_experiments(both):
-    f1, ww, path = both
-    assert f1.post("/api/experiments", json={**BODY, "experiment_id": "f1-a"}).status_code == 201
-    assert ww.post("/api/experiments", json={**BODY, "experiment_id": "ww-a"}).status_code == 201
-    assert [e["id"] for e in f1.get("/api/experiments").json()] == ["f1-a"]
-    assert [e["id"] for e in ww.get("/api/experiments").json()] == ["ww-a"]
-    with create_db_engine(path).connect() as c:
-        rows = dict(c.execute(text("SELECT experiment_id, app FROM app_experiment_owner")).all())
-    assert rows == {"f1-a": "f1-setup-lab", "ww-a": "wattwise-lab"}
-
-
-def test_cross_app_fetch_is_not_found(both):
-    f1, ww, _ = both
-    f1.post("/api/experiments", json={**BODY, "experiment_id": "f1-x"})
-    ww.post("/api/experiments", json={**BODY, "experiment_id": "ww-x"})
-    assert ww.get("/api/experiments/f1-x").status_code == 404
-    assert f1.get("/api/experiments/ww-x").status_code == 404
-    assert ww.post("/api/experiments/f1-x/execute").status_code == 404
-    assert f1.get("/api/experiments/f1-x").status_code == 200
-
-
-def test_same_id_in_other_app_is_a_conflict_and_never_overwrites(both):
-    f1, ww, _ = both
-    f1.post("/api/experiments", json={**BODY, "name": "f1 original", "experiment_id": "shared-id"})
-    r = ww.post("/api/experiments", json={**BODY, "experiment_id": "shared-id"})
-    assert r.status_code == 409
-    assert f1.get("/api/experiments/shared-id").json()["name"] == "f1 original"
-    assert ww.get("/api/experiments").json() == []
-
-
-def test_both_apps_run_experiments_on_one_file(both):
-    f1, ww, path = both
-    for client, eid in ((f1, "f1-run"), (ww, "ww-run")):
-        assert client.post("/api/experiments", json={**BODY, "experiment_id": eid}).status_code == 201
-        assert client.post(f"/api/experiments/{eid}/execute").status_code == 202
-    d1, d2 = _wait(f1, "f1-run"), _wait(ww, "ww-run")
-    assert d1["counts"]["completed"] > 0 and d2["counts"]["completed"] > 0
-
-
-def test_restart_recovers_only_own_experiments(tmp_path):
-    path = str(tmp_path / "trialforge.db")
-    with TestClient(create_f1(path)) as f1:
-        f1.post("/api/experiments", json={**BODY, "experiment_id": "f1-keep"})
+def _foreign_experiment(path, eid):
+    """An experiment owned by F1 SETUP LAB in the same file, as one stored before F1 kept only historical data would be."""
     with TestClient(create_ww(path)) as ww:
-        ww.post("/api/experiments", json={**BODY, "experiment_id": "ww-keep"})
-    with TestClient(create_f1(path)) as f1, TestClient(create_ww(path)) as ww:
-        assert [e["id"] for e in f1.get("/api/experiments").json()] == ["f1-keep"]
-        assert [e["id"] for e in ww.get("/api/experiments").json()] == ["ww-keep"]
+        assert ww.post("/api/experiments", json={**BODY, "experiment_id": eid}).status_code == 201
+    with create_db_engine(path).begin() as c:
+        c.execute(text("UPDATE app_experiment_owner SET app = 'f1-setup-lab' WHERE experiment_id = :e"), {"e": eid})
+
+
+@pytest.fixture
+def path(tmp_path):
+    return str(tmp_path / "trialforge.db")
+
+
+def test_wattwise_lists_and_opens_only_its_own_experiments(path):
+    _foreign_experiment(path, "other-x")
+    with TestClient(create_ww(path)) as ww:
+        assert ww.post("/api/experiments", json={**BODY, "experiment_id": "ww-a"}).status_code == 201
+        assert [e["id"] for e in ww.get("/api/experiments").json()] == ["ww-a"]
+        assert ww.get("/api/experiments/other-x").status_code == 404
+        assert ww.post("/api/experiments/other-x/execute").status_code == 404
+    with create_db_engine(path).connect() as c:
+        owners = dict(c.execute(text("SELECT experiment_id, app FROM app_experiment_owner")).all())
+    assert owners == {"other-x": "f1-setup-lab", "ww-a": "wattwise-lab"}
+
+
+def test_an_id_owned_by_another_app_is_a_conflict_and_is_never_overwritten(path):
+    _foreign_experiment(path, "shared-id")
+    with TestClient(create_ww(path)) as ww:
+        assert ww.post("/api/experiments", json={**BODY, "experiment_id": "shared-id"}).status_code == 409
+    assert ScopedExperimentRepository("f1-setup-lab", path).get_spec("shared-id").name == "scoping test"
+
+
+def test_both_apps_run_on_one_file_without_touching_each_other(path):
+    with TestClient(create_ww(path)) as ww, TestClient(create_f1(path)) as f1:
+        assert ww.post("/api/experiments", json={**BODY, "experiment_id": "ww-run"}).status_code == 201
+        assert ww.post("/api/experiments/ww-run/execute").status_code == 202
+        assert _wait(ww, "ww-run")["counts"]["completed"] > 0
+        assert f1.get("/api/historical/sessions").json() == []  # F1 keeps historical sessions, not experiments
+        assert f1.get("/api/experiments").status_code == 404
+    with TestClient(create_f1(path)), TestClient(create_ww(path)) as ww:  # restart: nothing lost, nothing claimed by F1
+        assert [e["id"] for e in ww.get("/api/experiments").json()] == ["ww-run"]
+    with create_db_engine(path).connect() as c:
+        assert c.execute(text("SELECT app, COUNT(*) FROM app_experiment_owner GROUP BY app")).all() == [("wattwise-lab", 1)]
 
 
 def test_app_startup_migrates_the_root_schema(tmp_path):
-    path = str(tmp_path / "trialforge.db")
-    with TestClient(create_ww(path)):
-        pass
-    assert current_version(create_db_engine(path)) == latest_version()
+    for create in (create_ww, create_f1):
+        path = str(tmp_path / f"{create.__module__.split('.')[0]}.db")
+        with TestClient(create(path)):
+            pass
+        assert current_version(create_db_engine(path)) == latest_version()
 
 
 def test_default_database_is_the_root_database(monkeypatch, tmp_path):

@@ -24,6 +24,13 @@ def free_port() -> int:
     return port
 
 
+@pytest.fixture(autouse=True)
+def isolated_pid_dir(tmp_path, monkeypatch):
+    """Record test runs in a temporary folder, so apps the developer has running on 8001/8002 neither break these tests nor
+    get stopped by them."""
+    monkeypatch.setenv("TRIALFORGE_PID_DIR", str(tmp_path / "pids"))
+
+
 def run(script: Path, *args: str, env: dict | None = None, timeout: int = 60) -> subprocess.CompletedProcess:
     e = {**os.environ, **(env or {})}
     return subprocess.run(["bash", str(script), *args], capture_output=True, text=True, env=e, timeout=timeout, cwd=ROOT)
@@ -37,11 +44,14 @@ def test_scripts_are_valid_bash_and_executable(name):
 
 
 @pytest.mark.parametrize("name", ["f1", "wattwise"])
-def test_check_reports_python_wheel_venv_port_and_root_db(name, tmp_path):
+def test_check_reports_python_sdk_venv_port_and_root_db(name, tmp_path):
     r = run(SCRIPTS[name], "check", env={PORT_VARS[name]: str(free_port()), "TRIALFORGE_DB": str(tmp_path / "t.db"), "TRIALFORGE_DIST_DIR": str(tmp_path / "dist")})
     assert r.returncode == 0, r.stderr
     assert "python:" in r.stdout and "venv:" in r.stdout
-    assert "missing (would be built)" in r.stdout  # no wheel in the empty dist dir
+    if name == "wattwise":
+        assert "missing (would be built)" in r.stdout  # no wheel in the empty dist dir
+    else:
+        assert "sdk:     not used by F1 SETUP LAB" in r.stdout and "wheel:" not in r.stdout
     assert f"db:      {tmp_path / 't.db'}" in r.stdout
 
 

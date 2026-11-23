@@ -14,5 +14,5 @@ f1-setup-lab/data/historical/
 .run/
 data/trialforge.db*
 data/backups/
-data/fastf1-cache/
+data/openf1-cache/
 .DS_Store

@@ -10,16 +10,14 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    LargeBinary,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, utcnow
 
-# ---------------------------------------------------------------------------- historical (FastF1)
+# ---------------------------------------------------------------------------- historical (OpenF1)
 # Canonical columns written by f1lab.integrations.historical.normalizer. Columns a frame does not have are stored
 # as NULL and the per-frame column list in f1_hist_frame records which columns really existed, so missing
 # channels come back missing (never as fabricated zeros/NULL columns).
@@ -48,7 +46,7 @@ class HistSession(Base):
     __tablename__ = "f1_hist_session"
     session_id: Mapped[str] = mapped_column(String(200), primary_key=True)
     status: Mapped[str] = mapped_column(String(20), index=True)
-    provider: Mapped[str] = mapped_column(String(40), default="fastf1")
+    provider: Mapped[str] = mapped_column(String(40), default="openf1")
     year: Mapped[int | None] = mapped_column(Integer, nullable=True)
     event: Mapped[str | None] = mapped_column(String(200), nullable=True)
     session_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
@@ -103,7 +101,7 @@ HistPosition = _frame_table("f1_hist_position", POSITION_COLUMNS, per_driver=Tru
 
 
 class ImportJob(Base):
-    """Durable FastF1 import job (replaces the in-memory job dict). States: QUEUED DOWNLOADING PROCESSING SAVING
+    """Durable OpenF1 import job. States: QUEUED DOWNLOADING PROCESSING SAVING
     COMPLETED FAILED CANCELLED. ``dedupe_key`` identifies the requested session + options."""
 
     __tablename__ = "f1_import_job"
@@ -121,78 +119,3 @@ class ImportJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-
-# ---------------------------------------------------------------------------- game UDP
-class UdpRecording(Base):
-    """One raw UDP capture session (replaces data/sessions/<sid>/raw.f1raw)."""
-
-    __tablename__ = "f1_udp_recording"
-    recording_id: Mapped[str] = mapped_column(String(60), primary_key=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    host: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    port: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    source: Mapped[str] = mapped_column(String(40), default="live")  # live | probe | import
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-
-class UdpPacket(Base):
-    """Every datagram with its receive time, so a session can be re-decoded later."""
-
-    __tablename__ = "f1_udp_packet"
-    recording_id: Mapped[str] = mapped_column(String(60), ForeignKey("f1_udp_recording.recording_id", ondelete="CASCADE"), primary_key=True)
-    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
-    received_at: Mapped[float] = mapped_column(Float)
-    data: Mapped[bytes] = mapped_column(LargeBinary)
-
-
-class StintEvidence(Base):
-    """Per-run evidence: target setup, what the game reported, laps used, acceptance decision."""
-
-    __tablename__ = "f1_stint_evidence"
-    experiment_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    run_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    payload_json: Mapped[str] = mapped_column(Text)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
-
-class StintTelemetrySample(Base):
-    """Decoded telemetry samples of a finished stint, one row per measured sample (never downsampled)."""
-
-    __tablename__ = "f1_stint_telemetry"
-    experiment_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    run_id: Mapped[str] = mapped_column(String(100), primary_key=True)
-    seq: Mapped[int] = mapped_column(Integer, primary_key=True)
-    session_time: Mapped[float | None] = mapped_column(Float, nullable=True)
-    sample_json: Mapped[str] = mapped_column(Text)
-
-
-# ---------------------------------------------------------------------------- setup probing / verification
-class ProbeReport(Base):
-    """A setup-probe session: initial setup, ordered changes, per-factor findings. Evidence only; never verifies."""
-
-    __tablename__ = "f1_probe_report"
-    report_id: Mapped[str] = mapped_column(String(60), primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    packet_format: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    game_variant: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    recording_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
-    report_json: Mapped[str] = mapped_column(Text)
-
-
-class SetupMappingConfirmation(Base):
-    """A manual confirmation (by the user, from the game screen) that a catalog factor maps to a packet field."""
-
-    __tablename__ = "f1_setup_mapping_confirmation"
-    __table_args__ = (UniqueConstraint("factor", "game_variant", name="uq_f1_setup_mapping_confirmation_factor_variant"),)
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    factor: Mapped[str] = mapped_column(String(60))
-    game_variant: Mapped[str] = mapped_column(String(40))  # f1-25 | f1-25-2026
-    packet_field: Mapped[str] = mapped_column(String(60))
-    verified: Mapped[bool] = mapped_column(Boolean)
-    low_value_seen: Mapped[float | None] = mapped_column(Float, nullable=True)
-    high_value_seen: Mapped[float | None] = mapped_column(Float, nullable=True)
-    probe_report_id: Mapped[str | None] = mapped_column(String(60), nullable=True)
-    confirmed_by: Mapped[str] = mapped_column(String(100))
-    note: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confirmed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

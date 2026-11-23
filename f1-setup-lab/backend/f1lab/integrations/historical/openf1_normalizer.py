@@ -31,7 +31,7 @@ MAX_GAP_S = 2.0  # samples further apart than this are not bridged when integrat
 LAP_END_TOLERANCE_S = 2.0
 MAX_RACE_CONTROL = 1000
 
-# DRS values as documented by OpenF1 (interpretation from FastF1); None = documented as unknown ("?").
+# DRS values as documented by OpenF1 (interpretation as published in the OpenF1 docs); None = documented as unknown ("?").
 DRS_STATES = {0: "off", 1: "off", 2: None, 3: None, 8: "detected, eligible in the activation zone", 9: None, 10: "on", 12: "on", 14: "on"}
 COORDINATE_NOTE = ("x, y, z are OpenF1 'location' values: approximate positions in OpenF1's own units with an arbitrary origin. They are not "
                    "verified as metres, even though the stored columns keep the canonical names x_m, y_m and z_m.")
@@ -117,7 +117,7 @@ def _meetings_sorted(meetings: list[dict]) -> list[dict]:
 
 
 def schedule_frame(meetings: list[dict]) -> pd.DataFrame:
-    """Season schedule shaped like FastF1's (EventName, Location, ...) so event resolution can be shared."""
+    """Season schedule as a frame (EventName, Location, ...) for event-name resolution."""
     rows = [{"EventName": m.get("meeting_name"), "OfficialEventName": m.get("meeting_official_name"),
              "Location": m.get("location"), "Country": m.get("country_name"), "RoundNumber": i,
              "meeting_key": m.get("meeting_key")} for i, m in enumerate(_meetings_sorted(meetings), 1)]

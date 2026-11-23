@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SDK_DIR="$ROOT/skeleton/packages/trialforge-core"
 DIST_DIR="${TRIALFORGE_DIST_DIR:-$ROOT/skeleton/dist}"
 RUN_DIR="$ROOT/.run"
+PID_DIR="${TRIALFORGE_PID_DIR:-$RUN_DIR}"  # where running apps are recorded (tests point this at a temporary folder)
 MIN_PY_MAJOR=3
 MIN_PY_MINOR=11
 
@@ -89,7 +90,7 @@ EOF
 }
 
 # ---------------------------------------------------------------- pid files
-pid_file() { echo "$RUN_DIR/$1.pid"; }
+pid_file() { echo "$PID_DIR/$1.pid"; }
 
 pid_alive() { [[ -n "${1:-}" ]] && kill -0 "$1" >/dev/null 2>&1; }
 
@@ -126,9 +127,9 @@ status_app() {
 }
 
 # ---------------------------------------------------------------- install
-# Creates or reuses the app venv and installs: SDK wheel, root db package, the app. A stamp file skips reinstalling.
+# Creates or reuses the app venv and installs: SDK wheel (when SDK=yes), root db package, the app. A stamp file skips reinstalling.
 install_app() {
-    local py="$1" venv="$2" app_dir="$3" wheel stamp want
+    local py="$1" venv="$2" app_dir="$3" sdk="${4:-yes}" wheel stamp want
     wheel="$(wheel_path)"
     if [[ ! -x "$venv/bin/python" ]]; then
         info "Creating virtual environment $venv"
@@ -136,15 +137,18 @@ install_app() {
     fi
     py_ok "$venv/bin/python" || die "$venv uses Python older than $MIN_PY_MAJOR.$MIN_PY_MINOR; delete it and retry"
     stamp="$venv/.trialforge-install-stamp"
-    want="$(basename "$wheel")|$(cksum < "$ROOT/pyproject.toml")|$(cksum < "$app_dir/pyproject.toml")"
+    want="$([[ "$sdk" == yes ]] && basename "$wheel" || echo no-sdk)|$(cksum < "$ROOT/pyproject.toml")|$(cksum < "$app_dir/pyproject.toml")"
     if [[ "$(cat "$stamp" 2>/dev/null || true)" != "$want" ]]; then
         info "Installing dependencies ..."
         "$venv/bin/python" -m pip install --quiet --upgrade pip || die "pip upgrade failed"
-        "$venv/bin/python" -m pip install --quiet --force-reinstall "$wheel" || die "installing the SDK wheel failed"
+        if [[ "$sdk" == yes ]]; then
+            "$venv/bin/python" -m pip install --quiet --force-reinstall "$wheel" || die "installing the SDK wheel failed"
+        fi
         "$venv/bin/python" -m pip install --quiet -e "$ROOT" || die "installing the root db package failed"
         "$venv/bin/python" -m pip install --quiet -e "$app_dir" || die "installing the app failed"
         echo "$want" > "$stamp"
     fi
+    [[ "$sdk" == yes ]] || return 0
     local have
     have="$("$venv/bin/python" -c "import importlib.metadata as m; print(m.version('trialforge-core'))" 2>/dev/null || true)"
     [[ "$have" == "$(sdk_version)" ]] || die "installed trialforge-core is '$have' but the repository SDK is '$(sdk_version)'"
@@ -152,9 +156,9 @@ install_app() {
 }
 
 # ---------------------------------------------------------------- main entry
-# run_app NAME LABEL APP_DIR PORT_VAR DEFAULT_PORT ENTRYPOINT [start|stop|status|check]
+# run_app NAME LABEL APP_DIR PORT_VAR DEFAULT_PORT ENTRYPOINT [start|stop|status|check] [SDK: yes|no]
 run_app() {
-    local name="$1" label="$2" app_dir="$3" port_var="$4" default_port="$5" entry="$6" cmd="${7:-start}"
+    local name="$1" label="$2" app_dir="$3" port_var="$4" default_port="$5" entry="$6" cmd="${7:-start}" sdk="${8:-yes}"
     local port="${!port_var:-$default_port}"
     local venv="$app_dir/.venv"
     export TRIALFORGE_DB="${TRIALFORGE_DB:-$ROOT/data/trialforge.db}"
@@ -177,19 +181,23 @@ run_app() {
     port_free "$py" "$port" || die "port $port is already in use (another process is listening). Set $port_var to use a different port."
 
     if [[ "$cmd" == "check" ]]; then
-        local wheel_state="present"
-        [[ -f "$(wheel_path)" ]] || wheel_state="missing (would be built)"
         info "python:  $py"
-        info "wheel:   $(wheel_path) [$wheel_state]"
+        if [[ "$sdk" == yes ]]; then
+            local wheel_state="present"
+            [[ -f "$(wheel_path)" ]] || wheel_state="missing (would be built)"
+            info "wheel:   $(wheel_path) [$wheel_state]"
+        else
+            info "sdk:     not used by $label"
+        fi
         info "venv:    $venv"
         info "port:    $port (free)"
         info "db:      $TRIALFORGE_DB"
         return 0
     fi
 
-    ensure_wheel "$py"
-    install_app "$py" "$venv" "$app_dir"
-    mkdir -p "$(dirname "$TRIALFORGE_DB")" "$RUN_DIR"
+    [[ "$sdk" == yes ]] && ensure_wheel "$py"
+    install_app "$py" "$venv" "$app_dir" "$sdk"
+    mkdir -p "$(dirname "$TRIALFORGE_DB")" "$RUN_DIR" "$PID_DIR"
     "$venv/bin/python" -m db.migrate --db "$TRIALFORGE_DB" >/dev/null || die "database migration failed"
 
     info "Starting $label on http://127.0.0.1:$port  (database: $TRIALFORGE_DB)"

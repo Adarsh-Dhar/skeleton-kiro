@@ -22,5 +22,6 @@ def root_engine(db: str | None):
 
 
 def cache_dir_for(url: str) -> Path:
+    """The OpenF1 answer cache next to the database (the app uses the same one)."""
     file = sqlite_file_path(url)
-    return (file.parent if file else Path("data")) / "fastf1-cache"
+    return (file.parent if file else Path("data")) / "openf1-cache"

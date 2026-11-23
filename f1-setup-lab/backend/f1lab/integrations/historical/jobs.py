@@ -20,10 +20,9 @@ TERMINAL = ("COMPLETED", "FAILED", "CANCELLED")
 def dedupe_key(payload: dict) -> str:
     drivers = ",".join(sorted({d.strip().upper() for d in payload.get("drivers") or []})) or "*"
     flags = "".join("1" if payload.get(k, True) else "0" for k in ("include_telemetry", "include_position", "include_weather"))
-    openf1 = payload.get("provider", "fastf1") != "fastf1"
-    prefix = f"{payload['provider']}|" if openf1 else ""  # FastF1 keys stay as stored
-    flags += f"|race{int(bool(payload.get('include_race_data', True)))}" if openf1 else ""
-    if openf1 and payload.get("race_datasets") is not None:
+    prefix = f"{payload.get('provider') or 'openf1'}|"
+    flags += f"|race{int(bool(payload.get('include_race_data', True)))}"
+    if payload.get("race_datasets") is not None:
         flags += "|ds=" + ",".join(sorted(set(payload["race_datasets"])))
     return f"{prefix}{int(payload['year'])}|{str(payload['event']).strip().lower()}|{str(payload['session']).strip().upper()}|{drivers}|{flags}"
 
