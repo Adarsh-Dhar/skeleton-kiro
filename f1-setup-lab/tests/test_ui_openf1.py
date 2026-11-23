@@ -62,12 +62,12 @@ def ready(page, hash_):
 
 
 # ------------------------------------------------------------------------------------------------ New experiment
-def test_the_app_has_six_nav_entries_and_historical_f1_shows_only_its_own_notice(page):
+def test_the_app_has_eight_nav_entries_and_historical_f1_shows_only_its_own_notice(page):
     page.goto(page.base + "/#/hist")
     page.wait_for_selector("#hprov")
     assert "HISTORICAL F1 DATA" in page.inner_text("#banner").upper() and "SYNTHETIC" not in page.inner_text("#banner").upper()
     assert [a.inner_text().lower() for a in page.locator("#nav a").all()] == [
-        "dashboard", "new experiment", "telemetry import", "live simulator", "historical f1", "imported sessions"]  # upper-cased by CSS
+        "dashboard", "new experiment", "telemetry import", "live simulator", "historical f1", "imported sessions", "standings", "season comparison"]  # upper-cased by CSS
     assert [h.inner_text().lower() for h in page.locator("#nav .nav-head").all()] == ["setup engineering", "live simulator", "historical f1"]
     body = page.inner_text("body").lower()
     for gone in ("fastf1", "wind direction"):

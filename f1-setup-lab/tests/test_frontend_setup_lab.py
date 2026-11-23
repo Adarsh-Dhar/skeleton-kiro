@@ -19,10 +19,10 @@ import pytest
 from f1lab import NOTICES
 
 FRONTEND = Path(__file__).resolve().parents[1] / "frontend"
-SCRIPTS = ["charts.js", "inspector.js", "hist_race.js", "hist_picker.js", "setup_lab.js", "app.js"]
+SCRIPTS = ["charts.js", "inspector.js", "hist_race.js", "hist_picker.js", "setup_lab.js", "hist_analysis.js", "app.js"]
 NAV = [("Setup Engineering", ["Dashboard", "New experiment", "Telemetry import"]),
        ("Live Simulator", ["Live simulator"]),
-       ("Historical F1", ["Historical F1", "Imported sessions"])]
+       ("Historical F1", ["Historical F1", "Imported sessions", "Standings", "Season comparison"])]
 
 
 # ------------------------------------------------------------------------------------------------ static checks
@@ -71,7 +71,7 @@ class _Nav(HTMLParser):
             self.entries[-1] = (h, label + data, d)
 
 
-def test_index_html_has_six_entries_under_three_headings():
+def test_index_html_has_eight_entries_under_three_headings():
     p = _Nav()
     p.feed((FRONTEND / "index.html").read_text())
     assert [h.strip() for h in p.headings] == [h for h, _ in NAV]
@@ -79,7 +79,7 @@ def test_index_html_has_six_entries_under_three_headings():
     for heading, label, _ in p.entries:
         got.setdefault(heading.strip(), []).append(label.strip())
     assert got == dict(NAV)
-    assert len(p.entries) == 6 and len({e[1] for e in p.entries}) == 6  # each entry under exactly one heading
+    assert len(p.entries) == 8 and len({e[1] for e in p.entries}) == 8  # each entry under exactly one heading
 
 
 def test_index_html_loads_scripts_in_order():
@@ -87,29 +87,17 @@ def test_index_html_loads_scripts_in_order():
     assert re.findall(r'<script src="([^"]+)"', html) == SCRIPTS
 
 
-def _all_js() -> str:
-    return "\n".join((FRONTEND / n).read_text() for n in SCRIPTS) + (FRONTEND / "index.html").read_text()
-
-
-def test_no_wind_direction_anywhere_in_the_frontend():
-    text = _all_js().lower()
-    for bad in ("wind_direction", "winddirection", "wind direction"):
-        assert bad not in text, bad
-
-
-def test_no_new_tyre_standings_or_report_views():
-    text = _all_js()
-    assert not re.search(r"standings|championship", text, re.I)
+def test_no_extra_router_pages_tabs_or_report_views():
     app = (FRONTEND / "app.js").read_text()
     sl = (FRONTEND / "setup_lab.js").read_text()
     # the router dispatches only the known pages
     heads = set(re.findall(r"head === '([a-z]+)'", app))
-    assert heads == {"dashboard", "new", "live", "telemetry", "e", "hist", "sessions"}
-    # experiment tabs and historical tabs are exactly the known sets: no tyre, standings or extra report tab
+    assert heads == {"dashboard", "new", "live", "telemetry", "e", "hist", "sessions", "standings", "season"}
+    # experiment tabs and historical tabs are exactly the known sets: no extra report tab
     assert [k for k, _ in re.findall(r"\['([a-z]+)', '([^']+)'\]", re.search(r"const TABS = \[(.*?)\];", sl).group(1))] == \
         ["design", "runs", "telemetry", "analysis", "optimise", "report"]
     hist = re.search(r"const HIST_TABS = \[(.*?)\];", app).group(1) + re.search(r"const OPENF1_TABS = \[(.*?)\];", app).group(1)
-    assert re.findall(r"\['([a-z]+)'", hist) == ["overview", "laps", "telemetry", "track", "compare", "weather", "race", "strategy"]
+    assert re.findall(r"\['([a-z]+)'", hist) == ["overview", "laps", "telemetry", "track", "compare", "weather", "minisectors", "tyres", "race", "strategy"]
     view_fns = set(re.findall(r"^async function (view\w+)", app + sl, re.M))
     assert not [f for f in view_fns if re.search(r"tyre|standing|report", f, re.I) and f != "viewReport"]
 

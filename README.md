@@ -54,6 +54,11 @@ migrations (`python -m db.migrate [--status]`), and the app-scoped view of the S
 There are no other stores: no per-app databases, Parquet files, JSON tariff file, evidence files or browser storage. Two things outside the
 database are not application data: the OpenF1 answer cache (`data/openf1-cache/`) and WATTWISE's bundled demo CSVs.
 
+**Historical F1 analysis features** (details in the [F1 SETUP LAB README](f1-setup-lab/README.md)): championship standings, wind direction,
+driver headshots and team colours, season comparison across imported sessions, mini-sector analysis, tyre degradation, and CSV/HTML export.
+Headshots and team colours appear only for sessions imported after this change (re-import with force to refresh). Tyre slopes do not correct
+for fuel burn. Mini-sector distance is an estimate.
+
 **F1 SETUP LAB 2.1 has setup engineering, the live simulator and the historical data.** Migration 9
 (run automatically on start) recreates the setup-engineering tables, and the database is first copied to `data/backups/<UTC time>/`. FastF1 is not supported:
 migration 8 removed any FastF1 sessions and import jobs, and historical data comes from OpenF1 only. OpenF1 sessions, WATTWISE rows and the SDK

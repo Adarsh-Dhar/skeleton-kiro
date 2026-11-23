@@ -46,3 +46,20 @@ class HistoricalCompareRequest(BaseModel):
     driver_b: str = Field(min_length=1, max_length=10)
     lap_b: int = Field(ge=1)
     points: int = Field(100, ge=20, le=2000, description="Size of the common distance grid used for the time delta")
+
+
+CompareMetric = Literal["best_lap", "median_lap", "finish_position", "grid_position", "points"]
+
+
+class SeasonCompareRequest(BaseModel):
+    sessions: list[str] = Field(min_length=2, max_length=24, description="Stored session ids to compare (2 to 24)")
+    drivers: list[str] = Field(min_length=1, max_length=6, description="Driver codes (1 to 6)")
+    metric: CompareMetric = Field(description="best_lap, median_lap, finish_position, grid_position or points")
+
+    @model_validator(mode="after")
+    def _items_not_blank(self):
+        if any(not s.strip() for s in self.sessions):
+            raise ValueError("sessions must not contain empty ids")
+        if any(not d.strip() or len(d) > 10 for d in self.drivers):
+            raise ValueError("drivers must be non-empty driver codes of at most 10 characters")
+        return self

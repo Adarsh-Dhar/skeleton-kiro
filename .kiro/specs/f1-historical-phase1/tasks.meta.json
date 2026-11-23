@@ -1,0 +1,725 @@
+{
+  "pbtResults": {
+    "2.5 Write property test for compass sectors": {
+      "status": "passed",
+      "lastRunTimestamp": 1795421805451
+    },
+    "2.8 Write property tests for tyre degradation": {
+      "status": "passed",
+      "lastRunTimestamp": 1795422018082
+    },
+    "2.9 Write property test for season comparison shape": {
+      "status": "passed",
+      "lastRunTimestamp": 1795422070400
+    },
+    "4.3 Write property test for the import keeping colour and headshot": {
+      "status": "passed",
+      "lastRunTimestamp": 1795423218467
+    },
+    "5.5 Write property test for export equals JSON": {
+      "status": "passed",
+      "lastRunTimestamp": 1795430235593
+    },
+    "5.6 Write property test for read-only routes": {
+      "status": "passed",
+      "lastRunTimestamp": 1795430506770
+    }
+  },
+  "executionHistory": {
+    "1.1 Record the current test counts": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420715142
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420723893
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421011466
+      }
+    ],
+    "1.2 Confirm wind direction and rainfall flag survive storage": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420715563
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421015378
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421227290
+      }
+    ],
+    "2.1 Create `analysis.py` with compass, cleaning and CSV helpers": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420715660
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421231891
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421282521
+      }
+    ],
+    "2.2 Add mini-sector computation": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420715728
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421285911
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421474715
+      }
+    ],
+    "2.3 Add tyre degradation computation": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420715840
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421478152
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421549689
+      }
+    ],
+    "2.4 Add season comparison and report builders": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420715909
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421553561
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421664782
+      }
+    ],
+    "2.5 Write property test for compass sectors": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420715974
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421671104
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421818567
+      }
+    ],
+    "2.6 Write property test for colour and URL cleaning": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716043
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421821967
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421874882
+      }
+    ],
+    "2.7 Write property tests for mini-sectors": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716107
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421879325
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421936600
+      }
+    ],
+    "2.8 Write property tests for tyre degradation": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716174
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421940049
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422028073
+      }
+    ],
+    "2.9 Write property test for season comparison shape": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716240
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422032438
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422080605
+      }
+    ],
+    "2.10 Write property tests for CSV and report": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716335
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422087252
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422243259
+      }
+    ],
+    "2.11 Write a static test that `analysis.py` is pure": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716471
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422246772
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422415556
+      }
+    ],
+    "3. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716544
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422422736
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422708526
+      }
+    ],
+    "4.1 Keep `team_colour` and `headshot_url` in the driver list": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716625
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422712589
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423024679
+      }
+    ],
+    "4.2 Return the keys for every stored session": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716708
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423028253
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423123079
+      }
+    ],
+    "4.3 Write property test for the import keeping colour and headshot": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716774
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423126760
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423228838
+      }
+    ],
+    "5.1 Add tyre degradation and mini-sector service methods and routes": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716843
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423233655
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423579019
+      }
+    ],
+    "5.2 Add the season comparison method and route": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716923
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423582932
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795425298903
+      }
+    ],
+    "5.3 Add the export routes": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420716978
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795425302778
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795429081681
+      }
+    ],
+    "5.4 Regenerate the route manifest": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717041
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795429086599
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795429276693
+      }
+    ],
+    "5.5 Write property test for export equals JSON": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717111
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795429280359
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795430368467
+      }
+    ],
+    "5.6 Write property test for read-only routes": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717176
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795430373883
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795430517755
+      }
+    ],
+    "5.7 Write unit tests for the routes": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717244
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795430523453
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432065308
+      }
+    ],
+    "6. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717313
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432070363
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432356743
+      }
+    ],
+    "7.1 Create `hist_analysis.js` with the shared helpers": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717396
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432362019
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432451283
+      }
+    ],
+    "7.2 Add the standings view": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717508
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432456253
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432543329
+      }
+    ],
+    "7.3 Add wind direction to the weather tab": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717621
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432547584
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432654475
+      }
+    ],
+    "7.4 Add the Mini-sectors and Tyres tabs": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717763
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432658443
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432827705
+      }
+    ],
+    "7.5 Add the Season comparison view and export buttons": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420717960
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432831952
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432937259
+      }
+    ],
+    "7.6 Apply team colours across historical views": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420718027
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432942548
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795436315002
+      }
+    ],
+    "7.7 Update `index.html`, `app.js` and `style.css`": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420718092
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795436321532
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795436447251
+      }
+    ],
+    "8.1 Update the existing frontend and backend tests": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420718158
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795436451706
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437186652
+      }
+    ],
+    "8.2 Write frontend tests": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420718225
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437191087
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437470408
+      }
+    ],
+    "9. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420718289
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437475066
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437789860
+      }
+    ],
+    "10.1 Update the READMEs": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420718360
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437794836
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437853425
+      }
+    ],
+    "10.2 Run the full suites and write the test report": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420718411
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437857635
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795438404439
+      }
+    ],
+    "11. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795420718475
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795438410320
+      },
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795438657780
+      }
+    ],
+    "1. Baseline before any code change": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795421227393
+      }
+    ],
+    "2. Pure analysis module": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795422415804
+      }
+    ],
+    "4. Import and drivers response (headshots and team colours)": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795423228915
+      }
+    ],
+    "5. Service methods and routes": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795432065472
+      }
+    ],
+    "7. Frontend": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795436447337
+      }
+    ],
+    "8. Update tests that the restoration spec made contradictory": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795437470576
+      }
+    ],
+    "10. Documentation, full run and report": [
+      {
+        "executionId": "d1754bcd-f0ef-4f51-bbe9-915086d04065",
+        "chatSessionId": "sess_07a7613d-fb0f-4130-9e3a-c2f307477540",
+        "timestamp": 1795438404719
+      }
+    ]
+  }
+}

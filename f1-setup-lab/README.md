@@ -22,7 +22,7 @@ data. **Live UDP capture needs the game to be running and sending packets** (def
 
 Import and analyse **real historical Formula 1 sessions** from [OpenF1](https://openf1.org) (free, no account, 2023 onwards): laps,
 telemetry, track map, comparisons, running order, results, gaps, pit stops, race control, team radio and weather. Everything is labelled
-`HISTORICAL F1 · OPENF1` and is used for analysis only; it never becomes a setup-experiment result. Screens: Historical F1, Imported sessions.
+`HISTORICAL F1 · OPENF1` and is used for analysis only; it never becomes a setup-experiment result. Screens: Historical F1, Imported sessions, Standings, Season comparison. Per-session analysis tabs and exports are listed under "Historical F1 analysis features".
 
 ## SDK dependency
 
@@ -92,6 +92,18 @@ sessions and WATTWISE data are kept, and the database is backed up under `data/b
 | **Weather & tyres** | Air/track temperature, humidity, wind, pressure, rainfall flag; stints per driver. |
 | **Race & results** | Starting grid against final classification (DNF/DNS/DSQ), running-order chart, gaps to leader and car ahead, overtakes. |
 | **Pit, flags & radio** | Tyre-stint chart, pit stops, race-control timeline (with the driver each message names), team-radio links. |
+
+## Historical F1 analysis features
+
+All seven read only data already stored by the OpenF1 import and are labelled `HISTORICAL F1 · OPENF1`.
+
+* **Standings** (screen): drivers and teams championship tables for a race or sprint session, from OpenF1's beta championship endpoints. When a dataset is empty or missing, its coverage note is shown instead of a table.
+* **Wind direction** (Weather & tyres): degrees and compass point (N to NW) next to wind speed. Samples without a value show "no data", never 0.
+* **Headshots and team colours**: driver photos in the driver picker and standings, and team colours on chart lines, chips and track-map dots. A missing or failed photo falls back to a coloured circle with the driver code. **They appear only for sessions imported after this change; re-import the session with force to refresh older ones.**
+* **Season comparison** (screen): compare drivers across several imported sessions, matched by driver code.
+* **Mini-sectors** (session tab): a lap cut into equal-distance slices with slice times, optionally against a reference lap. **The distance is an estimate** (speed integrated within each lap), so slice boundaries are approximate.
+* **Tyres** (session tab): lap-time slope per lap of tyre age for each stint, with R². **Slopes do not correct for fuel burn**, so they understate true tyre wear. Stints with fewer than 5 usable laps show no slope.
+* **Export**: buttons in the session header download CSV tables and a self-contained HTML report (`/api/historical/sessions/{id}/export.csv?table=` and `/report.html`).
 
 From the command line:
 `python scripts/import_historical.py --year 2025 --event "Abu Dhabi" --session R --drivers VER HAM`

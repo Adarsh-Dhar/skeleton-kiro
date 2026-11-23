@@ -220,6 +220,7 @@ def test_import_stores_provider_labelled_partial_session(tmp_path):
     assert repo.position(SID, "VER").empty and len(repo.position(SID, "HAM")) == 1080
     wx = repo.weather(SID)
     assert len(wx) == 5 and "rainfall_flag" in wx.columns and "rainfall_mm" not in wx.columns
+    assert str(wx["wind_direction_deg"].dtype) == "float64" and str(wx["rainfall_flag"].dtype) == "float64"
     assert m["pit_stops"] == [{"driver": "HAM", "lap_number": 3, "date": m["pit_stops"][0]["date"], "lane_duration_s": 22.5, "stop_duration_s": 2.4}]
     assert m["race_control"][1]["flag"] == "GREEN" and len(m["race_control"]) == 4
 
@@ -675,3 +676,14 @@ def test_api_imports_a_chosen_driver_subset_and_reports_the_session_id(api):
     assert [d["code"] for d in m["drivers"]] == ["VER"] and m["all_drivers"] is False and m["provider"] == "openf1"
     assert m["upstream"]["session_key"] == 99 and m["upstream"]["meeting_key"] == 1001  # real OpenF1 identifiers are kept
     assert [d["number"] for d in m["drivers"]] == ["1"]
+
+
+def test_wind_direction_and_rainfall_flag_survive_storage_and_the_weather_route(api):
+    # Feature: f1-historical-phase1, task 1.2 (Requirements 2.1, 2.6): both columns are stored (via extra_json) and read back as float64
+    job = _wait(api, api.post("/api/historical/import", json={**PAYLOAD}).json()["import_id"])
+    assert job["state"] == "COMPLETED"
+    body = api.get(f"/api/historical/sessions/{SID}/weather").json()
+    assert body["count"] == 5
+    for s in body["samples"]:
+        assert isinstance(s["wind_direction_deg"], float) and s["wind_direction_deg"] == 120.0
+        assert isinstance(s["rainfall_flag"], float) and s["rainfall_flag"] == 0.0

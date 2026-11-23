@@ -15,7 +15,7 @@ import pandas as pd
 from sqlalchemy import Engine
 
 from f1lab.errors import Conflict, NotFound
-from f1lab.integrations.historical import openf1_importer, openf1_normalizer
+from f1lab.integrations.historical import analysis, openf1_importer, openf1_normalizer
 from f1lab.integrations.historical.importer import (
     CANCELLED,
     NETWORK_TIMEOUT,
@@ -28,13 +28,25 @@ from f1lab.integrations.historical.openf1_client import OpenF1Client
 from f1lab.integrations.historical.openf1_client import cache_stats as openf1_cache_stats
 from f1lab.integrations.historical.openf1_importer import import_session_openf1
 from f1lab.integrations.historical.repository import HistoricalRepository
-from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest
+from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest, SeasonCompareRequest
 
 TELEMETRY_CHANNELS = ("distance_m", "session_time_s", "speed_kph", "throttle_pct", "brake_applied", "brake_pct",
                       "steer_pct", "gear", "rpm", "drs")
 DATASETS = ("race_position", "session_result", "starting_grid", "intervals", "overtakes", "team_radio",
             "drivers_championship", "teams_championship")
 MANIFEST_DATASETS = ("pit_stops", "race_control")  # small lists kept in the session manifest
+EXPORT_TABLES = ("laps", "results", "standings", "weather", "tyre_degradation", "mini_sectors")
+EXPORT_HEADERS = {  # used only when a table is empty, so the CSV still has a header row
+    "laps": ("driver", "driver_number", "team", "lap_number", "stint", "lap_time_s", "sector_1_s", "sector_2_s",
+             "sector_3_s", "compound"),
+    "results": ("position", "driver", "laps", "points", "gap_to_leader_text", "dnf", "dns", "dsq"),
+    "standings": ("kind", "position", "name", "team", "points_start", "points_current"),
+    "weather": ("session_time_s", "air_temp_c", "track_temp_c", "humidity_pct", "pressure_hpa", "wind_speed_ms",
+                "wind_direction_deg", "rainfall_flag"),
+    "tyre_degradation": ("driver", "stint", "compound", "tyre_age_first", "tyre_age_last", "laps_used",
+                         "slope_s_per_lap", "r_squared", "reason"),
+    "mini_sectors": ("index", "start_frac", "end_frac", "time_s", "ref_time_s", "delta_s", "cum_delta_s"),
+}
 POSITION_CHANNELS = ("distance_m", "session_time_s", "x_m", "y_m", "z_m", "speed_kph")
 
 
@@ -261,7 +273,8 @@ class HistoricalService:
         return {"cleared": self.openf1.clear_cache(), **openf1_cache_stats(self.openf1_cache_dir)}
 
     def drivers(self, sid: str) -> list[dict]:
-        return self._manifest(sid).get("drivers", [])
+        return [{**d, "team_colour": d.get("team_colour"), "headshot_url": d.get("headshot_url")}
+                for d in self._manifest(sid).get("drivers", [])]
 
     def _driver_entry(self, sid: str, driver: str) -> dict:
         """Resolve a driver query param to the manifest driver entry (case-insensitive code or number)."""
@@ -322,6 +335,151 @@ class HistoricalService:
             pos = self.position(sid, code, lap)
             out.update(driver=code, lap=lap, points=pos["points"][:5000], count=pos["count"])
         return out
+
+    # ------------------------------------------------------------- analysis (read-only)
+    def tyre_degradation(self, sid: str) -> dict:
+        m = self._manifest(sid)  # NotFound for an unknown session
+        laps = self.repo.laps(sid)
+        has_stints = (not laps.empty and "stint" in laps.columns and "driver" in laps.columns
+                      and bool(laps["stint"].notna().any()))
+        if not has_stints:
+            return {"stints": [], "by_compound": [], "caveat": analysis.FUEL_CAVEAT,
+                    "coverage_note": "no stint data is stored for this session; tyre degradation cannot be computed"}
+        # laps may carry the driver number; report the three-letter code
+        code_of = {str(d.get("number", "")): str(d.get("code", "")) for d in m.get("drivers", []) if d.get("number") not in (None, "")}
+        laps = laps.copy()
+        laps["driver"] = laps["driver"].astype(str).map(lambda v: code_of.get(v, v))
+        if "is_valid" not in laps.columns or not laps["is_valid"].notna().any():
+            laps["is_valid"] = True  # OpenF1 may not publish validity: missing means valid, not excluded
+        return analysis.tyre_degradation(laps, m.get("race_control") or [])
+
+    def compare_sessions(self, req: SeasonCompareRequest) -> dict:
+        """Compare drivers across stored sessions (read-only; Requirements 4.1 to 4.7)."""
+        manifests = [(sid, self._manifest(sid)) for sid in req.sessions]  # NotFound names the first unknown id
+        drivers = [d.strip().upper() for d in req.drivers]
+        sessions = []
+        for sid, m in manifests:
+            datasets = {}
+            if req.metric in ("finish_position", "grid_position", "points"):
+                name = analysis._DATASET_FOR_METRIC[req.metric]
+                datasets[name] = self.repo.dataset(sid, name) or None
+            laps = self.repo.laps(sid) if req.metric in ("best_lap", "median_lap") else None
+            if laps is not None and not laps.empty:
+                laps = laps.copy()
+                code_of = {str(d.get("number", "")): str(d.get("code", "")) for d in m.get("drivers", []) if d.get("number") not in (None, "")}
+                laps["driver"] = laps["driver"].astype(str).map(lambda v, c=code_of: c.get(v, v))
+            sessions.append({
+                "id": sid, "year": m.get("year"), "event": m.get("event"), "session_type": m.get("session_type"),
+                "date_start": m.get("session_date"), "drivers": m.get("drivers", []),
+                "laps": laps, "datasets": datasets,
+            })
+        return analysis.season_compare(sessions, drivers, req.metric)
+
+    def _lap_telemetry(self, sid: str, code: str, lap: int | None, laps: pd.DataFrame, driver_keys: set[str]) -> tuple[pd.DataFrame, int, str]:
+        """Telemetry of one lap of a driver, the lap number used and how it was chosen ("requested" or "fastest_valid")."""
+        tel = self.repo.telemetry(sid, code)
+        if tel.empty:
+            raise Conflict(f"no telemetry is stored for driver {code}; re-import with telemetry enabled")
+        source = "requested"
+        if lap is None:
+            source = "fastest_valid"
+            if laps.empty or "lap_time_s" not in laps.columns:
+                raise Conflict(f"no lap times are stored for driver {code}, so the fastest valid lap cannot be chosen")
+            mine = laps[laps["driver"].astype(str).isin(driver_keys)]
+            ok = mine[mine["lap_time_s"].notna()]
+            if "is_valid" in ok.columns and ok["is_valid"].notna().any():  # OpenF1 may not publish validity
+                ok = ok[ok["is_valid"].fillna(False).astype(bool)]
+            if "is_deleted" in ok.columns:
+                ok = ok[~ok["is_deleted"].fillna(False).astype(bool)]
+            have = set(tel["lap_number"].dropna().astype(int))
+            ok = ok[ok["lap_number"].astype(int).isin(have)]
+            if ok.empty:
+                raise Conflict(f"driver {code} has no valid lap with telemetry")
+            lap = int(ok.loc[ok["lap_time_s"].astype(float).idxmin(), "lap_number"])
+        df = tel[tel["lap_number"] == lap]
+        if df.empty:
+            raise Conflict(f"no telemetry is stored for driver {code} lap {lap}")
+        return df.sort_values("session_time_s"), lap, source
+    def mini_sectors(self, sid: str, driver: str, lap: int | None = None, ref_driver: str | None = None,
+                     ref_lap: int | None = None, count: int = 25) -> dict:
+        m = self._manifest(sid)
+        if isinstance(count, bool) or not isinstance(count, int) or not 10 <= count <= 50:
+            raise ValueError("count must be an integer from 10 to 50")
+        if ref_lap is not None and not ref_driver:
+            ref_driver = driver  # a reference lap alone means another lap of the same driver
+        entry = self._driver_entry(sid, driver)
+        code = str(entry["code"])
+        rentry = self._driver_entry(sid, ref_driver) if ref_driver else None  # unknown reference driver is a 422, before any 409
+        laps = self.repo.laps(sid)
+        keys = {str(entry.get("code", "")), str(entry.get("number", ""))} - {""}
+        tel, used_lap, source = self._lap_telemetry(sid, code, lap, laps, keys)
+        ref_tel = None
+        ref_info = None
+        if ref_driver:
+            rcode = str(rentry["code"])
+            rkeys = {str(rentry.get("code", "")), str(rentry.get("number", ""))} - {""}
+            ref_tel, rused, rsource = self._lap_telemetry(sid, rcode, ref_lap, laps, rkeys)
+            ref_info = {"driver": rcode, "lap": rused, "lap_source": rsource}
+        out = analysis.mini_sectors(tel, count, ref_tel)
+        out.update(driver=code, lap=used_lap, lap_source=source, session_id=m.get("session_id", sid))
+        if ref_info:
+            out["reference"] = ref_info
+        return out
+    # ------------------------------------------------------------- export (read-only)
+    def standings(self, sid: str) -> list[dict]:
+        """Both championship datasets as one flat list (kind driver/team), used by the CSV and the report."""
+        m = self._manifest(sid)
+        team_of = {str(d.get("code")): d.get("team") for d in m.get("drivers", [])}
+        out: list[dict] = []
+        for kind, ds in (("driver", "drivers_championship"), ("team", "teams_championship")):
+            for r in self.repo.dataset(sid, ds):
+                name = r.get("driver") if kind == "driver" else r.get("team")
+                out.append({"kind": kind, "position": r.get("position_current"), "name": name,
+                            "team": team_of.get(str(name)) if kind == "driver" else name,
+                            "points_start": r.get("points_start"), "points_current": r.get("points_current")})
+        return out
+
+    def export_csv(self, sid: str, table: str, driver: str | None = None, lap: int | None = None,
+                   ref_driver: str | None = None, ref_lap: int | None = None, count: int = 25) -> str:
+        """CSV text for one table, built from the same data as the matching JSON route (Requirements 7.1, 7.3, 7.6)."""
+        self._manifest(sid)  # 404 for an unknown session
+        if table not in EXPORT_TABLES:
+            raise ValueError(f"unknown table '{table}'; choose one of {', '.join(EXPORT_TABLES)}")
+        if table == "laps":
+            rows = self.laps(sid)
+        elif table == "results":
+            rows = self.repo.dataset(sid, "session_result")
+        elif table == "standings":
+            rows = self.standings(sid)
+        elif table == "weather":
+            rows = self.weather(sid)["samples"]
+        elif table == "tyre_degradation":
+            rows = []
+            for s in self.tyre_degradation(sid)["stints"]:
+                row = {k: v for k, v in s.items() if k != "laps_excluded"}
+                for k, v in (s.get("laps_excluded") or {}).items():
+                    row[f"laps_excluded_{k}"] = v
+                rows.append(row)
+        else:
+            if not driver:
+                raise ValueError("driver is required for the mini_sectors table")
+            rows = self.mini_sectors(sid, driver, lap, ref_driver, ref_lap, count)["slices"]
+        header: list[str] = []
+        for r in rows:
+            header += [k for k in r if k not in header]
+        header = header or list(EXPORT_HEADERS[table])
+        return analysis.csv_text(header, [[r.get(k) for k in header] for r in rows])
+
+    def report_html(self, sid: str) -> str:
+        """One self-contained HTML report for a stored session (Requirements 7.4, 7.7)."""
+        m = self._manifest(sid)
+        summary = {"event": m.get("event"), "session_type": m.get("session_type"), "date": m.get("session_date")}
+        results = self.repo.dataset(sid, "session_result")
+        standings = self.standings(sid)
+        tyres = self.tyre_degradation(sid)
+        weather = self.weather(sid)["samples"]
+        reasons = {"tyre_degradation": tyres.get("coverage_note")}
+        return analysis.report_html(summary, results, standings, tyres, weather, reasons)
 
     # ------------------------------------------------------------- comparison
     def compare(self, sid: str, req: HistoricalCompareRequest) -> dict:

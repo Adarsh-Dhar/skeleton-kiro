@@ -77,3 +77,14 @@ nav{gap:18px}.nav-group{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .chip.synthetic{color:var(--amber);border-color:#6b5112}.chip.simrec{color:#8fd0ff;border-color:#1d4a6b}
 .coded{display:inline-block;min-width:34px;text-align:center;border-radius:3px;font:11px var(--mono);padding:1px 4px}.coded.m1{background:#14304d;color:#9ccfff}.coded.p1{background:#4d1b14;color:#ffb199}.coded.z{background:#222;color:#aaa}
 #view-error:empty{display:none}
+
+/* Historical analysis (hist_analysis.js): avatars, swatches, bars, tables */
+.avatar{width:32px;height:32px;border-radius:50%;object-fit:cover;background:var(--panel2);border:1px solid var(--line);vertical-align:middle;font:600 11px var(--mono);color:var(--text)}
+.export-buttons{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0}
+.export-buttons select{background:var(--panel2);color:var(--text);border:1px solid #3a4452;border-radius:5px;padding:6px 8px;font:12px var(--sans)}
+.export-buttons a.btn{text-decoration:none}.export-buttons a[aria-disabled="true"]{opacity:.4;cursor:not-allowed}
+.panel table td.mono,.panel table td.num{white-space:nowrap}
+.panel table td .avatar{display:block}
+.bar{display:inline-block;height:8px;border-radius:2px;background:var(--blue);vertical-align:middle;min-width:2px}
+.bar-track{display:inline-block;width:120px;height:8px;background:var(--panel2);border-radius:2px;vertical-align:middle}
+.note.bad{background:#2d1010;border-color:#7a2020;color:#ff9b9b}

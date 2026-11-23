@@ -14,6 +14,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from . import analysis
+
 PROVIDER = "openf1"
 SOURCE_LABEL = "HISTORICAL F1 · OPENF1"
 ATTRIBUTION = ("Data from OpenF1 (openf1.org), an unofficial open-source API. Not affiliated with Formula 1. "
@@ -145,7 +147,7 @@ def event_list(meetings: list[dict], sessions: list[dict]) -> list[dict]:
 
 
 def driver_list(rows: list[dict]) -> list[dict]:
-    """[{code, number, name, team}] with one entry per driver number."""
+    """[{code, number, name, team, team_colour, headshot_url}] with one entry per driver number."""
     seen: dict[str, dict] = {}
     for r in rows:
         number = r.get("driver_number")
@@ -153,7 +155,9 @@ def driver_list(rows: list[dict]) -> list[dict]:
             continue
         code = r.get("name_acronym") or str(number)
         seen[str(number)] = {"code": str(code), "number": str(number),
-                             "name": r.get("full_name") or r.get("broadcast_name") or str(code), "team": r.get("team_name")}
+                             "name": r.get("full_name") or r.get("broadcast_name") or str(code), "team": r.get("team_name"),
+                             "team_colour": analysis.clean_colour(r.get("team_colour")),
+                             "headshot_url": analysis.clean_url(r.get("headshot_url"))}
     return list(seen.values())
 
 

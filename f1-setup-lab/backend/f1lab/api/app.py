@@ -46,7 +46,7 @@ from f1lab.catalogs.verification import get_probe_report, list_probe_reports
 from f1lab.catalogs.verification import status as verification_status
 from f1lab.integrations.game_udp.probe import VARIANT_LABELS
 from f1lab.integrations.historical.openf1_client import MIN_YEAR, OpenF1Error
-from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest
+from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest, SeasonCompareRequest
 from f1lab.integrations.historical.service import HistoricalService
 from f1lab.services import lab as lab_module
 from f1lab.services.lab import LabService
@@ -379,6 +379,32 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
     @app.get("/api/historical/sessions/{session_id}/track-map")
     def hist_track_map(session_id: str, driver: str | None = None, lap: int | None = None):
         return hist.track_map(session_id, driver, lap)
+
+    @app.get("/api/historical/sessions/{session_id}/tyre-degradation")
+    def hist_tyre_degradation(session_id: str):
+        return hist.tyre_degradation(session_id)
+
+    @app.get("/api/historical/sessions/{session_id}/mini-sectors")
+    def hist_mini_sectors(session_id: str, driver: str = Query(..., min_length=1), lap: int | None = None,
+                          ref_driver: str | None = None, ref_lap: int | None = None, count: int = 25):
+        # count is range-checked in the service so a bad value is a 422 with the same body shape as other errors
+        return hist.mini_sectors(session_id, driver, lap, ref_driver, ref_lap, count)
+
+    @app.get("/api/historical/sessions/{session_id}/export.csv")
+    def hist_export_csv(session_id: str, table: str = Query(..., min_length=1), driver: str | None = None,
+                        lap: int | None = None, ref_driver: str | None = None, ref_lap: int | None = None,
+                        count: int = 25):
+        text = hist.export_csv(session_id, table, driver, lap, ref_driver, ref_lap, count)
+        return Response(text, media_type="text/csv; charset=utf-8", headers={
+            "Content-Disposition": f'attachment; filename="{session_id}-{table}.csv"'})
+
+    @app.get("/api/historical/sessions/{session_id}/report.html", response_class=HTMLResponse)
+    def hist_report_html(session_id: str):
+        return HTMLResponse(hist.report_html(session_id))
+
+    @app.post("/api/historical/compare-sessions")
+    def hist_compare_sessions(req: SeasonCompareRequest):
+        return hist.compare_sessions(req)
 
     @app.post("/api/historical/sessions/{session_id}/compare")
     def hist_compare(session_id: str, req: HistoricalCompareRequest):

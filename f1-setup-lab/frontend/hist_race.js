@@ -4,6 +4,17 @@ const HistRace = (() => {
   const esc = Charts.esc, fmt = Charts.f;
   const PALETTE = ['#e10600', '#4aa8ff', '#2ecc71', '#ffb400', '#c99bff', '#00cec9', '#ff7ab8', '#a3e635', '#fb923c', '#94a3b8'];
   const colour = (i) => (i < PALETTE.length ? PALETTE[i] : `hsl(${(i * 47) % 360} 70% 60%)`);
+  /* Team colour from the stored driver meta (HistAnalysis.teamColour); the palette by driver position when HistAnalysis or the colour is missing. */
+  const HA = () => (typeof HistAnalysis !== 'undefined' ? HistAnalysis : null);
+  const driverColour = (drivers, code) => {
+    const i = drivers.findIndex((d) => d.code === code);
+    const d = i >= 0 ? drivers[i] : null;
+    const own = d && /^#[0-9a-f]{6}$/i.test(d.team_colour || '') ? d.team_colour : null;
+    if (own) return own;
+    const ha = HA();
+    const c = ha && d ? ha.teamColour(d, drivers) : null;
+    return c || colour(i < 0 ? 0 : i);
+  };
   const COMPOUND = { SOFT: '#e10600', MEDIUM: '#ffd23f', HARD: '#f1f1f1', INTERMEDIATE: '#39b54a', WET: '#2f7fd8' };
   const FLAG = { GREEN: '#2ecc71', YELLOW: '#ffd23f', 'DOUBLE YELLOW': '#ffd23f', RED: '#e10600', BLUE: '#4aa8ff', CHEQUERED: '#f1f1f1', CLEAR: '#2ecc71', 'BLACK AND WHITE': '#94a3b8' };
 
@@ -32,6 +43,8 @@ const HistRace = (() => {
 
   /* ------------------------------------------------------------------ coverage / provenance */
   const STATUS_CLASS = { ok: 'good', empty: 'dim', error: 'badc', not_applicable: 'dim' };
+  /* Team-colour square next to a driver code. The code is always printed, so the colour is never the only cue. */
+  const chip = (drivers, code) => `<span style="color:${driverColour(drivers || [], code)}" aria-hidden="true">&#9632;</span> `;
   function coverage(m) {
     const c = m.coverage;
     if (!c) return '';
@@ -75,7 +88,7 @@ const HistRace = (() => {
       if (r.gap_to_leader_text) gap = esc(r.gap_to_leader_text);
       else if (r.gap_to_leader_s !== null && r.gap_to_leader_s !== undefined) gap = r.gap_to_leader_s === 0 ? 'leader' : `+${fmt(r.gap_to_leader_s, 3)} s`;
       else if (Array.isArray(r.gap_to_leader)) gap = r.gap_to_leader.map((v) => (v === null ? '&mdash;' : `+${fmt(v, 3)}`)).join(' &middot; ');
-      return `<tr><td class="num"><b>${r.position ?? '&mdash;'}</b></td><td class="mono"><b>${esc(r.driver)}</b> ${status}</td><td class="dim">${esc(team[r.driver] || '')}</td>
+      return `<tr><td class="num"><b>${r.position ?? '&mdash;'}</b></td><td class="mono">${chip(m.drivers, r.driver)}<b>${esc(r.driver)}</b> ${status}</td><td class="dim">${esc(team[r.driver] || '')}</td>
         ${isQ ? '' : `<td class="num">${g ?? '&mdash;'}</td><td class="num">${chg}</td>`}<td class="num">${esc(r.laps ?? '—')}</td><td class="num">${time}</td><td class="num">${gap}</td>${isQ ? '' : `<td class="num">${r.points ?? '&mdash;'}</td>`}</tr>`;
     }).join('');
     const head = isQ ? '<th>Pos</th><th>Driver</th><th>Team</th><th class="num">Laps</th><th class="num">Q1 &middot; Q2 &middot; Q3 best</th><th class="num">Gap Q1 &middot; Q2 &middot; Q3</th>'
@@ -88,12 +101,13 @@ const HistRace = (() => {
     if (!pos.length) return unavailable(m, 'race_position', 'running order');
     const maxP = Math.max(...pos.map((p) => p.position));
     const series = picks.map((code) => {
-      const idx = drivers.findIndex((d) => d.code === code);
       const pts = pos.filter((p) => p.driver === code && p.time_s !== null).map((p) => ({ x: p.time_s / 60, y: p.position }));
-      return { name: code, color: colour(idx), pts };
+      return { name: code, color: driverColour(drivers, code), pts };
     }).filter((s) => s.pts.length);
     if (!series.length) return '<div class="empty">Select at least one driver.</div>';
-    return Charts.lines({ series, stepped: true, noDots: true, reverseY: true, ymin: 0.5, ymax: maxP + 0.5, xLabel: 'minutes since the session start time OpenF1 publishes', yLabel: 'running order (1 = leader)', height: 360 });
+    const ha = HA();
+    const shown = ha ? ha.distinguish(series) : series; // same-colour team mates get different dash patterns
+    return Charts.lines({ series: shown, stepped: true, noDots: true, reverseY: true, ymin: 0.5, ymax: maxP + 0.5, xLabel: 'minutes since the session start time OpenF1 publishes', yLabel: 'running order (1 = leader)', height: 360 });
   }
 
   function gapChart(m, rows, code) {
@@ -111,9 +125,9 @@ const HistRace = (() => {
     rows.forEach((r) => { made[r.overtaking] = (made[r.overtaking] || 0) + 1; lost[r.overtaken] = (lost[r.overtaken] || 0) + 1; });
     const codes = [...new Set([...Object.keys(made), ...Object.keys(lost)])].sort((a, b) => (made[b] || 0) - (made[a] || 0));
     return `<div class="grid g2"><div><h3>Per driver</h3><table><thead><tr><th>Driver</th><th class="num">Made</th><th class="num">Lost</th></tr></thead><tbody>
-      ${codes.map((c) => `<tr><td class="mono"><b>${esc(c)}</b></td><td class="num">${made[c] || 0}</td><td class="num">${lost[c] || 0}</td></tr>`).join('')}</tbody></table></div>
+      ${codes.map((c) => `<tr><td class="mono">${chip(m.drivers, c)}<b>${esc(c)}</b></td><td class="num">${made[c] || 0}</td><td class="num">${lost[c] || 0}</td></tr>`).join('')}</tbody></table></div>
       <div><h3>Timeline (${rows.length})</h3><div style="overflow:auto;max-height:340px"><table><thead><tr><th class="num">Time</th><th>Overtaker</th><th>Passed</th><th class="num">New pos</th></tr></thead><tbody>
-      ${rows.map((r) => `<tr><td class="num mono">${clock(r.time_s)}</td><td class="mono"><b>${esc(r.overtaking)}</b></td><td class="mono">${esc(r.overtaken)}</td><td class="num">${r.position ?? '&mdash;'}</td></tr>`).join('')}</tbody></table></div></div></div>
+      ${rows.map((r) => `<tr><td class="num mono">${clock(r.time_s)}</td><td class="mono">${chip(m.drivers, r.overtaking)}<b>${esc(r.overtaking)}</b></td><td class="mono">${chip(m.drivers, r.overtaken)}${esc(r.overtaken)}</td><td class="num">${r.position ?? '&mdash;'}</td></tr>`).join('')}</tbody></table></div></div></div>
       <p class="hint">Events as detected and published by OpenF1; time is since the session start time OpenF1 publishes (m:ss).</p>`;
   }
 
@@ -129,9 +143,9 @@ const HistRace = (() => {
       ${isRace ? `<div class="panel"><h2>Gap to leader and to the car ahead</h2><div class="field" style="max-width:280px"><label for="hgapdrv">Driver</label><select id="hgapdrv">${driverOptions(drivers, picks[0] || drivers[0]?.code)}</select></div><div id="hgapout"><div class="dim">Loading&hellip;</div></div></div>
       <div class="panel"><h2>Overtakes</h2>${overtakesPanel(m, over.rows)}</div>` : `<div class="note info">Gaps, overtakes and the starting grid are published by OpenF1 for race and sprint sessions only.</div>`}`;
     const draw = () => {
-      $pick().innerHTML = drivers.map((d, i) => `<label style="text-transform:none;letter-spacing:0"><input type="checkbox" class="hrp" value="${esc(d.code)}" ${picks.includes(d.code) ? 'checked' : ''}> <span style="color:${colour(i)}">&#9632;</span> ${esc(d.code)}</label>`).join('')
+      $pick().innerHTML = drivers.map((d, i) => `<label style="text-transform:none;letter-spacing:0"><input type="checkbox" class="hrp" value="${esc(d.code)}" ${picks.includes(d.code) ? 'checked' : ''}> <span style="color:${driverColour(drivers, d.code)}">&#9632;</span> ${esc(d.code)}</label>`).join('')
         + '<button class="btn small" id="hrtop" type="button">Top 6</button><button class="btn small" id="hrall" type="button">All</button>';
-      document.getElementById('hrchart').innerHTML = positionChart(m, pos.rows, picks, drivers) + `<div class="legend">${picks.map((c) => `<span><i style="background:${colour(drivers.findIndex((d) => d.code === c))}"></i>${esc(c)}</span>`).join('')}</div>`;
+      document.getElementById('hrchart').innerHTML = positionChart(m, pos.rows, picks, drivers);
       document.querySelectorAll('.hrp').forEach((c) => c.addEventListener('change', () => { picks = [...document.querySelectorAll('.hrp:checked')].map((x) => x.value); draw(); }));
       document.getElementById('hrtop').addEventListener('click', () => { picks = (finishers.length ? finishers : drivers.map((d) => d.code)).slice(0, 6); draw(); });
       document.getElementById('hrall').addEventListener('click', () => { picks = drivers.map((d) => d.code); draw(); });
@@ -166,7 +180,7 @@ const HistRace = (() => {
     let svg = '';
     order.forEach((c, i) => {
       const y = 8 + i * rowH;
-      svg += `<text x="${left - 8}" y="${y + 14}" text-anchor="end">${esc(c)}</text>`;
+      svg += `<rect x="4" y="${y + 3}" width="8" height="8" fill="${driverColour(drivers, c)}"/><text x="${left - 8}" y="${y + 14}" text-anchor="end">${esc(c)}</text>`;
       stints.filter((s) => s.driver === c).forEach((s) => {
         const col = COMPOUND[String(s.compound || '').toUpperCase()] || '#64748b';
         svg += `<rect x="${X(s.a)}" y="${y}" width="${Math.max(2, X(s.b + 1) - X(s.a))}" height="${rowH - 5}" rx="3" fill="${col}" opacity=".9"><title>${esc(c)} stint ${esc(s.stint)}: ${esc(s.compound || 'unknown compound')}, laps ${s.a}-${s.b}</title></rect>`;
@@ -180,7 +194,7 @@ const HistRace = (() => {
   function pitTable(m, rows, hasStints) {
     if (!rows.length) return `${unavailable(m, 'pit_stops', 'pit stops')}${hasStints ? '<p class="hint">The tyre stints above still show where compounds changed; their timing is not a pit-lane measurement.</p>' : ''}`;
     return `<div style="overflow:auto"><table><thead><tr><th>Driver</th><th class="num">Lap</th><th class="num">Pit lane (s)</th><th class="num">Stationary (s)</th></tr></thead><tbody>
-      ${rows.map((r) => `<tr><td class="mono"><b>${esc(r.driver)}</b></td><td class="num">${r.lap_number ?? '&mdash;'}</td><td class="num">${r.lane_duration_s === null ? '&mdash;' : fmt(r.lane_duration_s, 1)}</td><td class="num">${r.stop_duration_s === null ? '&mdash;' : fmt(r.stop_duration_s, 1)}</td></tr>`).join('')}</tbody></table></div>
+      ${rows.map((r) => `<tr><td class="mono">${chip(m.drivers, r.driver)}<b>${esc(r.driver)}</b></td><td class="num">${r.lap_number ?? '&mdash;'}</td><td class="num">${r.lane_duration_s === null ? '&mdash;' : fmt(r.lane_duration_s, 1)}</td><td class="num">${r.stop_duration_s === null ? '&mdash;' : fmt(r.stop_duration_s, 1)}</td></tr>`).join('')}</tbody></table></div>
       <p class="hint">Pit lane time is entry to exit as published by OpenF1; stationary time is only published from the 2024 United States GP onwards, so older sessions show &mdash;.</p>`;
   }
 

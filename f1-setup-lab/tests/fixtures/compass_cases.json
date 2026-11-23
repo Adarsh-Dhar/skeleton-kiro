@@ -1,0 +1,133 @@
+{
+ "description": "Shared compass cases (design D6). Used by backend property test and frontend test 8.2.",
+ "cases": [
+  {
+   "deg": -360,
+   "compass": "N"
+  },
+  {
+   "deg": -337.5,
+   "compass": "NE"
+  },
+  {
+   "deg": -45,
+   "compass": "NW"
+  },
+  {
+   "deg": -22.6,
+   "compass": "NW"
+  },
+  {
+   "deg": -22.5,
+   "compass": "N"
+  },
+  {
+   "deg": -0.1,
+   "compass": "N"
+  },
+  {
+   "deg": 0,
+   "compass": "N"
+  },
+  {
+   "deg": 22.4,
+   "compass": "N"
+  },
+  {
+   "deg": 22.5,
+   "compass": "NE"
+  },
+  {
+   "deg": 22.6,
+   "compass": "NE"
+  },
+  {
+   "deg": 44.9,
+   "compass": "NE"
+  },
+  {
+   "deg": 45,
+   "compass": "NE"
+  },
+  {
+   "deg": 67.4,
+   "compass": "NE"
+  },
+  {
+   "deg": 67.5,
+   "compass": "E"
+  },
+  {
+   "deg": 90,
+   "compass": "E"
+  },
+  {
+   "deg": 112.5,
+   "compass": "SE"
+  },
+  {
+   "deg": 135,
+   "compass": "SE"
+  },
+  {
+   "deg": 157.5,
+   "compass": "S"
+  },
+  {
+   "deg": 180,
+   "compass": "S"
+  },
+  {
+   "deg": 202.5,
+   "compass": "SW"
+  },
+  {
+   "deg": 225,
+   "compass": "SW"
+  },
+  {
+   "deg": 247.5,
+   "compass": "W"
+  },
+  {
+   "deg": 270,
+   "compass": "W"
+  },
+  {
+   "deg": 292.5,
+   "compass": "NW"
+  },
+  {
+   "deg": 315,
+   "compass": "NW"
+  },
+  {
+   "deg": 337.4,
+   "compass": "NW"
+  },
+  {
+   "deg": 337.5,
+   "compass": "N"
+  },
+  {
+   "deg": 337.6,
+   "compass": "N"
+  },
+  {
+   "deg": 359.99,
+   "compass": "N"
+  },
+  {
+   "deg": 360,
+   "compass": "N"
+  },
+  {
+   "deg": 382.5,
+   "compass": "NE"
+  },
+  {
+   "deg": 720,
+   "compass": "N"
+  }
+ ]
+}

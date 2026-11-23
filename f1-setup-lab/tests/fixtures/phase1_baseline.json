@@ -1,0 +1,35 @@
+{
+  "recorded_by": "task 1.1 of f1-historical-phase1",
+  "tree_state": "before any phase 1 code change",
+  "environment": {
+    "python": "3.12.0",
+    "pandas": "2.3.3",
+    "sdk": {"package": "trialforge-core", "version": "0.2.1"},
+    "root_package": {"package": "trialforge-db", "version": "0.1.0"},
+    "venv": "root .venv"
+  },
+  "suites": {
+    "root": {
+      "command": ".venv/bin/python -m pytest -q",
+      "passed": 106,
+      "failed": 0,
+      "skipped": 1,
+      "xfailed": 0,
+      "errors": 0
+    },
+    "f1": {
+      "command": "cd f1-setup-lab && ../.venv/bin/python -m pytest tests -q -rs",
+      "passed": 288,
+      "failed": 0,
+      "skipped": 5,
+      "xfailed": 2,
+      "errors": 0
+    }
+  },
+  "notes": [
+    "F1 skips: 5 live OpenF1 tests, opt-in with RUN_NETWORK_TESTS=1 (tests/test_openf1.py:393).",
+    "Root skip: opt-in install and start smoke test (RUN_START_SMOKE=1).",
+    "The earlier restoration baseline (test_baseline.json) recorded root 52 passed and F1 95 passed; both suites have grown since.",
+    "A StarletteDeprecationWarning about httpx vs httpx2 appears in both suites."
+  ]
+}

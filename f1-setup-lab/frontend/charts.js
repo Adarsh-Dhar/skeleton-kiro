@@ -78,7 +78,7 @@ const Charts = (() => {
     let b = fr.g;
     o.series.forEach((s) => {
       const path = o.stepped ? s.pts.flatMap((p, i) => (i ? [`${X(p.x)},${Y(s.pts[i - 1].y)}`, `${X(p.x)},${Y(p.y)}`] : [`${X(p.x)},${Y(p.y)}`])) : s.pts.map((p) => `${X(p.x)},${Y(p.y)}`);
-      b += `<polyline fill="none" stroke="${s.color}" stroke-width="2" points="${path.join(' ')}"/>`;
+      b += `<polyline fill="none" stroke="${s.color}" stroke-width="2"${s.dash && s.dash !== '0' ? ` stroke-dasharray="${esc(s.dash)}"` : ''} points="${path.join(' ')}"/>`;
       if (!o.noDots) s.pts.forEach((p) => { b += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="${p.flag ? 6 : 3.5}" fill="${p.flag ? '#ff4d4d' : s.color}"><title>${esc(s.name)} ${f(p.x, 2)}: ${f(p.y, 3)}${p.flag ? ' (flagged)' : ''}</title></circle>`; });
     });
     return wrap(fr.W, fr.H, b, o.label) + `<div class="legend">${o.series.map((s) => `<span><i style="background:${s.color}"></i>${esc(s.name)}</span>`).join('')}</div>`;
