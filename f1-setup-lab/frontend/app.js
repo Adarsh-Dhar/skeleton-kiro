@@ -42,8 +42,20 @@ function setLed(state, text) { const a = $('#api-status'); a.innerHTML = `<i cla
 
 /* ------------------------------------------------------------------ router */
 const TABS = [['design', 'Setup design'], ['runs', 'Run monitor'], ['telemetry', 'Telemetry'], ['analysis', 'Analysis'], ['optimise', 'Optimisation'], ['report', 'Report']];
+/* An open tab keeps the JavaScript it loaded: switching pages only changes the #hash, which never reloads anything. After an
+   update the server's frontend fingerprint changes, and the next page change reloads the tab so it runs the current code. */
+let FRONTEND_BUILD = null;
+async function reloadIfUpdated() {
+  try {
+    const { build } = await (await fetch('/api/frontend-build', { cache: 'no-store' })).json();
+    if (FRONTEND_BUILD === null) FRONTEND_BUILD = build;
+    else if (build && build !== FRONTEND_BUILD) { location.reload(); return true; }
+  } catch (_) { /* offline backend: keep the current code */ }
+  return false;
+}
 async function route() {
   clearInterval(pollTimer);
+  if (await reloadIfUpdated()) return;
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   try {
     if (!META) META = await api('GET', '/api/meta');
@@ -98,7 +110,7 @@ async function viewDashboard() {
     });
     return list;
   };
-  view().innerHTML = `<div class="row"><div><h1>Dashboard</h1><p class="sub">Experiments on the synthetic vehicle simulator</p></div><div class="spacer"></div><a class="btn primary" href="#/new">New experiment</a></div><div class="panel" id="dash">Loading&hellip;</div>`;
+  view().innerHTML = `<div class="row"><div><h1>Dashboard</h1><p class="sub">Experiments on the synthetic vehicle simulator</p></div><div class="spacer"></div><a class="btn primary" href="#/new/synthetic">New experiment</a></div><div class="panel" id="dash">Loading&hellip;</div>`;
   const first = await draw();
   poll(async () => { try { const l = await draw(); if (!l.some((e) => ['running', 'queued'].includes(e.status))) clearInterval(pollTimer); } catch (_) {} }, 2000);
   return first;

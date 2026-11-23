@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 from contextlib import asynccontextmanager
@@ -404,6 +405,15 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, fast
 
     # ------------------------------------------------------------ frontend
     fe = Path(frontend_dir or os.environ.get("F1LAB_FRONTEND_DIR", DEFAULT_FRONTEND))
+
+    @app.get("/api/frontend-build")
+    def frontend_build():
+        """Fingerprint of the frontend files (names, sizes, modification times). An open browser tab compares it on every page
+        change and reloads when it differs, so a tab opened before an update never keeps running old JavaScript."""
+        files = sorted(p for p in fe.glob("*") if p.is_file() and p.suffix in (".html", ".js", ".css")) if fe.is_dir() else []
+        raw = "|".join(f"{p.name}:{p.stat().st_size}:{p.stat().st_mtime_ns}" for p in files)
+        return {"build": hashlib.sha256(raw.encode()).hexdigest()[:16], "files": len(files)}
+
     if fe.is_dir():
         app.mount("/", _NoCacheStaticFiles(directory=fe, html=True), name="frontend")
     return app

@@ -2,6 +2,7 @@
 the default New experiment screen (shared picker) and the Historical F1 page."""
 from __future__ import annotations
 
+import json
 import socket
 import threading
 import time
@@ -76,9 +77,36 @@ def test_opening_the_app_lands_on_real_historical_data_not_the_synthetic_dashboa
     assert page.evaluate("fetch('/app.js').then(r => r.headers.get('cache-control'))") == "no-cache"
 
 
-def test_real_historical_data_is_the_default_new_experiment_source(page):
-    page.goto(page.base + "/")
+def test_a_tab_opened_before_an_update_reloads_itself_on_the_next_click(page):
+    """Regression: switching pages only changes the #hash, so a tab opened before an update kept the old JavaScript (where
+    New experiment still opened the historical screen) until the user reloaded by hand."""
+    builds = iter(["old-build", "new-build"])
+    page.route("**/api/frontend-build", lambda r: r.fulfill(status=200, content_type="application/json",
+                                                             body=json.dumps({"build": next(builds, "new-build"), "files": 6})))
+    page.goto(page.base + "/#/dashboard")
+    page.wait_for_selector("text=No experiments yet")
+    page.evaluate("window.__marker = 'tab-before-update'")
+    page.click("#nav a[data-nav=new]")  # the fingerprint differs now: the tab reloads instead of running old code
+    page.wait_for_selector("#f")
+    assert page.evaluate("window.__marker === undefined")  # a real reload happened
+    assert page.url.endswith("#/new/synthetic")
+    page.unroute("**/api/frontend-build")
+
+
+def test_new_experiment_links_open_the_experiment_form_and_the_logo_opens_real_data(page):
+    page.goto(page.base + "/#/dashboard")
+    page.click("text=Configure my own")  # empty dashboard
+    page.wait_for_selector("#f")
+    page.goto(page.base + "/#/dashboard")
     page.click("#nav a[data-nav=new]")
+    page.wait_for_selector("#f")
+    assert page.url.endswith("#/new/synthetic") and "generate design" in page.inner_text("#f").lower()
+    page.click(".modecard[data-mode=hist]")  # the other sources are one click away from the form
+    page.wait_for_selector("#hprov")
+
+
+def test_real_historical_data_is_the_default_new_experiment_source(page):
+    page.goto(page.base + "/#/new")
     page.wait_for_selector("#hprov")
     cards = page.locator(".modecard")
     assert cards.count() == 3
@@ -134,6 +162,33 @@ def test_new_experiment_import_one_driver_and_open_the_analysis(page):
     exps = page.evaluate("fetch('/api/experiments').then(r => r.json())")
     assert len(exps if isinstance(exps, list) else exps.get("items", [])) == 0
     assert page.errors == []
+
+
+def test_a_finished_import_does_not_pull_the_user_away_from_another_page(page):
+    """Regression: an import started on New experiment kept polling after the user left, and when it completed it switched
+    the page to the imported session, so clicking New experiment ended up on #/hist/<session>/overview."""
+    ready(page, "#/new")
+    page.wait_for_selector(".hdrv")
+    page.select_option("#hsession", "Q")
+    page.wait_for_selector(".hdrv")
+    page.fake.delay_s = 0.15
+    try:
+        page.click("#himport")
+        page.wait_for_function("document.querySelector('#hprog')?.textContent.match(/DOWNLOADING|PROCESSING|QUEUED/)", timeout=15000)
+        page.click("#nav a[data-nav=new]")  # leave while the import is still running
+        page.wait_for_selector("#f")
+        jid = page.evaluate("fetch('/api/historical/imports?limit=1').then(r => r.json())")[0]["import_id"]
+        end = time.time() + 60
+        while page.evaluate(f"fetch('/api/historical/imports/{jid}').then(r => r.json())")["state"] != "COMPLETED":
+            assert time.time() < end, "import did not complete"
+            page.wait_for_timeout(250)
+        page.wait_for_timeout(4000)  # longer than the poll interval plus the auto-open delay
+        assert page.url.endswith("#/new/synthetic") and page.locator("#f").count() == 1
+    finally:
+        page.fake.delay_s = 0.0
+        # leave the shared test server as it was: later tests import this session themselves
+        page.evaluate("fetch('/api/historical/sessions/openf1-2025-abu-dhabi-grand-prix-q', {method: 'DELETE'})")
+        page.evaluate("fetch('/api/historical/openf1/cache', {method: 'DELETE'})")  # cached laps would hide the failure scenario of a later test
 
 
 def test_changing_a_selection_resets_the_dependent_controls(page):

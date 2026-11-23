@@ -110,9 +110,14 @@ class FakeOpenF1:
         self.fail_next: list[tuple[int, dict[str, str], bytes]] = []  # answered first, in order
         self.fail_endpoint: dict[str, tuple[int, bytes]] = {}  # endpoint -> permanent failure
         self.drop_laps = False
+        self.delay_s = 0.0  # slow every answer down (to test what the UI does while an import is still running)
 
     def __call__(self, url: str, timeout: float):
         self.calls.append(url)
+        if self.delay_s:
+            import time
+
+            time.sleep(self.delay_s)
         if self.fail_next:
             return self.fail_next.pop(0)
         path, _, query = url.partition("?")

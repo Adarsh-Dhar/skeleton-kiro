@@ -149,9 +149,14 @@ const HistPicker = (() => {
       return body;
     };
     const coverageLines = (m) => Object.entries(m.coverage?.endpoints || {}).map(([k, v]) => `${esc(k)}: ${esc(String(v.status).replace('_', ' '))}${v.rows ? ` (${esc(v.rows)})` : ''}`).join(' &middot; ');
+    /* The picker belongs to one page. Once the user has left it (the root is no longer in the document, or the hash
+       changed), polling stops and a finished import never pulls the user away from where they are now. */
+    const mountedHash = location.hash;
+    const onPage = () => root.isConnected && location.hash === mountedHash;
     const track = (jid) => {
       clearTimeout(timer);
       const tick = async () => {
+        if (!onPage()) return;
         let j;
         try { j = await api('GET', `/api/historical/imports/${jid}`); } catch (e) { $('#hprog', root).innerHTML = errorsBox(e); return; }
         const active = !TERMINAL.includes(j.state);
@@ -166,11 +171,11 @@ const HistPicker = (() => {
           const href = `#/hist/${encodeURIComponent(j.session_id)}/overview`;
           $('#hcov', root).innerHTML = `${m ? `${coverageLines(m)}${m.partial ? ' &middot; <b>partial</b>' : ''}<br>` : ''}Opening the session&hellip; <a href="${href}">open now</a>`;
           opts.onChange?.();
-          if (opts.navigate) setTimeout(() => { if (location.hash !== href) location.hash = href; }, 900);
+          if (opts.navigate) setTimeout(() => { if (onPage()) location.hash = href; }, 900);
           return;
         }
         if (!active) { $('#hmsg', root).textContent = j.state.toLowerCase(); opts.onChange?.(); return; }
-        timer = setTimeout(tick, 1500);
+        if (onPage()) timer = setTimeout(tick, 1500);
       };
       tick();
     };
