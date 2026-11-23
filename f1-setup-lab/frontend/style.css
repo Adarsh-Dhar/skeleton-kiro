@@ -60,21 +60,13 @@ svg.chart{width:100%;height:auto;display:block}svg.chart text{fill:var(--dim);fo
 .mono{font-family:var(--mono)}.dim{color:var(--dim)}.good{color:var(--green)}.badc{color:var(--bad)}code{font-family:var(--mono);background:#0b0e12;padding:1px 5px;border-radius:3px}
 
 .chip.hist{color:#d5b3ff;border-color:#5b3a8a}
-.tabs.mode a{padding:6px 14px}
-
-/* telemetry inspector */
-.insp-bar input[type=number]{width:90px;display:inline-block;padding:3px 6px}
-label.chk{display:inline-flex;align-items:center;gap:6px;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text);margin:0}
-label.chk.dim{color:var(--dim)}.insp-ch{gap:10px 16px;margin:10px 0}
-.insp-read{margin:8px 0 12px;height:190px;overflow:auto;border:1px solid var(--line);border-radius:6px}  /* fixed: hovering never shifts the charts */.insp-read td,.insp-read th{padding:3px 8px}
 
 [hidden]{display:none!important}
 
 .fixed-head{position:sticky;top:0;z-index:50}
 nav{gap:18px}.nav-group{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .nav-head{flex-basis:100%;margin:0;font-size:10px;letter-spacing:.14em;color:var(--dim);padding-left:14px}
-.banner.simrec{background:#0c2233;color:#8fd0ff;border-bottom-color:#1d4a6b}
-.chip.synthetic{color:var(--amber);border-color:#6b5112}.chip.simrec{color:#8fd0ff;border-color:#1d4a6b}
+.chip.synthetic{color:var(--amber);border-color:#6b5112}
 .coded{display:inline-block;min-width:34px;text-align:center;border-radius:3px;font:11px var(--mono);padding:1px 4px}.coded.m1{background:#14304d;color:#9ccfff}.coded.p1{background:#4d1b14;color:#ffb199}.coded.z{background:#222;color:#aaa}
 #view-error:empty{display:none}
 
@@ -88,3 +80,16 @@ nav{gap:18px}.nav-group{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .bar{display:inline-block;height:8px;border-radius:2px;background:var(--blue);vertical-align:middle;min-width:2px}
 .bar-track{display:inline-block;width:120px;height:8px;background:var(--panel2);border-radius:2px;vertical-align:middle}
 .note.bad{background:#2d1010;border-color:#7a2020;color:#ff9b9b}
+
+/* navigation: one label per entry, groups separated and wrapping on narrow screens */
+.top{flex-wrap:wrap;row-gap:8px}
+nav{flex-wrap:wrap;row-gap:6px;align-items:stretch}
+.nav-group{padding-left:18px;border-left:1px solid var(--line)}
+.nav-group:first-child{padding-left:0;border-left:0}
+.nav-head{padding-left:0;margin-bottom:2px}
+.nav-group a{padding:6px 12px;white-space:nowrap}
+.brand-text small{white-space:nowrap}
+
+/* page header row: title left, action right */
+.page-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:6px}
+.filters{margin-bottom:12px}.filters input[type=search]{min-width:240px}

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "f1-setup-lab"
 version = "2.1.0"
-description = "F1 SETUP LAB: Setup Engineering, Live Simulator and Historical F1 workspaces, built on the TRIALFORGE SDK, with real historical data from OpenF1"
+description = "F1 SETUP LAB: Setup Engineering and Historical F1 workspaces, built on the TRIALFORGE SDK, with real historical data from OpenF1"
 requires-python = ">=3.11"
 dependencies = [
   "trialforge-core>=0.2.0,<0.3",   # TRIALFORGE SDK (installed from the SDK wheel)
@@ -45,6 +45,3 @@ known-first-party = ["f1lab", "db"]
 [tool.ruff.lint.per-file-ignores]
 # explicit == True/False on pandas nullable booleans is intentional in the tests
 "tests/*.py" = ["E712"]
-# compact one-line statements in packet/protocol decoders and the capture loop are intentional
-"backend/f1lab/integrations/game_udp/protocols/*.py" = ["E702"]
-"backend/f1lab/integrations/game_udp/capture.py" = ["E702"]

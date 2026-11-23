@@ -11,7 +11,6 @@ FIXED_BODY = {"detail": [{"field": "server", "message": "internal error"}]}
 
 # (method, path, json body) for every restored route that calls the Lab_Service.
 ROUTES = [
-    ("GET", "/api/meta", None),
     ("GET", "/api/experiments", None),
     ("POST", "/api/experiments", {"name": "x"}),
     ("GET", "/api/experiments/e1", None),
@@ -22,19 +21,6 @@ ROUTES = [
     ("POST", "/api/telemetry/preview", {"csv": "a,b\n1,2"}),
     ("GET", "/api/experiments/e1/telemetry", None),
     ("POST", "/api/experiments/e1/runs/r1/telemetry", {"csv": "a,b\n1,2"}),
-    ("GET", "/api/live/status", None),
-    ("POST", "/api/live/connect", {}),
-    ("POST", "/api/live/disconnect", None),
-    ("GET", "/api/live/telemetry", None),
-    ("POST", "/api/experiments/e1/runs/r1/stint/start", None),
-    ("POST", "/api/experiments/e1/runs/r1/stint/submit", None),
-    ("GET", "/api/experiments/e1/runs/r1/evidence", None),
-    ("GET", "/api/experiments/e1/telemetry/series-index", None),
-    ("GET", "/api/experiments/e1/runs/r1/telemetry/series.csv", None),
-    ("GET", "/api/experiments/e1/runs/r1/telemetry/series", None),
-    ("GET", "/api/game/verification", None),
-    ("GET", "/api/game/probe-reports", None),
-    ("GET", "/api/game/probe-reports/p1", None),
     ("POST", "/api/experiments/e1/analysis", {}),
     ("GET", "/api/experiments/e1/recommendation", None),
     ("POST", "/api/experiments/e1/optimise/suggest", {}),

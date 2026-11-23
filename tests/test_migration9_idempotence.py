@@ -9,10 +9,10 @@ from sqlalchemy import text
 
 from db import create_db_engine, current_version
 from db.migrations import migrate
-from db.migrations.versions import MIGRATIONS, create_tables
+from db.migrations.game_data import DDL, create_game_tables
+from db.migrations.versions import MIGRATIONS
 
-RESTORED = ("f1_udp_recording", "f1_udp_packet", "f1_stint_evidence", "f1_stint_telemetry",
-            "f1_probe_report", "f1_setup_mapping_confirmation")
+RESTORED = tuple(DDL)  # the six tables migration 9 creates, parents first
 _text = st.text(alphabet=st.characters(min_codepoint=32, max_codepoint=126), min_size=1, max_size=20)
 
 
@@ -51,12 +51,12 @@ def test_migration9_is_idempotent(content):
                     c.execute(text("INSERT INTO app_experiment_owner (experiment_id, app, created_at) "
                                    "VALUES (:e, :a, CURRENT_TIMESTAMP)"), {"e": eid, "a": app})
                 if present:
-                    create_tables(c, *[t for t in RESTORED if t in present])
+                    create_game_tables(c, *[t for t in RESTORED if t in present])
                 for rid in reports:
                     c.execute(text("INSERT INTO f1_probe_report (report_id, created_at, report_json) "
                                    "VALUES (:r, CURRENT_TIMESTAMP, '{}')"), {"r": rid})
 
-            migrate(engine)
+            migrate(engine, target=9)
             assert current_version(engine) == 9
             first = _snapshot(engine)
 
@@ -64,7 +64,7 @@ def test_migration9_is_idempotent(content):
                 m9.apply(c)
             assert _snapshot(engine) == first
 
-            assert migrate(engine) == []  # second application through migrate
+            assert migrate(engine, target=9) == []  # second application through migrate
             assert _snapshot(engine) == first
         finally:
             engine.dispose()

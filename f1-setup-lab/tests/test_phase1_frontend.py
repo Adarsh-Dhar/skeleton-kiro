@@ -32,13 +32,13 @@ def test_every_script_passes_node_check(script):
     assert r.returncode == 0, r.stderr
 
 
-def test_nav_has_eight_entries_in_three_groups():
+def test_nav_has_seven_entries_in_two_groups():
     html = (FRONTEND / "index.html").read_text()
     nav = re.search(r'<nav id="nav">(.*?)</nav>', html, re.S).group(1)
     groups = re.split(r'<div class="nav-group">', nav)[1:]
-    assert [re.search(r"<h2[^>]*>(.*?)</h2>", g).group(1) for g in groups] == ["Setup Engineering", "Live Simulator", "Historical F1"]
-    assert [len(re.findall(r"<a ", g)) for g in groups] == [3, 1, 4]
-    assert re.findall(r'data-nav="(\w+)"', nav) == ["dashboard", "new", "telemetry", "live", "hist", "sessions", "standings", "season"]
+    assert [re.search(r"<h2[^>]*>(.*?)</h2>", g).group(1) for g in groups] == ["Setup Engineering", "Historical F1"]
+    assert [len(re.findall(r"<a ", g)) for g in groups] == [3, 4]
+    assert re.findall(r'data-nav="(\w+)"', nav) == ["dashboard", "experiments", "telemetry", "hist", "sessions", "standings", "season"]
 
 
 def test_scripts_load_in_dependency_order():

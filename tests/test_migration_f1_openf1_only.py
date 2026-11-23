@@ -11,8 +11,9 @@ from sqlalchemy import text
 
 from db import create_db_engine, current_version
 from db.migrations import migrate
+from db.migrations.game_data import GAME_TABLES
 
-RETIRED = ("f1_udp_packet", "f1_udp_recording", "f1_stint_telemetry", "f1_stint_evidence", "f1_probe_report", "f1_setup_mapping_confirmation")
+RETIRED = GAME_TABLES  # the tables migration 8 drops and migration 9 recreates
 
 
 def _tables(engine) -> set[str]:
@@ -55,7 +56,7 @@ def _version7_database(path):
 def test_f1_experiments_and_retired_tables_go_while_wattwise_and_openf1_stay(tmp_path):
     e = _version7_database(tmp_path / "t.db")
     assert current_version(e) == 7
-    migrate(e)
+    migrate(e, target=9)
     assert current_version(e) == 9
     assert set(RETIRED) <= _tables(e)  # migration 9 recreates the tables migration 8 dropped
     with e.connect() as c:
@@ -70,8 +71,8 @@ def test_f1_experiments_and_retired_tables_go_while_wattwise_and_openf1_stay(tmp
         assert c.execute(text("PRAGMA foreign_key_check")).all() == []
 
 
-def test_a_fresh_database_reaches_version_9_with_the_restored_tables(tmp_path):
+def test_a_fresh_database_reaches_the_latest_version_without_the_retired_tables(tmp_path):
     e = create_db_engine(tmp_path / "fresh.db")
     migrate(e)
-    assert current_version(e) == 9 and set(RETIRED) <= _tables(e)
+    assert current_version(e) == 10 and not set(RETIRED) & _tables(e)  # migration 9 recreates them, migration 10 drops them
     assert migrate(e) == []  # idempotent

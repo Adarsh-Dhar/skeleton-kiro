@@ -1,5 +1,5 @@
-/* F1 SETUP LAB single-page app (no build step): setup engineering, live simulator and historical Formula 1 (OpenF1). All dynamic text is escaped with esc().
-   Shared helpers and the router live here; the setup and simulator views are in setup_lab.js (loaded first). */
+/* F1 SETUP LAB single-page app (no build step): setup engineering and historical Formula 1 (OpenF1). All dynamic text is escaped with esc().
+   Shared helpers and the router live here; the setup-engineering views are in setup_lab.js (loaded first). */
 const esc = Charts.esc, fmt = Charts.f;
 const $ = (s, r = document) => r.querySelector(s);
 const view = () => $('#view-body');  // views render into this nested container; #view-error holds failures so earlier data stays
@@ -54,7 +54,7 @@ async function reloadIfUpdated() {
   } catch (_) { /* offline backend: keep the current code */ }
   return false;
 }
-/* Banner: the synthetic notice on Simulator views, the game-mode notice on Live views, the historical notice on Historical F1 views. */
+/* Banner: the synthetic notice on Setup Engineering views, the historical notice on Historical F1 views. */
 function showNotice(mode) { if (typeof setBanner === 'function') setBanner(mode); }
 const EXP_TABS = { design: 'viewDesign', runs: 'viewRuns', telemetry: 'viewExpTelemetry', analysis: 'viewAnalysis', optimise: 'viewOptimise', report: 'viewReport' };
 async function route() {
@@ -67,12 +67,12 @@ async function route() {
     if (!parts.length) { location.replace('#/dashboard'); return; }
     const head = parts[0];
     if (head === 'dashboard') { setNav('dashboard'); showNotice('synthetic'); return await viewDashboard(); }
-    if (head === 'new') { setNav('new'); showNotice('synthetic'); return parts[1] === 'live' ? await viewNewLive() : await viewNew(); }
-    if (head === 'live') { setNav('live'); showNotice(LIVE); return await viewLive(); }
+    if (head === 'experiments') { setNav('experiments'); showNotice('synthetic'); return await viewExperiments(); }
+    if (head === 'new') { setNav('experiments'); showNotice('synthetic'); return await viewNew(); }
     if (head === 'telemetry') { setNav('telemetry'); showNotice('synthetic'); return await viewTelemetryStandalone(); }
     if (head === 'e' && parts[1]) {
       const fn = { viewDesign, viewRuns, viewExpTelemetry, viewAnalysis, viewOptimise, viewReport }[EXP_TABS[parts[2] || 'design']];
-      if (fn) { setNav('dashboard'); showNotice('synthetic'); return await fn(parts[1]); }
+      if (fn) { setNav('experiments'); showNotice('synthetic'); return await fn(parts[1]); }
     }
     if (head === 'hist') { setNav(parts[1] ? 'sessions' : 'hist'); showNotice('historical'); return parts[1] ? await viewHistSession(parts[1], parts[2] || 'overview') : await viewHist(); }
     if (head === 'sessions') { setNav('sessions'); showNotice('historical'); return await viewSessions(); }

@@ -44,7 +44,7 @@
       "status": "passed",
       "lastRunTimestamp": 1795411981993
     },
-    "4.14 Write property test for UDP packet round trip": {
+    "4.14 Write property test for packet packet round trip": {
       "status": "passed",
       "lastRunTimestamp": 1795412000225
     },
@@ -563,7 +563,7 @@
         "timestamp": 1795412294278
       }
     ],
-    "4.14 Write property test for UDP packet round trip": [
+    "4.14 Write property test for packet packet round trip": [
       {
         "executionId": "95c9b40e-256c-4092-8313-337f0082889b",
         "chatSessionId": "sess_666efe76-cfe4-428b-b415-eb94b12bcc34",

@@ -14,8 +14,7 @@ def _table(headers: list[str], rows: list[list]) -> str:
 
 
 def render(name: str, hypothesis: str, rec: dict, design: dict, runs: list[dict], fx: dict, report: dict, mode: str = "synthetic") -> str:
-    live = mode == "live_simulator"
-    second, second_head, second_fmt = ("lap_time_std", "lap spread (s)", ".2f") if live else ("stability", "stability", ".1f")
+    second, second_head, second_fmt = "stability", "stability", ".1f"
     setup = rec.get("setup") or {}
     best_rows = [[k, v] for k, v in setup.items()]
     eff_rows = [[x["term"], f"{x['low_to_high']:+.3f}" if x["low_to_high"] is not None else "", f"{x['p_value']:.3g}" if x["p_value"] is not None else "n/a",

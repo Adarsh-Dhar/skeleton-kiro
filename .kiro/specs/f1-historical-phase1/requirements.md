@@ -14,7 +14,7 @@ Features, in scope:
 6. Tyre degradation analysis (historical, from stints and laps).
 7. Historical report and CSV export.
 
-Not in scope: new data providers, FastF1, changes to the Setup Engineering or Live Simulator workspaces, and live OpenF1 network tests or browser tests on the user's MacBook (listed under "Verification limits").
+Not in scope: new data providers, FastF1, changes to the Setup Engineering workspace, and live OpenF1 network tests or browser tests on the user's MacBook (listed under "Verification limits").
 
 ### Supersession of the restoration spec
 
@@ -54,7 +54,7 @@ The restoration spec forbids some of these features. This spec replaces those ru
 
 #### Acceptance Criteria
 
-1. THE Frontend SHALL add a Standings entry under the Historical F1 heading, and the navigation SHALL then list exactly eight entries in three groups (Setup Engineering 3, Live Simulator 1, Historical F1 4: Historical F1, Imported sessions, Standings, Season comparison).
+1. THE Frontend SHALL add a Standings entry under the Historical F1 heading, and the navigation SHALL then list exactly seven entries in two groups (Setup Engineering 3, Historical F1 4: Import from OpenF1, Imported sessions, Standings, Season comparison).
 2. WHEN the user opens a race or sprint Session in the Standings_View, THE Frontend SHALL show a drivers table (position, driver, team, points, points gained in this session when provided) and a teams table (position, team, points), both ordered by position ascending.
 3. THE Standings_View SHALL read only `datasets/drivers_championship` and `datasets/teams_championship`, and SHALL NOT call any import route.
 4. IF the Session is not a race or sprint, THEN THE Standings_View SHALL show the text "Standings are published for race and sprint sessions only" and no table.
@@ -165,7 +165,7 @@ The restoration spec forbids some of these features. This spec replaces those ru
 2. THE existing 21 historical routes SHALL keep their paths, methods, request and response schemas, and top-level keys and types, except that the drivers response MAY gain `team_colour` and `headshot_url` keys. The route manifest `historical_routes.json` SHALL be regenerated and committed in the same change, and the diff SHALL show only added routes and those two added keys.
 3. IF a migration is needed (Requirement 3.1), THEN Migration_10 SHALL be idempotent, SHALL preserve existing rows, SHALL take the pre-migration backup defined for Migration_9, and SHALL roll back fully on failure.
 4. THE Frontend SHALL NOT call any external host except Headshot image URLs.
-5. THE new features SHALL NOT import from `adapters`, `services`, or `game_udp`.
+5. THE new features SHALL NOT import from `adapters` or `services`.
 6. THE existing test suites SHALL pass, with the tests named under "Supersession" updated and no other test weakened.
 
 ### Requirement 9: Tests and verification

@@ -1,57 +1,33 @@
 # F1 SETUP LAB
 
-F1 SETUP LAB has three separate workspaces: **Setup Engineering**, **Live Simulator** and **Historical F1**. Data from each stays apart and is
+F1 SETUP LAB has two separate workspaces: **Setup Engineering** and **Historical F1**. Data from each stays apart and is
 labelled by source. The app depends on the TRIALFORGE SDK, FastF1 is not supported, and all historical data comes from OpenF1.
 
-## The three workspaces
+## The two workspaces
 
 ### Setup Engineering
 
 Plan and analyse car-setup experiments. Define factors (front wing, rear wing, and so on), generate a design, run it on the synthetic vehicle
 model or import stint telemetry from a CSV file, then see effects, a recommendation, optimisation suggestions and a report. **All data the
 Simulator produces is labelled SYNTHETIC**: the vehicle model is an invented response surface, not real Formula 1 telemetry. Screens:
-Dashboard, New experiment, Telemetry import.
-
-### Live Simulator
-
-Drive stints in EA SPORTS F1 25 (F1 25 or 2026 Season Pack UDP format) and record the game's UDP telemetry as setup-experiment measurements.
-A stint is accepted only when the setup read from the game matches the target setup. Results are labelled as simulator-recorded video-game
-data. **Live UDP capture needs the game to be running and sending packets** (default `127.0.0.1:20777`). Screen: Live simulator.
+Dashboard, Experiments (list and "Create new experiment"), Telemetry import.
 
 ### Historical F1
 
 Import and analyse **real historical Formula 1 sessions** from [OpenF1](https://openf1.org) (free, no account, 2023 onwards): laps,
 telemetry, track map, comparisons, running order, results, gaps, pit stops, race control, team radio and weather. Everything is labelled
-`HISTORICAL F1 · OPENF1` and is used for analysis only; it never becomes a setup-experiment result. Screens: Historical F1, Imported sessions, Standings, Season comparison. Per-session analysis tabs and exports are listed under "Historical F1 analysis features".
+`HISTORICAL F1 · OPENF1` and is used for analysis only; it never becomes a setup-experiment result. Screens: Import from OpenF1, Imported sessions, Standings, Season comparison. Per-session analysis tabs and exports are listed under "Historical F1 analysis features".
 
 ## SDK dependency
 
 F1 SETUP LAB depends on the **TRIALFORGE SDK** (`trialforge-core>=0.2.0,<0.3`, installed from the SDK wheel by `scripts/start-f1.sh`). The
-SDK provides the experiment machinery for Setup Engineering and the Live Simulator: design generation, run execution, measurement ingestion,
-analysis, optimisation and reports. F1 knowledge (the vehicle model, game catalogue, UDP decoding) lives in this app, not in the SDK.
+SDK provides the experiment machinery for Setup Engineering: design generation, run execution, measurement ingestion,
+analysis, optimisation and reports. F1 knowledge (the vehicle model, the OpenF1 import and analysis) lives in this app, not in the SDK.
 
-## Data sources, FastF1 and the game
+## Data sources and FastF1
 
 * **FastF1 is not supported.** It is not a dependency and no code imports it. Historical data comes from OpenF1 only.
-* **Simulator data is SYNTHETIC.** Live Simulator data is video-game data, and historical data is real OpenF1 data. The three are never mixed.
-* **Live UDP capture requires the running game.** Everything below was verified with recorded packets, not the live game.
-
-### Verified only with recorded packets (not tested against the live game)
-
-These behaviours were tested with recorded or constructed packets. They have **not been tested against the live game**:
-
-* F1 25 packet decoding (packet sizes, setup, telemetry and session history)
-* 2026 Season Pack packet decoding
-* receiver packet counting (good, malformed and wrong-format packets)
-* live stint recording and top-speed tracking
-* stint acceptance against the target setup, including rejection of an out lap, invalid laps, too few valid laps and inconsistent setups
-* session change during a stint (the stint is rejected and state is reset)
-* raw UDP recording and replay from the database
-* legacy `.f1raw` file import, including a truncated tail
-* setup-field probing (`scripts/probe_setup.py`) and mapping verification (`scripts/verify_setup_mapping.py`)
-* UDP recording inspection (`scripts/inspect_udp_recording.py`)
-
-The four setup-factor mappings stay unverified until you confirm them against the game's garage screen with `verify_setup_mapping.py confirm`.
+* **Simulator data is SYNTHETIC.** Historical data is real OpenF1 data. The two are never mixed.
 
 Historical data is labelled `HISTORICAL F1 · OPENF1`. OpenF1 is unofficial and not affiliated with Formula 1. Some values are estimated
 from what OpenF1 publishes (lap distance, for example); each session's *Import coverage* panel lists what was provided, estimated and missing.
@@ -75,14 +51,14 @@ another file), shared with WATTWISE LAB. Historical sessions (laps, telemetry, t
 tables in that file (`f1_*`). The only other directory is the OpenF1 answer cache, `data/openf1-cache/`. Restart the server and everything is
 still there; an import interrupted by a restart is marked `INTERRUPTED` and can be retried. Interactive API docs: <http://127.0.0.1:8001/api/docs>.
 
-Starting it once applies migration 9, which recreates the setup-engineering tables that migration 8 had cleared. Existing OpenF1
-sessions and WATTWISE data are kept, and the database is backed up under `data/backups/` first (see the root README).
+Starting it applies any pending migrations. Migration 10 removed a recorded-stint feature that no longer exists (its experiments, rows and six tables). Existing
+OpenF1 sessions, synthetic experiments and WATTWISE data are kept, and the database is backed up under `data/backups/` first (see the root README).
 
 ## The Historical F1 screens
 
 | Screen | What you do |
 |---|---|
-| **Historical F1** (landing page) | Pick season, Grand Prix, session and drivers (searchable, one, several or the whole field), choose which datasets to import, follow progress, cancel or retry. The session opens when the import finishes. Also lists recent imports and imported sessions. |
+| **Import from OpenF1** (landing page) | Pick season, Grand Prix, session and drivers (searchable, one, several or the whole field), choose which datasets to import, follow progress, cancel or retry. The session opens when the import finishes. Also lists recent imports and imported sessions. |
 | **Imported sessions** | Every stored session; open, re-analyse. |
 | Session: **Overview** | Session facts, drivers and best laps, which data is available, and the *Import coverage* panel (per dataset: status, rows, downloads, cache hits, fetch time, plus estimated and missing values). |
 | **Lap analysis** | Lap and sector times, compound, tyre life, speed trap, pit laps per driver. |

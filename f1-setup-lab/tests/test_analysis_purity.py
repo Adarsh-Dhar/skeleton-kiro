@@ -11,7 +11,7 @@ from f1lab.integrations.historical import analysis
 SOURCE = Path(analysis.__file__)
 THIRD_PARTY_ALLOWED = {"numpy", "pandas"}
 ALLOWED_F1LAB = {"f1lab.errors"}
-FORBIDDEN_PARTS = {"adapters", "services", "game_udp", "service", "repository", "fastapi", "starlette", "sqlalchemy"}
+FORBIDDEN_PARTS = {"adapters", "services", "service", "repository", "fastapi", "starlette", "sqlalchemy"}
 
 
 def _imported_modules() -> list[str]:

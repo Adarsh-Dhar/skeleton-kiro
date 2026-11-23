@@ -24,7 +24,7 @@ from f1lab.api.app import create_app
 from f1lab.integrations.historical import repository as R
 from f1lab.integrations.historical.openf1_client import OpenF1Client, RateLimiter
 
-from db.guard import HISTORICAL_TABLES, RESTORED_TABLES, SETUP_SDK_TABLES, target_table
+from db.guard import HISTORICAL_TABLES, SETUP_SDK_TABLES, target_table
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -32,16 +32,9 @@ import gen_historical_manifest as gen  # noqa: E402
 
 SESSIONS = sorted(p.stem for p in gen.FIXTURES.glob("*.json"))
 TERMINAL = ("COMPLETED", "FAILED", "CANCELLED")
-SETUP_TABLES = SETUP_SDK_TABLES | RESTORED_TABLES | {"app_experiment_owner", "ww_household", "ww_tariff", "ww_meter_import", "ww_meter_reading"}
+SETUP_TABLES = SETUP_SDK_TABLES | {"app_experiment_owner", "ww_household", "ww_tariff", "ww_meter_import", "ww_meter_reading"}
 SEEDS = {  # one INSERT per table; ``{n}`` makes the key unique per seeded row
     "app_experiment_owner": "INSERT INTO app_experiment_owner (experiment_id, app, created_at) VALUES ('seed-{n}', 'wattwise-lab', '2026-01-01')",
-    "f1_udp_recording": "INSERT INTO f1_udp_recording (recording_id, started_at, source) VALUES ('rec-{n}', '2026-01-01', 'seed')",
-    "f1_udp_packet": "INSERT INTO f1_udp_packet (recording_id, seq, received_at, data) VALUES ('rec-{n}', {n}, 1.5, x'0102')",
-    "f1_stint_evidence": "INSERT INTO f1_stint_evidence (experiment_id, run_id, payload_json, recorded_at) VALUES ('e{n}', 'r{n}', '{{}}', '2026-01-01')",
-    "f1_stint_telemetry": "INSERT INTO f1_stint_telemetry (experiment_id, run_id, seq, sample_json) VALUES ('e{n}', 'r{n}', {n}, '{{}}')",
-    "f1_probe_report": "INSERT INTO f1_probe_report (report_id, created_at, report_json) VALUES ('p{n}', '2026-01-01', '{{}}')",
-    "f1_setup_mapping_confirmation": "INSERT INTO f1_setup_mapping_confirmation (factor, game_variant, packet_field, verified, confirmed_by, confirmed_at) "
-                                     "VALUES ('f{n}', 'v', 'pf', 1, 'seed', '2026-01-01')",
     "ww_household": "INSERT INTO ww_household (id, settings_json, source, updated_at) VALUES ({n}, '{{}}', 'seed', '2026-01-01')",
     "ww_tariff": "INSERT INTO ww_tariff (tariff_id, name, position, data_json, created_at, updated_at) VALUES ('t{n}', 'T', {n}, '{{}}', '2026-01-01', '2026-01-01')",
     "ww_meter_import": "INSERT INTO ww_meter_import (import_id, file_name, imported_at, source, timezone, reading_kind, unit, rows_total, rows_used, rows_skipped, "

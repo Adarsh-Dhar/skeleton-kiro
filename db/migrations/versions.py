@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from sqlalchemy import Connection
 
 from db.base import Base
+from db.migrations.game_data import GAME_TABLES, SDK_EXPERIMENT_TABLES, create_game_tables, remove_game_data
 
 
 @dataclass(frozen=True)
@@ -57,11 +58,7 @@ def _m007_f1_hist_datasets(conn: Connection) -> None:
     create_tables(conn, "f1_hist_dataset")
 
 
-F1_RETIRED_TABLES = ("f1_udp_packet", "f1_udp_recording", "f1_stint_telemetry", "f1_stint_evidence", "f1_probe_report",
-                     "f1_setup_mapping_confirmation")
-# SDK tables that hold per-experiment rows (the SDK creates them on first use, so any of them may be missing)
-SDK_EXPERIMENT_TABLES = ("state_log", "jobs", "processed_measurements", "measurements", "analyses", "recommendations", "reports",
-                         "plans", "runs", "experiments")  # children before parents (foreign keys are enforced)
+F1_RETIRED_TABLES = GAME_TABLES  # the tables migration 8 dropped (and migration 9 recreated)
 
 
 def _m008_f1_openf1_only(conn: Connection) -> None:
@@ -96,8 +93,14 @@ def _m008_f1_openf1_only(conn: Connection) -> None:
 
 def _m009_f1_setup_restored(conn: Connection) -> None:
     """Restore the F1 SETUP LAB setup-engineering tables (parents first). Idempotent: existing tables are left alone."""
-    create_tables(conn, "app_experiment_owner", "f1_udp_recording", "f1_udp_packet", "f1_stint_evidence",
-                  "f1_stint_telemetry", "f1_probe_report", "f1_setup_mapping_confirmation")
+    create_tables(conn, "app_experiment_owner")
+    create_game_tables(conn)  # frozen DDL: these six tables have no models any more (see migration 10)
+
+
+def _m010_remove_game_data(conn: Connection) -> None:
+    """Remove the Live Simulator feature's data: its experiments (every SDK row) and the six game tables. The caller backs the
+    database up first (``db.backup.backup_hook``). Historical F1, synthetic experiments and WATTWISE data are not touched."""
+    remove_game_data(conn)
 
 
 MIGRATIONS: list[Migration] = [
@@ -110,4 +113,5 @@ MIGRATIONS: list[Migration] = [
     Migration(7, "f1 historical per-session datasets (race position, results, grid, intervals, ...)", _m007_f1_hist_datasets),
     Migration(8, "f1 keeps only OpenF1 historical data: remove its experiments and retired tables", _m008_f1_openf1_only),
     Migration(9, "f1 setup lab restored: owner table and six setup-engineering tables", _m009_f1_setup_restored),
+    Migration(10, "remove live simulator data: its experiments and the six game tables", _m010_remove_game_data),
 ]

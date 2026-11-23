@@ -9,15 +9,14 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from f1lab import HISTORICAL_NOTICE, NOTICES, SIM_RECORDED_NOTICE, SYNTHETIC_NOTICE
-from test_live_mode import live_body
+from f1lab import HISTORICAL_NOTICE, NOTICES, SYNTHETIC_NOTICE
 
 FRONTEND = Path(__file__).resolve().parents[1] / "frontend"
 
-# route head -> mode the banner must be set to (7.8 simulator views, 7.9 Live view, historical views only the historical notice)
+# route head -> mode the banner must be set to (Setup Engineering views the synthetic notice, historical views only the historical notice)
 EXPECTED_ROUTES = {
-    "dashboard": "'synthetic'", "new": "'synthetic'", "telemetry": "'synthetic'",
-    "live": "LIVE", "hist": "'historical'", "sessions": "'historical'",
+    "dashboard": "'synthetic'", "experiments": "'synthetic'", "new": "'synthetic'", "telemetry": "'synthetic'",
+    "hist": "'historical'", "sessions": "'historical'",
 }
 
 
@@ -26,7 +25,7 @@ def check_meta(meta: dict) -> list[str]:
     if meta.get("notice") != SYNTHETIC_NOTICE:
         problems.append("/api/meta notice is not SYNTHETIC_NOTICE")
     notices = meta.get("notices") or {}
-    for mode, text in (("synthetic", SYNTHETIC_NOTICE), ("live_simulator", SIM_RECORDED_NOTICE), ("historical", HISTORICAL_NOTICE)):
+    for mode, text in (("synthetic", SYNTHETIC_NOTICE), ("historical", HISTORICAL_NOTICE)):
         if notices.get(mode) != text:
             problems.append(f"/api/meta notices[{mode}] missing or changed")
     return problems
@@ -46,8 +45,6 @@ def check_frontend(index_html: str, setup_js: str, app_js: str, css: str) -> lis
         problems.append("style.css: .fixed-head is not sticky, so the notice could scroll away")
     if not re.search(r"function setBanner\(mode\)[^}]*META\.notices\[mode\]", setup_js, re.S) or "$('#banner')" not in setup_js:
         problems.append("setup_lab.js: setBanner does not write META.notices[mode] into #banner")
-    if "const LIVE = 'live_simulator'" not in setup_js:
-        problems.append("setup_lab.js: LIVE is not the live_simulator mode")
     for head, mode in EXPECTED_ROUTES.items():
         if not re.search(rf"head === '{head}'\)[^\n]*?showNotice\({re.escape(mode)}\)", app_js):
             problems.append(f"app.js: route '{head}' does not show the {mode} notice")
@@ -68,9 +65,7 @@ def test_meta_carries_every_notice(client):
 
 def test_experiment_payloads_carry_their_mode_notice(client, make_experiment):
     assert check_experiment_payload(make_experiment(), "synthetic") == []
-    r = client.post("/api/experiments", json=live_body())
-    assert r.status_code == 201, r.text
-    assert check_experiment_payload(r.json(), "live_simulator") == []
+    assert set(NOTICES) == {"synthetic", "historical"}
 
 
 def test_frontend_shows_the_right_notice_in_the_fixed_header():
@@ -85,10 +80,10 @@ def test_static_frontend_is_served_with_the_banner(client):
 def test_checker_detects_a_missing_notice_location(client, make_experiment):
     meta = client.get("/api/meta").json()
     assert check_meta({**meta, "notice": "x"})
-    assert check_meta({**meta, "notices": {**meta["notices"], "live_simulator": ""}})
+    assert check_meta({**meta, "notices": {**meta["notices"], "synthetic": ""}})
     assert check_meta({**meta, "notices": {k: v for k, v in meta["notices"].items() if k != "historical"}})
     d = make_experiment()
-    assert check_experiment_payload({**d, "synthetic_notice": SIM_RECORDED_NOTICE}, "synthetic")
+    assert check_experiment_payload({**d, "synthetic_notice": HISTORICAL_NOTICE}, "synthetic")
     assert check_experiment_payload({k: v for k, v in d.items() if k != "notice"}, "synthetic")
 
     index, setup, app, css = read_frontend()
@@ -97,6 +92,6 @@ def test_checker_detects_a_missing_notice_location(client, make_experiment):
     assert check_frontend(index.replace('id="banner"', 'id="elsewhere"'), setup, app, css)
     assert check_frontend(index, setup.replace("META.notices[mode]", "''"), app, css)
     assert check_frontend(index, setup, css=css.replace("position:sticky", "position:static"), app_js=app)
-    assert check_frontend(index, setup, app.replace("showNotice(LIVE)", "showNotice('synthetic')"), css)
+    assert check_frontend(index, setup, app.replace("showNotice('synthetic'); return await viewTelemetryStandalone", "return await viewTelemetryStandalone"), css)
     assert check_frontend(index, setup, app.replace("head === 'dashboard') { setNav('dashboard'); showNotice('synthetic');", "head === 'dashboard') { setNav('dashboard');"), css)
     assert check_frontend(index, setup, app.replace("showNotice('historical'); return await viewSessions", "return await viewSessions"), css)

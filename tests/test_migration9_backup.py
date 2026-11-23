@@ -87,7 +87,7 @@ def test_backup_precedes_migration_9_and_equals_source(rows, wal):
                 wrapped.append(m)
             engine = create_db_engine(str(db))
             try:
-                applied = migrate(engine, migrations=wrapped, before_apply=backup_hook)
+                applied = migrate(engine, target=9, migrations=wrapped, before_apply=backup_hook)
                 assert [a.version for a in applied] == [9]
             finally:
                 engine.dispose()

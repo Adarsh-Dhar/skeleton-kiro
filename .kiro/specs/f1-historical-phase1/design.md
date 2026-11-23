@@ -30,7 +30,7 @@ No new table and no migration is needed (see "Decisions", D1).
 
 **D3. Reject, don't repair, bad external values.** `team_colour` must match `^[0-9A-Fa-f]{6}$` and is stored upper-cased. `headshot_url` must be `https`, at most 500 characters, with a host. Anything else is stored as null. The fixtures use two hosts (`media.formula1.com`, `www.formula1.com`), so the frontend does not pin a host list. It loads only the stored URL, with `referrerpolicy="no-referrer"`.
 
-**D4. Analysis is pure.** `analysis.py` imports only `numpy`, `pandas`, `csv`, `io`, `html`, `math`, `statistics`. It does not import the service, the repository, `adapters`, `services` or `game_udp`. A test enforces this (Requirement 8.5).
+**D4. Analysis is pure.** `analysis.py` imports only `numpy`, `pandas`, `csv`, `io`, `html`, `math`, `statistics`. It does not import the service, the repository, `adapters` or `services`. A test enforces this (Requirement 8.5).
 
 **D5. Standings come from stored datasets only.** The Standings view calls `datasets/drivers_championship` and `datasets/teams_championship`. A new aggregate route is not needed. The export route builds the standings table from the same stored rows.
 
@@ -158,7 +158,7 @@ Summary (event, session, date, source OpenF1), results, standings (or "unavailab
 
 ### Navigation and router
 
-Seven entries in three groups. The Historical F1 group becomes: Historical F1 (`#/hist`), Imported sessions (`#/sessions`), Standings (`#/standings`), Season comparison (`#/season`). With the four from the other groups that is eight, which contradicts Requirement 1.1 ("exactly seven"). **Requirement 1.1 is wrong as written and needs one fix:** Setup Engineering has 3, Live Simulator has 1, Historical F1 has 2 now; adding Standings and Season comparison gives 3 + 1 + 4 = **8** entries. The requirements file will be corrected to eight.
+Seven entries in two groups. The Historical F1 group is: Import from OpenF1 (`#/hist`), Imported sessions (`#/sessions`), Standings (`#/standings`), Season comparison (`#/season`). With the three Setup Engineering entries that is seven (3 + 4). An earlier version of this design counted eight entries in three groups; the third group, a recorded-stint workspace, was removed from the app.
 
 New session tabs are added to `HIST_TABS`: `['minisectors', 'Mini-sectors']` and `['tyres', 'Tyres']`. Export buttons sit in the session header.
 

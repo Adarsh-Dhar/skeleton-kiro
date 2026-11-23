@@ -19,10 +19,9 @@ import pytest
 from f1lab import NOTICES
 
 FRONTEND = Path(__file__).resolve().parents[1] / "frontend"
-SCRIPTS = ["charts.js", "inspector.js", "hist_race.js", "hist_picker.js", "setup_lab.js", "hist_analysis.js", "app.js"]
-NAV = [("Setup Engineering", ["Dashboard", "New experiment", "Telemetry import"]),
-       ("Live Simulator", ["Live simulator"]),
-       ("Historical F1", ["Historical F1", "Imported sessions", "Standings", "Season comparison"])]
+SCRIPTS = ["charts.js", "hist_race.js", "hist_picker.js", "setup_lab.js", "hist_analysis.js", "app.js"]
+NAV = [("Setup Engineering", ["Dashboard", "Experiments", "Telemetry import"]),
+       ("Historical F1", ["Import from OpenF1", "Imported sessions", "Standings", "Season comparison"])]
 
 
 # ------------------------------------------------------------------------------------------------ static checks
@@ -71,7 +70,7 @@ class _Nav(HTMLParser):
             self.entries[-1] = (h, label + data, d)
 
 
-def test_index_html_has_eight_entries_under_three_headings():
+def test_index_html_has_seven_entries_under_two_headings():
     p = _Nav()
     p.feed((FRONTEND / "index.html").read_text())
     assert [h.strip() for h in p.headings] == [h for h, _ in NAV]
@@ -79,7 +78,7 @@ def test_index_html_has_eight_entries_under_three_headings():
     for heading, label, _ in p.entries:
         got.setdefault(heading.strip(), []).append(label.strip())
     assert got == dict(NAV)
-    assert len(p.entries) == 8 and len({e[1] for e in p.entries}) == 8  # each entry under exactly one heading
+    assert len(p.entries) == 7 and len({e[1] for e in p.entries}) == 7  # each entry under exactly one heading
 
 
 def test_index_html_loads_scripts_in_order():
@@ -92,7 +91,7 @@ def test_no_extra_router_pages_tabs_or_report_views():
     sl = (FRONTEND / "setup_lab.js").read_text()
     # the router dispatches only the known pages
     heads = set(re.findall(r"head === '([a-z]+)'", app))
-    assert heads == {"dashboard", "new", "live", "telemetry", "e", "hist", "sessions", "standings", "season"}
+    assert heads == {"dashboard", "experiments", "new", "telemetry", "e", "hist", "sessions", "standings", "season"}
     # experiment tabs and historical tabs are exactly the known sets: no extra report tab
     assert [k for k, _ in re.findall(r"\['([a-z]+)', '([^']+)'\]", re.search(r"const TABS = \[(.*?)\];", sl).group(1))] == \
         ["design", "runs", "telemetry", "analysis", "optimise", "report"]
@@ -147,8 +146,8 @@ def page(stack):
         browser.close()
 
 
-ENTRIES = [("dashboard", "Dashboard"), ("new", "New experiment"), ("telemetry", "Telemetry import"),
-           ("live", "Live simulator"), ("hist", "Historical F1"), ("sessions", "Imported sessions")]
+ENTRIES = [("dashboard", "Dashboard"), ("experiments", "Experiments"), ("telemetry", "Telemetry import"),
+           ("hist", "Historical F1"), ("sessions", "Imported sessions")]
 
 
 def _heading_shown(page, text):
@@ -188,8 +187,8 @@ def _in_viewport(page, sel):
 
 
 @pytest.mark.parametrize(("hash_", "mode", "title"), [
-    ("#/dashboard", "synthetic", "Dashboard"), ("#/new", "synthetic", "New experiment"),
-    ("#/telemetry", "synthetic", "Telemetry import"), ("#/live", "live_simulator", "Live simulator")])
+    ("#/dashboard", "synthetic", "Dashboard"), ("#/experiments", "synthetic", "Experiments"), ("#/new", "synthetic", "Create experiment"),
+    ("#/telemetry", "synthetic", "Telemetry import")])
 def test_simulator_notices_are_unchanged_and_in_the_viewport(page, hash_, mode, title):
     page.goto(page.base + "/" + hash_)
     _heading_shown(page, title)
@@ -201,7 +200,7 @@ def test_simulator_notices_are_unchanged_and_in_the_viewport(page, hash_, mode, 
 
 def test_api_failure_shows_the_backend_message_and_keeps_navigation_usable(page):
     page.goto(page.base + "/#/new")
-    _heading_shown(page, "New experiment")
+    _heading_shown(page, "Create experiment")
     page.route("**/api/experiments", lambda r: r.fulfill(status=500, content_type="application/json", body=json.dumps({"detail": "backend exploded"})))
     page.click("#nav a[data-nav=dashboard]")
     page.wait_for_function("document.querySelector('#view-error')?.textContent.includes('backend exploded') || document.querySelector('#dash')?.textContent.includes('backend exploded')", timeout=1500)
@@ -213,8 +212,8 @@ def test_api_failure_shows_the_backend_message_and_keeps_navigation_usable(page)
     page.route("**/api/experiments", lambda r: r.abort())
     page.click("#nav a[data-nav=dashboard]")
     page.wait_for_function("(document.querySelector('#view-error')?.textContent + (document.querySelector('#dash')?.textContent || '')).includes('request failed')", timeout=1500)
-    page.click("#nav a[data-nav=new]")
-    _heading_shown(page, "New experiment")
+    page.click("#nav a[data-nav=experiments]")
+    _heading_shown(page, "Experiments")
     page.unroute("**/api/experiments")
 
 
@@ -237,4 +236,48 @@ def test_one_chart_of_each_type_renders(page):
         page.evaluate("h => { const d = document.createElement('div'); d.className = 'probe'; d.innerHTML = h; document.body.appendChild(d); }", svg)
     assert page.locator(".probe svg.chart").count() == 5
     assert page.locator(".probe svg.chart *").count() > 5 * 3
+    assert page.errors == []
+# ------------------------------------------------------------------------------------------------ Experiments page
+def _delete_all_experiments_route(page):
+    page.route("**/api/experiments", lambda r: r.fulfill(status=200, content_type="application/json", body="[]") if r.request.method == "GET" else r.continue_())
+def test_experiments_page_shows_empty_state_and_create_button_opens_the_form(page):
+    _delete_all_experiments_route(page)
+    page.goto(page.base + "/#/experiments")
+    _heading_shown(page, "Experiments")
+    page.wait_for_selector("#xlist .empty")
+    assert "no experiments yet" in page.inner_text("#xlist").lower()
+    assert page.locator("#xnew.btn.primary").text_content() == "Create new experiment"
+    assert "on" in page.get_attribute("#nav a[data-nav=experiments]", "class").split()
+    page.click("#xnew")
+    _heading_shown(page, "Create experiment")
+    assert page.locator("#f").count() == 1 and page.locator("#view a:has-text('Back to experiments')").count() == 1
+    assert "on" in page.get_attribute("#nav a[data-nav=experiments]", "class").split()
+    assert page.locator("#nav a.on").count() == 1
+    assert page.inner_text("#banner") == NOTICES["synthetic"]
+    page.unroute("**/api/experiments")
+    page.click("#view a:has-text('Back to experiments')")
+    _heading_shown(page, "Experiments")
+    assert page.errors == []
+def test_experiments_page_lists_api_created_experiments_filters_and_opens_rows(page):
+    import urllib.request
+    ids = {}
+    for name in ("Alpha listing exp", "Bravo listing exp"):
+        req = urllib.request.Request(page.base + "/api/experiments", data=json.dumps({"name": name}).encode(), headers={"content-type": "application/json"}, method="POST")
+        ids[name] = json.load(urllib.request.urlopen(req))["id"]
+    page.goto(page.base + "/#/experiments")
+    _heading_shown(page, "Experiments")
+    page.wait_for_selector("#xlist tr[data-id]")
+    for name, i in ids.items():
+        assert page.locator(f"#xlist tr[data-id='{i}']").inner_text().startswith(name)
+    assert [h.text_content() for h in page.locator("#xlist th").all()][:3] == ["Experiment", "Status", "Progress"]
+    page.fill("#xq", "bravo")
+    assert page.locator("#xlist tr[data-id]").count() == 1
+    page.fill("#xq", "zzz-no-match")
+    assert "no experiments match" in page.inner_text("#xlist").lower()
+    page.fill("#xq", "")
+    page.click(f"#xlist tr[data-id='{ids['Alpha listing exp']}']")
+    page.wait_for_function("l => location.hash === l", arg=f"#/e/{ids['Alpha listing exp']}/design")
+    _heading_shown(page, "Alpha listing exp")
+    assert "on" in page.get_attribute("#nav a[data-nav=experiments]", "class").split()
+    assert page.locator("#nav a.on").count() == 1
     assert page.errors == []

@@ -73,7 +73,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app. The pure m
 
   - [x] 2.11 Write a static test that `analysis.py` is pure
     - Parse its imports with `ast`; allow only the modules named in the Overview
-    - Fail if it imports `adapters`, `services`, `game_udp`, the service, the repository or FastAPI
+    - Fail if it imports `adapters`, `services`, the service, the repository or FastAPI
     - _Requirements: 8.5_
 
 - [x] 3. Checkpoint - Ensure all tests pass
@@ -172,7 +172,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app. The pure m
     - _Requirements: 3.4, 3.5, 3.9_
 
   - [x] 7.7 Update `index.html`, `app.js` and `style.css`
-    - Navigation of eight entries in three groups: Setup Engineering 3, Live Simulator 1, Historical F1 4 (Historical F1, Imported sessions, Standings, Season comparison)
+    - Navigation of seven entries in two groups: Setup Engineering 3, Historical F1 4 (Import from OpenF1, Imported sessions, Standings, Season comparison)
     - Script order `charts.js, inspector.js, hist_race.js, hist_picker.js, setup_lab.js, hist_analysis.js, app.js`
     - Router entries for `standings` and `season`, tab entries `minisectors` and `tyres`, `showNotice('historical')` on every new view
     - _Requirements: 1.1, 1.6, 8.4_

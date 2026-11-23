@@ -1,6 +1,6 @@
 """Data-separation write guard (requirement 6.8).
 
-Historical (OpenF1) data and setup (simulator/game measurement) data must never be mixed. ``install_guard``
+Historical (OpenF1) data and setup-engineering (synthetic experiment) data must never be mixed. ``install_guard``
 attaches a ``before_cursor_execute`` listener to a SQLAlchemy engine. The listener finds the target table of
 every INSERT, UPDATE, DELETE and REPLACE statement and raises :class:`TableNotPermitted` before the statement
 reaches the database when the table is outside the allow-list of the engine's domain. SELECTs and other
@@ -69,20 +69,9 @@ SETUP_SDK_TABLES: frozenset[str] = frozenset(
     }
 )
 
-RESTORED_TABLES: frozenset[str] = frozenset(
-    {
-        "f1_udp_recording",
-        "f1_udp_packet",
-        "f1_stint_evidence",
-        "f1_stint_telemetry",
-        "f1_probe_report",
-        "f1_setup_mapping_confirmation",
-    }
-)
-
 PERMITTED: dict[str, frozenset[str]] = {
     "historical": HISTORICAL_TABLES,
-    "setup": SETUP_SDK_TABLES | RESTORED_TABLES | {"app_experiment_owner"},
+    "setup": SETUP_SDK_TABLES | {"app_experiment_owner"},
 }
 
 

@@ -1,4 +1,4 @@
-"""FastAPI application factory for F1 SETUP LAB: Setup Engineering, Live Simulator and Historical F1 (OpenF1)."""
+"""FastAPI application factory for F1 SETUP LAB: Setup Engineering and Historical F1 (OpenF1)."""
 
 from __future__ import annotations
 
@@ -36,15 +36,10 @@ from f1lab.api.schemas import (
     METHODS,
     AnalysisRequest,
     ExperimentRequest,
-    LiveConnectRequest,
     OptimiseRequest,
     TelemetryRequest,
     default_factors,
 )
-from f1lab.catalogs.ea_f1_25 import GAME_FACTORS, GAME_ID
-from f1lab.catalogs.verification import get_probe_report, list_probe_reports
-from f1lab.catalogs.verification import status as verification_status
-from f1lab.integrations.game_udp.probe import VARIANT_LABELS
 from f1lab.integrations.historical.openf1_client import MIN_YEAR, OpenF1Error
 from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest, SeasonCompareRequest
 from f1lab.integrations.historical.service import HistoricalService
@@ -169,15 +164,9 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
 
     @app.get("/api/meta")
     def meta():
-        ver = verification_status(lab.repo.db_engine)
         return {
             "notice": SYNTHETIC_NOTICE, "notices": dict(NOTICES),
-            "modes": [{"id": "synthetic", "label": "Synthetic simulator"}, {"id": "live_simulator", "label": "Live simulator (EA SPORTS F1 25)"}],
-            "game": {"id": GAME_ID, "default_port": 20777, "variants": VARIANT_LABELS,
-                     # 'verified' = manually confirmed for every game variant; per-variant status and its source in 'verification'
-                     "factors": {k: {**v, "verified": all(ver[var][k]["verified"] for var in ver),
-                                     "verification": {var: ver[var][k] for var in ver}} for k, v in GAME_FACTORS.items()},
-                     "unsupported_methods": ["central_composite", "box_behnken"]},
+            "modes": [{"id": "synthetic", "label": "Synthetic simulator"}],
             "version": __version__, "trialforge_version": trialforge.__version__,
             "factors": {k: {**v} for k, v in FACTORS.items()},
             "default_factors": {k: s.model_dump() for k, s in default_factors().items()},
@@ -231,70 +220,6 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
     @app.post("/api/experiments/{exp_id}/runs/{run_id}/telemetry")
     async def attach_telemetry(exp_id: str, run_id: str, req: TelemetryRequest):
         return await lab.attach_telemetry(exp_id, run_id, req.csv, req.time_unit, req.filename)
-
-    # ------------------------------------------------------------ live simulator (UDP)
-    @app.get("/api/live/status")
-    def live_status():
-        return lab.live_status()
-
-    @app.post("/api/live/connect")
-    async def live_connect(req: LiveConnectRequest | None = None):
-        req = req or LiveConnectRequest()
-        return await lab.live_connect(req.host, req.port)
-
-    @app.post("/api/live/disconnect")
-    def live_disconnect():
-        return lab.live_disconnect()
-
-    @app.get("/api/live/telemetry")
-    def live_telemetry(scope: str = "live", limit: int = 1500):
-        if scope not in ("live", "stint"):
-            raise HTTPException(422, "scope must be 'live' or 'stint'")
-        if limit < 1 or limit > 3000:
-            raise HTTPException(422, "limit must be between 1 and 3000")
-        return lab.live_telemetry(scope, limit)
-
-    @app.post("/api/experiments/{exp_id}/runs/{run_id}/stint/start")
-    def stint_start(exp_id: str, run_id: str):
-        return lab.stint_start(exp_id, run_id)
-
-    @app.post("/api/experiments/{exp_id}/runs/{run_id}/stint/submit")
-    async def stint_submit(exp_id: str, run_id: str):
-        return await lab.stint_submit(exp_id, run_id)
-
-    @app.get("/api/experiments/{exp_id}/runs/{run_id}/evidence")
-    def evidence(exp_id: str, run_id: str):
-        return lab.evidence(exp_id, run_id)
-
-    @app.get("/api/experiments/{exp_id}/telemetry/series-index")
-    def telemetry_series_index(exp_id: str):
-        return lab.telemetry_series_index(exp_id)
-
-    @app.get("/api/experiments/{exp_id}/runs/{run_id}/telemetry/series.csv")
-    def run_telemetry_series_csv(exp_id: str, run_id: str):
-        return PlainTextResponse(lab.telemetry_series_csv(exp_id, run_id), media_type="text/csv",
-                                 headers={"Content-Disposition": f'attachment; filename="{exp_id}-{run_id}-telemetry.csv"'})
-
-    @app.get("/api/experiments/{exp_id}/runs/{run_id}/telemetry/series")
-    def run_telemetry_series(exp_id: str, run_id: str, limit: int = Query(5000, ge=1, le=20000)):
-        return lab.run_telemetry_series(exp_id, run_id, limit)
-
-    # ------------------------------------------------------------ setup-mapping verification (read-only; confirm with the script)
-    @app.get("/api/game/verification")
-    def game_verification():
-        return {"variants": VARIANT_LABELS, "status": verification_status(lab.repo.db_engine),
-                "how_to_confirm": "python scripts/probe_setup.py --guided, then python scripts/verify_setup_mapping.py confirm ..."}
-
-    @app.get("/api/game/probe-reports")
-    def game_probe_reports(limit: int = Query(50, ge=1, le=500)):
-        return list_probe_reports(lab.repo.db_engine, limit)
-
-    @app.get("/api/game/probe-reports/{report_id}")
-    def game_probe_report(report_id: str):
-        rep = get_probe_report(lab.repo.db_engine, report_id)
-        if rep is None:
-            raise lab_module.NotFound(report_id)
-        return rep
 
     # ------------------------------------------------------------ historical F1 (OpenF1)
     year_q = Query(..., ge=MIN_YEAR, le=2100)

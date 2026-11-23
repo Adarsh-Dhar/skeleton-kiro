@@ -16,22 +16,14 @@ F1_README = ROOT / "f1-setup-lab" / "README.md"
 ROOT_README = ROOT / "README.md"
 CHECK_RELEASE = ROOT / "scripts" / "check-release.sh"
 
-WORKSPACES = ["Setup Engineering", "Live Simulator", "Historical F1"]
+WORKSPACES = ["Setup Engineering", "Historical F1"]
 
-# One distinctive substring per live behaviour verified only with recorded packets (Req 10.7).
-LIVE_BEHAVIOURS = [
-    "F1 25 packet decoding",
-    "2026 Season Pack packet decoding",
-    "receiver packet counting",
-    "live stint recording",
-    "stint acceptance",
-    "session change during a stint",
-    "raw UDP recording and replay",
-    ".f1raw",
-    "setup-field probing",
-    "UDP recording inspection",
+# Names of the removed recorded-stint feature. They are written in pieces so that a repository-wide search for them finds
+# only the migration that removes its data (db/migrations/game_data.py) and not this check.
+REMOVED_FEATURE = [
+    "EA SP" + "ORTS", "F1 " + "25", "U" + "DP", "20" + "777", "Live " + "Simulator", "live_" + "simulator", "SIM-" + "RECORDED",
+    "SIMULATOR-" + "RECORDED", "probe_" + "setup", "verify_setup_" + "mapping", "inspect_u" + "dp_recording", "recorded " + "packets",
 ]
-
 FORBIDDEN = [
     "simulator was removed",
     "simulator has been removed",
@@ -106,11 +98,12 @@ def test_sdk_named_with_role_in_at_most_three_sentences(f1: str) -> None:
 
 
 # Requirement 10.3
-def test_synthetic_and_live_udp_statements(f1: str) -> None:
+def test_synthetic_statements_and_two_data_modes(f1: str) -> None:
     text = _plain(f1)
     assert "SYNTHETIC" in text
     assert "labelled SYNTHETIC" in text
-    assert "Live UDP capture needs the game to be running and sending packets" in text
+    assert "two separate workspaces" in text
+    assert "Historical data is real OpenF1 data" in text
 
 
 # Requirement 10.4
@@ -137,14 +130,13 @@ def test_fastf1_not_supported_and_openf1_history(request: pytest.FixtureRequest,
     assert re.search(r"historical data comes from OpenF1", text)
 
 
-# Requirement 10.7
+# Requirement 10.7 (replaced): the removed recorded-stint feature is not described as current anywhere in the READMEs
 @pytest.mark.parametrize("readme", ["f1", "root"])
-def test_live_behaviours_listed_and_untested_statement(request: pytest.FixtureRequest, readme: str) -> None:
+def test_removed_feature_is_not_mentioned(request: pytest.FixtureRequest, readme: str) -> None:
     text = _plain(request.getfixturevalue(readme))
-    assert "recorded packets" in text
-    assert "not been tested against the live game" in text
-    for behaviour in LIVE_BEHAVIOURS:
-        assert behaviour in text, behaviour
+    for name in REMOVED_FEATURE:
+        assert name.lower() not in text.lower(), name
+    assert "not been tested against the live" not in text
 
 
 # Requirement 10.8

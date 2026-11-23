@@ -10,16 +10,14 @@
 <div class="stripe"></div>
 <div class="fixed-head">
 <header class="top">
-  <a class="brand" href="#/dashboard"><span class="logo">F1</span><span class="brand-text"><b>SETUP LAB</b><small>setup engineering, live simulator and historical F1</small></span></a>
+  <a class="brand" href="#/dashboard"><span class="logo">F1</span><span class="brand-text"><b>SETUP LAB</b><small>setup engineering and race analysis</small></span></a>
   <nav id="nav">
     <div class="nav-group"><h2 class="nav-head">Setup Engineering</h2>
       <a href="#/dashboard" data-nav="dashboard">Dashboard</a>
-      <a href="#/new" data-nav="new">New experiment</a>
+      <a href="#/experiments" data-nav="experiments">Experiments</a>
       <a href="#/telemetry" data-nav="telemetry">Telemetry import</a></div>
-    <div class="nav-group"><h2 class="nav-head">Live Simulator</h2>
-      <a href="#/live" data-nav="live">Live simulator</a></div>
     <div class="nav-group"><h2 class="nav-head">Historical F1</h2>
-      <a href="#/hist" data-nav="hist">Historical F1</a>
+      <a href="#/hist" data-nav="hist">Import from OpenF1</a>
       <a href="#/sessions" data-nav="sessions">Imported sessions</a>
       <a href="#/standings" data-nav="standings">Standings</a>
       <a href="#/season" data-nav="season">Season comparison</a></div>
@@ -31,7 +29,6 @@
 <main id="view" aria-live="polite"><div id="view-error"></div><div id="view-body"></div></main>
 <div id="toast" class="toast" hidden></div>
 <script src="charts.js"></script>
-<script src="inspector.js"></script>
 <script src="hist_race.js"></script>
 <script src="hist_picker.js"></script>
 <script src="setup_lab.js"></script>

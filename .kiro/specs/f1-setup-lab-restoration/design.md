@@ -1,8 +1,10 @@
+> **Note (removed feature).** The recorded-stint feature described in this document was removed from F1 SETUP LAB (migration 10; see the note in `requirements.md`). Parts of this document that describe it no longer apply.
+
 # Design Document
 
 ## Overview
 
-This feature restores the setup engineering system and the live simulator to F1 SETUP LAB and ships it as version 2.1.0. The app keeps its OpenF1 historical features and gains two more workspaces. Most of the work is restoring files from the Release_Archive, and the design effort goes into the places where the archive cannot be dropped in unchanged:
+This feature restores the setup engineering system and the recorded-stint feature to F1 SETUP LAB and ships it as version 2.1.0. The app keeps its OpenF1 historical features and gains two more workspaces. Most of the work is restoring files from the Release_Archive, and the design effort goes into the places where the archive cannot be dropped in unchanged:
 
 - `api/app.py`, `__init__.py`, `charts.js`, `app.js`, `index.html`, `conftest.py`, `pyproject.toml` and `db/models/f1.py` exist in both the current tree and the archive, and the two versions have diverged. They are merged by hand.
 - The Backend gets an injectable Lab_Factory, a generic 500 handler and a merged `/api/meta` and `/api/health`. The archive has none of these.
@@ -12,7 +14,7 @@ This feature restores the setup engineering system and the live simulator to F1 
 
 ### Sources and how they were verified
 
-The archive `~/Downloads/skeleton-kiro-main (1).zip` was unzipped to `/tmp/rel/` and compared with the workspace and with git commit `dfa519e` ("Snapshot before removing the simulator, EA F1 game and FastF1"). Every restored file I compared (adapters, catalogs, services, `api/schemas.py`, all of `game_udp/`, `inspector.js`, the three scripts, the test modules) is byte-identical between the archive and `dfa519e`. Either source is therefore valid. The restoration manifest (see Testing Strategy) is computed from the archive, and `dfa519e` is a cross-check.
+The archive `~/Downloads/skeleton-kiro-main (1).zip` was unzipped to `/tmp/rel/` and compared with the workspace and with git commit `dfa519e` ("Snapshot before removing the simulator, EA F1 recording source and FastF1"). Every restored file I compared (adapters, catalogs, services, `api/schemas.py`, all of `recorded_stint/`, `inspector.js`, the three scripts, the test modules) is byte-identical between the archive and `dfa519e`. Either source is therefore valid. The restoration manifest (see Testing Strategy) is computed from the archive, and `dfa519e` is a cross-check.
 
 ### Discrepancies between the requirements and the sources
 
@@ -20,22 +22,22 @@ These need a decision or an explicit deviation. Each is reflected in the design 
 
 | # | Requirement | Finding | Design response |
 |---|---|---|---|
-| D1 | Glossary: models are `F1UdpRecording`, `F1UdpPacket`, `F1StintEvidence`, `F1StintTelemetry`, `F1ProbeReport`, `F1SetupMappingConfirmation` | The archive classes are `UdpRecording`, `UdpPacket`, `StintEvidence`, `StintTelemetrySample`, `ProbeReport`, `SetupMappingConfirmation`. The restored code (`evidence.py`, `recorder.py`, `verification.py`) imports these names. | Keep the archive class names, since renaming would break byte-identical restored modules. The glossary should be corrected. |
-| D2 | 4.6: `NOTICES` string-equal to the archive | The archive `NOTICES["historical"]` says "retrieved via the FastF1 library". The current `HISTORICAL_NOTICE` says OpenF1. `tests/test_notices.py` line 28 asserts the word "FastF1". | `NOTICES["synthetic"]` and `NOTICES["live_simulator"]` are string-equal to the archive. `NOTICES["historical"]` keeps the current OpenF1 text. `test_notices.py` is rewritten for this. `__init__.py` is merged, not copied. |
+| D1 | Glossary: models are `F1Recording`, `F1Packet`, `F1StintEvidence`, `F1StintTelemetry`, `F1ProbeReport`, `F1SetupMappingConfirmation` | The archive classes are `Recording`, `Packet`, `StintEvidence`, `StintTelemetrySample`, `ProbeReport`, `SetupMappingConfirmation`. The restored code (`evidence.py`, `recorder.py`, `verification.py`) imports these names. | Keep the archive class names, since renaming would break byte-identical restored modules. The glossary should be corrected. |
+| D2 | 4.6: `NOTICES` string-equal to the archive | The archive `NOTICES["historical"]` says "retrieved via the FastF1 library". The current `HISTORICAL_NOTICE` says OpenF1. `tests/test_notices.py` line 28 asserts the word "FastF1". | `NOTICES["synthetic"]` and `NOTICES["recorded_stint"]` are string-equal to the archive. `NOTICES["historical"]` keeps the current OpenF1 text. `test_notices.py` is rewritten for this. `__init__.py` is merged, not copied. |
 | D3 | 4.5: `api/schemas.py` defines "every current historical schema class" | The historical request classes live in `integrations/historical/schemas.py`, and there is no `api/schemas.py` now. The archive file has 11 classes and no historical ones. | `api/schemas.py` is copied unchanged. Historical schemas stay where they are. 4.5 is satisfied by the union of the two modules with no duplicate class name. |
 | D4 | 5.2: Lab_Factory | The archive `create_app(db_path, frontend_dir, fastf1_client_factory, openf1_client_factory)` always builds `LabService(db_path)`. Archive tests reach it through `client.app.state.lab`. | New parameter `lab_factory`. `app.state.lab` stays for the restored tests. |
 | D5 | 5.3, 5.4 | `services/lab.py` defines its own `NotFound` and `Conflict`. `f1lab/errors.py` defines different classes with the same names. `lab.py` must stay byte-identical, so it cannot import the shared ones. | Register handlers for both class pairs. The shared 404 handler already formats `not found: <arg>`. |
 | D6 | 5.10: HTTP 500, "no partial Lab_Service state change" | The archive has no catch-all handler. The Backend cannot make arbitrary Lab_Service code atomic. | Add a catch-all handler that returns a fixed-shape 500 without a traceback. State atomicity is whatever `LabService` already guarantees. The Backend only promises that the handler itself writes nothing. |
-| D7 | 5.5, 5.6 | The archive `/api/meta` (experiment factors, game variants, modes, notices) and the current `/api/meta` (`notice`, `provider`, `first_year`) have different shapes. The restored frontend code reads the archive keys. The archive health returns `recovered`, the current one `data` and `interrupted_imports`. | Merged responses. Archive keys are kept as they are. New key `modules` lists both modules. Current keys are kept. |
+| D7 | 5.5, 5.6 | The archive `/api/meta` (experiment factors, recording source variants, modes, notices) and the current `/api/meta` (`notice`, `provider`, `first_year`) have different shapes. The restored frontend code reads the archive keys. The archive health returns `recovered`, the current one `data` and `interrupted_imports`. | Merged responses. Archive keys are kept as they are. New key `modules` lists both modules. Current keys are kept. |
 | D8 | 1.9, 1.10 | `start-f1.sh` never queries `/api/health` today. `check-release.sh` queries it with a 900 s startup timeout and compares the SDK version only for WATTWISE. | Add a 30 s health check after the process starts to `run_app` for SDK apps. The release smoke test relies on it. |
 | D9 | 9.7: reproduce the pandas 3.0 failure | A full run in this workspace gave 88 passed, 5 skipped, 0 failed (Python 3.12, pandas 2.3.3, `.venv`). The audit's 1 failure does not reproduce. | The baseline is recorded in the test report. Reproducing it needs pandas 3.x. Task: run the suite in a venv with `pandas>=3` and record the result either way. |
 | D10 | 9.3: skipped tests | 5 tests are currently skipped (opt-in network and browser tests). 9.3 only forbids skips caused by a missing FastF1. | The 5 opt-in skips stay. They are listed in the report. |
-| D11 | 4.8 | Restoring `api/app.py` with archive imports would load `game_udp`, adapters and `lab` whenever the app module is imported. 4.8 only constrains `f1lab.integrations.historical`. | `integrations/historical/__init__.py` imports nothing from the setup packages. The new `app.py` imports the lab modules, which is allowed. |
+| D11 | 4.8 | Restoring `api/app.py` with archive imports would load `recorded_stint`, adapters and `lab` whenever the app module is imported. 4.8 only constrains `f1lab.integrations.historical`. | `integrations/historical/__init__.py` imports nothing from the setup packages. The new `app.py` imports the lab modules, which is allowed. |
 | D12 | Existing tests that contradict the feature | `tests/test_app_scoping.py` says F1 keeps no experiments. `tests/test_start_scripts.py:54` asserts `sdk:     not used by F1 SETUP LAB`. `check-release.sh` lines 218 to 237 assert F1 does not use the SDK. `db` tests that assert version 8 as latest. | These are updated as part of the work. Req 3.11 names only one of them. |
 | D13 | Stale tree | `f1-setup-lab/build/lib/` holds a pre-removal copy of the app. | It is not a source and is not touched. |
 | D14 | Hypothesis | The property tests need Hypothesis, which is not installed in `.venv`. | Add `hypothesis>=6` to the test extras of the root package and `f1-setup-lab`. |
 
-The route count also differs from the text. The archive has 53 routes, of which 33 are restored (`/api/experiments*` 21, `/api/live/*` 4, `/api/game/*` 3, `/api/telemetry/preview`, `/api/demo/{name}.csv`, plus the telemetry and series routes). The requirement says "about 35", which is consistent. The current app has 21 `/api/historical/*` routes (including the OpenF1 cache and datasets routes, which the archive lacks) and `/api/frontend-build`.
+The route count also differs from the text. The archive has 53 routes, of which 33 are restored (`/api/experiments*` 21, `/api/live/*` 4, `/api/<verification>/*` 3, `/api/telemetry/preview`, `/api/demo/{name}.csv`, plus the telemetry and series routes). The requirement says "about 35", which is consistent. The current app has 21 `/api/historical/*` routes (including the OpenF1 cache and datasets routes, which the archive lacks) and `/api/frontend-build`.
 
 ## Architecture
 
@@ -49,14 +51,14 @@ graph TD
         CH[charts.js: merged]
     end
     subgraph Backend[Backend: f1lab.api.app.create_app]
-        ROUTES[Routes: historical, setup, live, game, meta, health]
+        ROUTES[Routes: historical, setup, live, recording source, meta, health]
         ERR[Exception handlers]
         LF[Lab_Factory]
     end
     subgraph Services
         HS[HistoricalService - OpenF1]
         LAB[LabService - archive, unchanged]
-        UDP[game_udp: receiver, recorder, probe, evidence]
+        packet[recorded_stint: receiver, recorder, probe, evidence]
         SIM[adapters: vehicle_model, sim_adapter, telemetry]
         CAT[catalogs: ea_f1_25, verification]
     end
@@ -70,26 +72,26 @@ graph TD
     Frontend --> ROUTES
     ROUTES --> HS
     ROUTES --> LF --> LAB
-    LAB --> UDP & SIM & CAT
+    LAB --> packet & SIM & CAT
     HS --> HT
     LAB --> ST & OWN & SDKT
     WW -. never touched by F1 .- OWN
 ```
 
-Dependency rule: `integrations/historical` must not import `lab`, `game_udp`, `adapters` or `catalogs`. The reverse direction is also absent. The only place the two sides meet is `api/app.py`.
+Dependency rule: `integrations/historical` must not import `lab`, `recorded_stint`, `adapters` or `catalogs`. The reverse direction is also absent. The only place the two sides meet is `api/app.py`.
 
 ### Restore plan by area
 
 | Area | Action |
 |---|---|
-| `adapters/` (3 files + `__init__`), `catalogs/` (2 + `__init__`), `services/` (`lab`, `narrative`, `report_html`, `__init__`), `integrations/game_udp/` (11 files), `api/schemas.py`, `frontend/inspector.js`, three scripts | Copy from the archive. Byte-identical. |
+| `adapters/` (3 files + `__init__`), `catalogs/` (2 + `__init__`), `services/` (`lab`, `narrative`, `report_html`, `__init__`), `integrations/recorded_stint/` (11 files), `api/schemas.py`, `frontend/inspector.js`, three scripts | Copy from the archive. Byte-identical. |
 | `f1lab/__init__.py` | Merge (see D2). Version `2.1.0`. Keep `notice_for`. Keep the current `HISTORICAL_NOTICE` text. |
 | `api/app.py` | Merge by hand (see Components). |
 | `db/models/f1.py` | Append the six archive classes and the imports `LargeBinary` and `UniqueConstraint`. Nothing else in the file changes. |
 | `db/migrations/versions.py` | Append migration 9, update two docstrings. |
 | `frontend/` | New `setup_lab.js`. Merge `charts.js`. Edit `index.html`, `app.js`, `style.css`. |
 | `pyproject.toml` | Edit. |
-| `tests/` | Restore 11 modules plus `udp_packets.py`. Merge `conftest.py`. Add new tests. |
+| `tests/` | Restore 11 modules plus `stint_packets.py`. Merge `conftest.py`. Add new tests. |
 | `scripts/*.sh`, `scripts/lib/common.sh` | Edit. |
 | READMEs | Edit. |
 
@@ -97,7 +99,7 @@ Dependency rule: `integrations/historical` must not import `lab`, `game_udp`, `a
 
 ### 1. Database models (`db/models/f1.py`)
 
-Append the archive classes with these table names: `f1_udp_recording`, `f1_udp_packet`, `f1_stint_evidence`, `f1_stint_telemetry`, `f1_probe_report`, `f1_setup_mapping_confirmation`. The only constraint beyond primary keys is `uq_f1_setup_mapping_confirmation_factor_variant` (unique on `factor`, `game_variant`), and `f1_udp_packet.recording_id` is a foreign key with `ON DELETE CASCADE`. The archive `f1.py` itself is not copied: it predates `HistDataset` and still defaults the provider to `fastf1`.
+Append the archive classes with these table names: `<recording table>`, `<packet table>`, `f1_stint_evidence`, `f1_stint_telemetry`, `f1_probe_report`, `f1_setup_mapping_confirmation`. The only constraint beyond primary keys is `uq_f1_setup_mapping_confirmation_factor_variant` (unique on `factor`, `game_variant`), and `<packet table>.recording_id` is a foreign key with `ON DELETE CASCADE`. The archive `f1.py` itself is not copied: it predates `HistDataset` and still defaults the provider to `fastf1`.
 
 Req 2.6: a duplicate table name already raises `InvalidRequestError` from SQLAlchemy at class creation, naming the table. No custom code is needed. A test confirms the message contains the table name.
 
@@ -105,11 +107,11 @@ Req 2.6: a duplicate table name already raises `InvalidRequestError` from SQLAlc
 
 ```python
 def _m009_f1_setup_restored(conn):
-    create_tables(conn, "app_experiment_owner", "f1_udp_recording", "f1_udp_packet", "f1_stint_evidence",
+    create_tables(conn, "app_experiment_owner", "<recording table>", "<packet table>", "f1_stint_evidence",
                   "f1_stint_telemetry", "f1_probe_report", "f1_setup_mapping_confirmation")
 ```
 
-`create_tables` uses `Table.create(checkfirst=True)`, which is CREATE TABLE IF NOT EXISTS semantics, and it creates the table's indexes with it. Order is parents first (`f1_udp_recording` before `f1_udp_packet`). Migration 4 stays a no-op, because versions of existing databases must keep their meaning. Its docstring gains the sentence that migration 9 recreates the tables migration 8 removed. Migration 8's docstring gains "one-time cleanup".
+`create_tables` uses `Table.create(checkfirst=True)`, which is CREATE TABLE IF NOT EXISTS semantics, and it creates the table's indexes with it. Order is parents first (`<recording table>` before `<packet table>`). Migration 4 stays a no-op, because versions of existing databases must keep their meaning. Its docstring gains the sentence that migration 9 recreates the tables migration 8 removed. Migration 8's docstring gains "one-time cleanup".
 
 The runner already wraps each migration and its `app_schema_version` row in one `BEGIN IMMEDIATE` transaction, so a failing statement rolls back everything and leaves version 8 (Req 3.9). The `MigrationError` message names the migration but not the failing statement. The design adds the statement: `create_tables` is wrapped so the exception names the table being created.
 
@@ -135,7 +137,7 @@ Both entry points call the same hook, so starting the app directly (without `sta
 
 ### 4. `f1lab/__init__.py`
 
-Version `2.1.0`. Docstring rewritten for three workspaces (no FastF1 text). Constants: `SYNTHETIC_NOTICE` and `SIM_RECORDED_NOTICE` byte-identical to the archive, `HISTORICAL_NOTICE` as it is now, `NOTICES = {"synthetic", "live_simulator", "historical"}`, `notice_for` unchanged.
+Version `2.1.0`. Docstring rewritten for three workspaces (no FastF1 text). Constants: `SYNTHETIC_NOTICE` and `SIM_RECORDED_NOTICE` byte-identical to the archive, `HISTORICAL_NOTICE` as it is now, `NOTICES = {"synthetic", "recorded_stint", "historical"}`, `notice_for` unchanged.
 
 ### 5. Backend (`f1lab/api/app.py`)
 
@@ -170,7 +172,7 @@ Known limit: Starlette's catch-all handler runs in `ServerErrorMiddleware`, whic
 
 **`/api/health`** returns the existing fields (`status`, `app`, `version`, `data`, `interrupted_imports`) plus `trialforge` (`trialforge.__version__`), `trialforge_path` (directory of the loaded package) and `recovered`. `data` stays `"openf1"` for the historical part. No existing key changes name or type.
 
-**`/api/meta`** returns the union: the archive keys (`notice`, `notices`, `modes`, `game`, `version`, `trialforge_version`, `factors`, `default_factors`, `methods`, `optimisers`, `telemetry_columns`) plus the current keys (`provider`, `first_year`) plus `modules: [{"id": "historical", "label": "Historical F1"}, {"id": "setup", "label": "Setup Engineering"}]`. `notice` keeps its archive meaning (the synthetic notice). The historical frontend views read `notices.historical` instead of `notice`; see Frontend.
+**`/api/meta`** returns the union: the archive keys (`notice`, `notices`, `modes`, `recording source`, `version`, `trialforge_version`, `factors`, `default_factors`, `methods`, `optimisers`, `telemetry_columns`) plus the current keys (`provider`, `first_year`) plus `modules: [{"id": "historical", "label": "Historical F1"}, {"id": "setup", "label": "Setup Engineering"}]`. `notice` keeps its archive meaning (the synthetic notice). The historical frontend views read `notices.historical` instead of `notice`; see Frontend.
 
 ### 6. Data separation guard (`db/guard.py`)
 
@@ -197,7 +199,7 @@ Risk: the SDK's `SQLiteExperimentRepository` may write to tables not in `SDK_EXP
 | Group | Entries |
 |---|---|
 | Setup Engineering | Dashboard (`#/dashboard`), New experiment (`#/new`), Telemetry import (`#/telemetry`) |
-| Live Simulator | Live simulator (`#/live`) |
+| Recorded Stint | Recorded stint (`#/live`) |
 | Historical F1 | Historical F1 (`#/hist`), Imported sessions (`#/sessions`) |
 
 Script order: `charts.js`, `inspector.js`, `hist_race.js`, `hist_picker.js`, `setup_lab.js`, `app.js`. Classic scripts share one global scope, so two `const`/`function` declarations of the same name in different files are a SyntaxError. The split rules:
@@ -206,7 +208,7 @@ Script order: `charts.js`, `inspector.js`, `hist_race.js`, `hist_picker.js`, `se
 - `setup_lab.js` is cut from archive `app.js` lines 22 to 575 (`poll`, `statusChip`, `progress`, `label`, `LIVE`, `isLive`, `SECOND`, `cap`, `flabel`, `setBanner`, `unit`, `isActive`, `TABS`, all `view*` functions up to `viewReport`, the telemetry import helpers, `WHEELS`, chart helpers). It must not redeclare `esc`, `fmt`, `$`, `view`, `META`, `ApiError`, `api`, `toast`, `errorsBox`, `setNav`, `setLed` or `downsample`. These are removed from the cut, since `app.js` defines them.
 - The archive's historical block (lines 576 to the end: `histChipFor`, `histCoverage`, `brakeOf`, `viewHist`, `viewHistSession`, `histTraceCharts`) is not used. It is FastF1-based and the current files replace it.
 - Route table: `route()` in `app.js` dispatches `dashboard`, `new`, `live`, `telemetry` and experiment ids to functions defined in `setup_lab.js`, and `hist` and `sessions` to the historical views. The empty hash redirects to `#/dashboard`. The archive landing page is `#/`; the new landing choice (dashboard) is an assumption and can be changed to `#/hist` in one line.
-- Banner: `setBanner(mode)` from `setup_lab.js` writes `META.notices[mode]`. Historical views write `META.notices.historical`. The synthetic notice is visible in the banner whenever a Simulator view is open, and the game-mode notices on the Live view. Both are in the fixed header, so they are in the viewport without scrolling.
+- Banner: `setBanner(mode)` from `setup_lab.js` writes `META.notices[mode]`. Historical views write `META.notices.historical`. The synthetic notice is visible in the banner whenever a Simulator view is open, and the recorded-mode notices on the Live view. Both are in the fixed header, so they are in the viewport without scrolling.
 - Errors: the existing `api()` wrapper throws `ApiError`. Every view's catch block calls `errorsBox`, which renders the message in the current view while previously rendered data stays in the DOM, because views render into a nested container and replace only that container. A fetch failure with no JSON body produces `request failed` (Req 7.12).
 - No view shows wind direction. The archive and current charts do not plot it, and a static test scans for `wind_direction` in the frontend.
 - `charts.js` is the union. The current file exports `lines, sectors, trackMap, esc, f`. The archive exports `scatter, bars, lines, sectors, trackMap, esc, f`. The merged file keeps the current implementations of the shared names and adds `scatter` and `bars` from the archive. Where `lines` or `sectors` differ between the two files, the merge task diffs them and keeps the superset of options, so both callers still render. A Playwright check covers one chart of each type.
@@ -225,7 +227,7 @@ Script order: `charts.js`, `inspector.js`, `hist_race.js`, `hist_picker.js`, `se
 
 ### 9. `f1-setup-lab/pyproject.toml`
 
-Version `2.1.0`. Description (under 200 characters): "F1 SETUP LAB: Setup Engineering, Live Simulator and Historical F1 workspaces, built on the TRIALFORGE SDK, with real historical data from OpenF1". One `trialforge-core>=0.2.0,<0.3` dependency (the SDK in this workspace is 0.2.1). `pandas`, `numpy` and `certifi` stay. `hypothesis>=6` is added to `test`. Per-file ignores add `protocols/*.py` and `capture.py` for E702, keeping the E712 ignore for tests.
+Version `2.1.0`. Description (under 200 characters): "F1 SETUP LAB: Setup Engineering, Recorded Stint and Historical F1 workspaces, built on the TRIALFORGE SDK, with real historical data from OpenF1". One `trialforge-core>=0.2.0,<0.3` dependency (the SDK in this workspace is 0.2.1). `pandas`, `numpy` and `certifi` stay. `hypothesis>=6` is added to `test`. Per-file ignores add `protocols/*.py` and `capture.py` for E702, keeping the E712 ignore for tests.
 
 ## Data Models
 
@@ -233,12 +235,12 @@ Version `2.1.0`. Description (under 200 characters): "F1 SETUP LAB: Setup Engine
 
 | Table | Columns | Keys and constraints |
 |---|---|---|
-| `f1_udp_recording` | `recording_id` str(60), `started_at` datetime, `host` str(100) null, `port` int null, `source` str(40) default `live`, `note` text null | PK `recording_id` |
-| `f1_udp_packet` | `recording_id` str(60), `seq` int, `received_at` float, `data` blob | PK (`recording_id`, `seq`), FK to recording, ON DELETE CASCADE |
+| `<recording table>` | `recording_id` str(60), `started_at` datetime, `host` str(100) null, `port` int null, `source` str(40) default `live`, `note` text null | PK `recording_id` |
+| `<packet table>` | `recording_id` str(60), `seq` int, `received_at` float, `data` blob | PK (`recording_id`, `seq`), FK to recording, ON DELETE CASCADE |
 | `f1_stint_evidence` | `experiment_id` str(100), `run_id` str(100), `payload_json` text, `recorded_at` datetime | PK (`experiment_id`, `run_id`) |
 | `f1_stint_telemetry` | `experiment_id`, `run_id`, `seq` int, `session_time` float null, `sample_json` text | PK (`experiment_id`, `run_id`, `seq`) |
 | `f1_probe_report` | `report_id` str(60), `created_at`, `packet_format` int null, `game_variant` str(40) null, `recording_id` str(60) null, `report_json` text | PK `report_id` |
-| `f1_setup_mapping_confirmation` | `id` int autoincrement, `factor` str(60), `game_variant` str(40), `packet_field` str(60), `verified` bool, `low_value_seen` float null, `high_value_seen` float null, `probe_report_id` str(60) null, `confirmed_by` str(100), `note` text null, `confirmed_at` datetime | PK `id`, unique (`factor`, `game_variant`) |
+| `f1_setup_mapping_confirmation` | `id` int autoincrement, `factor` str(60), `game_variant` str(40), `<mapping field>` str(60), `verified` bool, `low_value_seen` float null, `high_value_seen` float null, `probe_report_id` str(60) null, `confirmed_by` str(100), `note` text null, `confirmed_at` datetime | PK `id`, unique (`factor`, `game_variant`) |
 
 These come from the archive model file, not from a hand-written DDL. A checked-in golden schema file (`tests/fixtures/restored_schema.json`, produced from the archive's own migration 4 on an empty database) holds the `PRAGMA table_info`, `index_list` and `foreign_key_list` output. A test compares the schema created by migration 9 with it (Req 2.1, 2.4).
 
@@ -254,7 +256,7 @@ No route reads from one domain to write into another (Req 6.5).
 
 ### Test manifests (new files under `f1-setup-lab/tests/fixtures/`)
 
-- `restoration_manifest.json`: path to sha256 for every restored file (adapters, catalogs, `game_udp`, services, `api/schemas.py`, `inspector.js`, three scripts, and the restored tests with the changes listed below). Built from the archive. Used by 4.1 to 4.4, 4.9 and 8.1.
+- `restoration_manifest.json`: path to sha256 for every restored file (adapters, catalogs, `recorded_stint`, services, `api/schemas.py`, `inspector.js`, three scripts, and the restored tests with the changes listed below). Built from the archive. Used by 4.1 to 4.4, 4.9 and 8.1.
 - `historical_routes.json`: for each current `/api/historical/*` route, method, path, request schema, response schema and, for GET routes, the top-level keys and value types for each OpenF1 fixture session. Generated from the current code before any restoration change lands, and committed first. Used by 5.7 and 9.9.
 - `restored_schema.json`: see above.
 
@@ -262,7 +264,7 @@ No route reads from one domain to write into another (Req 6.5).
 
 | Module | Handling |
 |---|---|
-| `test_api_workflow`, `test_game_udp`, `test_live_mode`, `test_probe_and_verification`, `test_protocol_2026`, `test_stint_measurements`, `test_telemetry_inspector`, `test_vehicle_and_telemetry`, `test_csv_timestamps`, `udp_packets` | Copy unchanged. |
+| `test_api_workflow`, `test_recorded_stint`, `test_live_mode`, `test_probe_and_verification`, `test_protocol_2026`, `test_stint_measurements`, `test_telemetry_inspector`, `test_vehicle_and_telemetry`, `test_csv_timestamps`, `stint_packets` | Copy unchanged. |
 | `test_notices` | Rewrite the FastF1 assertion (D2). |
 | `test_verification_scripts` | Drop the `smoke_fastf1_import` tests (lines 70 to 86). Keep the rest. |
 | `conftest.py` | Merge. Both files define `db_path`. The current file has only that fixture. The archive adds `client`, `live_server`, `wait_done`, `make_experiment`, `run_experiment`. The merged file keeps one `db_path`, adds `lab_factory` (builds a `LabService` on the temp database) and `client` built with `create_app(db_path)`. OpenF1 fixtures stay in `openf1_fakes.py` and remain independent. |
@@ -336,7 +338,7 @@ The prework classified most file-restoration, packaging, documentation and UI cr
 
 ### Property 11: Setup writes touch only setup tables
 
-*For any* sequence of setup operations (recording UDP packets, saving stint evidence and telemetry, saving probe reports, confirming setup mappings, importing telemetry into an experiment), the row contents of every `f1_hist_*` table and `f1_import_job` are unchanged, and every table whose contents changed belongs to the setup domain.
+*For any* sequence of setup operations (recording packet packets, saving stint evidence and telemetry, saving probe reports, confirming setup mappings, importing telemetry into an experiment), the row contents of every `f1_hist_*` table and `f1_import_job` are unchanged, and every table whose contents changed belongs to the setup domain.
 
 **Validates: Requirements 6.1, 6.4**
 
@@ -358,11 +360,11 @@ The prework classified most file-restoration, packaging, documentation and UI cr
 
 **Validates: Requirements 6.8**
 
-### Property 15: Recorded UDP packets round-trip
+### Property 15: Recorded packet packets round-trip
 
 *For any* list of (receive time, bytes) packets, writing them with `RawRecorder` and reading them back with `read_raw` returns the same packets in the same order, and writing them with `write_raw_file` and reading with `read_raw_file` does too.
 
-**Validates: Requirements 9.2** (recorded-packet verification of restored live behaviour; the packet storage is the part of the live pipeline that can be tested without the game)
+**Validates: Requirements 9.2** (recorded-packet verification of restored live behaviour; the packet storage is the part of the live pipeline that can be tested without the recording source)
 
 ## Error Handling
 
@@ -409,7 +411,7 @@ Hypothesis strategies needed: rows for each historical, WATTWISE and SDK table (
 
 ### Why some requirements are not property tests
 
-File restoration (byte equality), packaging, shell scripts, README text, browser layout, and fixed-shape responses have no meaningful "for all inputs" statement, and running them 100 times finds nothing a single run does not. They use example, smoke or integration tests. Live UDP capture needs the game, so only recorded packets are tested (Property 15 and the restored `test_game_udp`, `test_live_mode`, `test_protocol_2026`). The READMEs list those live behaviours as unverified against the live game.
+File restoration (byte equality), packaging, shell scripts, README text, browser layout, and fixed-shape responses have no meaningful "for all inputs" statement, and running them 100 times finds nothing a single run does not. They use example, smoke or integration tests. Live packet capture needs the recording source, so only recorded packets are tested (Property 15 and the restored `test_recorded_stint`, `test_live_mode`, `test_protocol_2026`). The READMEs list those live behaviours as unverified against the live recording source.
 
 ### Order of work that the design depends on
 

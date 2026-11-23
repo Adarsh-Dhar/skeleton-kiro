@@ -1,4 +1,4 @@
-/* F1 SETUP LAB: Setup Lab views (dashboard, new experiment, live simulator, telemetry import, experiment tabs).
+/* F1 SETUP LAB: Setup Lab views (dashboard, new experiment, telemetry import, experiment tabs).
    Classic script: shares one global scope with app.js, which defines esc, fmt, $, view, META, ApiError, api, toast,
    errorsBox, setNav, setLed, downsample and the router. Loaded before app.js. */
 let pollTimer = null;
@@ -6,17 +6,11 @@ const poll = (fn, ms = 1000) => { clearInterval(pollTimer); pollTimer = setInter
 const statusChip = (s) => `<span class="chip ${esc(s)}">${esc(s.replaceAll('_', ' '))}</span>`;
 const progress = (c, t, cls = '') => `<div class="progress ${cls}"><i style="width:${t ? (100 * c) / t : 0}%"></i></div>`;
 const label = (n) => (META?.factors[n]?.label) || n;
-const LIVE = 'live_simulator';
-const isLive = (d) => d && d.mode === LIVE;
-/* The second quality metric differs by mode: invented 'stability' (synthetic) vs lap-time spread (recorded laps). */
-const SECOND = (d) => (isLive(d) ? { key: 'lap_time_std', name: 'lap spread', dp: 2 } : { key: 'stability', name: 'stability', dp: 1 });
-const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const flabel = (d, n) => d.factors.find((f) => f.name === n)?.label || label(n);
 function setBanner(mode) {
   const b = $('#banner'); if (!b || !META.notices) return;
-  b.textContent = META.notices[mode] || META.notices.synthetic; b.classList.toggle('simrec', mode === LIVE);
+  b.textContent = META.notices[mode] || META.notices.synthetic;
 }
-let STINT_MSG = '';
 const unit = (n) => (META?.factors[n]?.unit) || '';
 const isActive = (d) => ['running', 'queued'].includes(d.status) || d.counts.running > 0 || d.counts.queued > 0 && d.status === 'running';
 
@@ -28,9 +22,9 @@ function expHeader(d, tab) {
   setBanner(d.mode);
   const done = d.counts.completed + d.counts.failed + d.counts.cancelled;
   return `<div class="row"><div><h1>${esc(d.name)}</h1><p class="sub">${esc(d.hypothesis || 'No hypothesis stated')}</p></div><div class="spacer"></div>
-    <div>${isLive(d) ? '<span class="chip simrec">SIM-RECORDED</span> ' : '<span class="chip synthetic">SYNTHETIC</span> '}${statusChip(d.status)}</div></div>
+    <div><span class="chip synthetic">SYNTHETIC</span> ${statusChip(d.status)}</div></div>
     <div class="row"><div style="flex:1">${progress(d.counts.completed, d.runs_total)}</div><span class="mono dim">${d.counts.completed}/${d.runs_total} runs complete &middot; budget ${d.runs_total}/${d.run_budget}</span></div>
-    <div class="tabs">${TABS.map(([k, n]) => `<a href="#/e/${esc(d.id)}/${k}" class="${k === tab ? 'on' : ''}">${isLive(d) && k === 'telemetry' ? 'Stint telemetry' : n}</a>`).join('')}</div>`;
+    <div class="tabs">${TABS.map(([k, n]) => `<a href="#/e/${esc(d.id)}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div>`;
 }
 
 /* --------------------------------------------------------------- dashboard */
@@ -39,9 +33,9 @@ async function viewDashboard() {
     const list = await api('GET', '/api/experiments');
     if (!$('#dash')) return;
     $('#dash').innerHTML = list.length ? `<table><thead><tr><th>Experiment</th><th>Status</th><th>Progress</th><th>Design</th><th class="num">Best feasible lap</th><th class="num">Stability</th><th>Created</th><th></th></tr></thead><tbody>
-      ${list.map((e) => `<tr class="clickable" data-id="${esc(e.id)}"><td><b>${esc(e.name)}</b> ${isLive(e) ? '<span class="chip simrec">SIM-RECORDED</span>' : ''}<div class="dim mono">${esc(e.id)}</div></td><td>${statusChip(e.status)}</td>
+      ${list.map((e) => `<tr class="clickable" data-id="${esc(e.id)}"><td><b>${esc(e.name)}</b><div class="dim mono">${esc(e.id)}</div></td><td>${statusChip(e.status)}</td>
       <td style="min-width:150px">${progress(e.counts.completed, e.runs_total, 'sm')}<span class="dim mono">${e.counts.completed}/${e.runs_total}${e.counts.failed ? ` &middot; <span class="badc">${e.counts.failed} failed</span>` : ''}</span></td>
-      <td>${esc(e.design_method.replaceAll('_', ' '))}</td><td class="num">${e.best ? fmt(e.best.lap_time, 3) + ' s' : '&mdash;'}</td><td class="num">${e.best ? (isLive(e) ? fmt(e.best.lap_time_std, 2) + ' s spread' : fmt(e.best.stability, 1)) : '&mdash;'}</td>
+      <td>${esc(e.design_method.replaceAll('_', ' '))}</td><td class="num">${e.best ? fmt(e.best.lap_time, 3) + ' s' : '&mdash;'}</td><td class="num">${e.best ? fmt(e.best.stability, 1) : '&mdash;'}</td>
       <td class="dim mono">${esc(e.created_at.slice(0, 16).replace('T', ' '))}</td><td><a class="btn small" href="#/e/${esc(e.id)}/design">Open</a></td></tr>`).join('')}</tbody></table>`
       : `<div class="empty"><h2>No experiments yet</h2><p>Design a screening experiment, run it on the synthetic simulator, find the setup factors that matter and let the optimiser refine them.</p>
       <p><button class="btn primary" id="demo">Create demo experiment</button> &nbsp; <a class="btn" href="#/new">Configure my own</a></p></div>`;
@@ -51,16 +45,49 @@ async function viewDashboard() {
     });
     return list;
   };
-  view().innerHTML = `<div class="row"><div><h1>Dashboard</h1><p class="sub">Experiments on the synthetic vehicle simulator</p></div><div class="spacer"></div><a class="btn primary" href="#/new">New experiment</a></div><div class="panel" id="dash">Loading&hellip;</div>`;
+  view().innerHTML = `<div class="row"><div><h1>Dashboard</h1><p class="sub">Experiments on the synthetic vehicle simulator</p></div><div class="spacer"></div><a class="btn primary" href="#/new">Create new experiment</a></div><div class="panel" id="dash">Loading&hellip;</div>`;
   const first = await draw();
   poll(async () => { try { const l = await draw(); if (!l.some((e) => ['running', 'queued'].includes(e.status))) clearInterval(pollTimer); } catch (_) {} }, 2000);
   return first;
 }
 
+/* -------------------------------------------------------------- experiments */
+async function viewExperiments() {
+  let all = [];
+  const paint = () => {
+    const q = ($('#xq')?.value || '').trim().toLowerCase(), st = $('#xst')?.value || '';
+    const list = all.filter((e) => (!st || e.status === st) && (!q || e.name.toLowerCase().includes(q) || e.id.toLowerCase().includes(q)));
+    $('#xlist').innerHTML = !all.length ? `<div class="empty"><h2>No experiments yet</h2><p>Create an experiment to design a screening run on the synthetic simulator.</p><p><a class="btn primary" href="#/new">Create new experiment</a></p></div>`
+      : !list.length ? `<div class="empty"><p>No experiments match the filter.</p></div>`
+      : `<table><thead><tr><th>Experiment</th><th>Status</th><th>Progress</th><th>Design</th><th class="num">Best feasible lap</th><th>Created</th></tr></thead><tbody>
+      ${list.map((e) => `<tr class="clickable" data-id="${esc(e.id)}"><td><b>${esc(e.name)}</b><div class="dim mono">${esc(e.id)}</div></td><td>${statusChip(e.status)}</td>
+      <td style="min-width:150px">${progress(e.counts.completed, e.runs_total, 'sm')}<span class="dim mono">${e.counts.completed}/${e.runs_total}${e.counts.failed ? ` &middot; <span class="badc">${e.counts.failed} failed</span>` : ''}</span></td>
+      <td>${esc(e.design_method.replaceAll('_', ' '))}</td><td class="num">${e.best ? fmt(e.best.lap_time, 3) + ' s' : '&mdash;'}</td>
+      <td class="dim mono">${esc(e.created_at.slice(0, 16).replace('T', ' '))}</td></tr>`).join('')}</tbody></table>`;
+    document.querySelectorAll('#xlist tr[data-id]').forEach((tr) => tr.addEventListener('click', () => { location.hash = `#/e/${tr.dataset.id}/design`; }));
+  };
+  const draw = async () => {
+    all = await api('GET', '/api/experiments');
+    if (!$('#xlist')) return all;
+    $('#xtools').hidden = !all.length;
+    const sel = $('#xst'), cur = sel.value, seen = [...new Set(all.map((e) => e.status))].sort();
+    sel.innerHTML = '<option value="">All statuses</option>' + seen.map((x) => `<option value="${esc(x)}">${esc(x.replaceAll('_', ' '))}</option>`).join('');
+    sel.value = seen.includes(cur) ? cur : '';
+    paint();
+    return all;
+  };
+  view().innerHTML = `<div class="page-head"><div><h1>Experiments</h1><p class="sub">All experiments on the synthetic vehicle simulator</p></div><a class="btn primary" id="xnew" href="#/new">Create new experiment</a></div>
+    <div class="row filters" id="xtools" hidden><input id="xq" type="search" placeholder="Search by name or id" aria-label="Search experiments"><select id="xst" aria-label="Filter by status"><option value="">All statuses</option></select></div>
+    <div class="panel" id="xlist">Loading&hellip;</div>`;
+  $('#xq').addEventListener('input', paint); $('#xst').addEventListener('change', paint);
+  const first = await draw();
+  poll(async () => { try { const l = await draw(); if (!l.some((e) => ['running', 'queued'].includes(e.status))) clearInterval(pollTimer); } catch (_) {} }, 2000);
+  return first;
+}
 /* ----------------------------------------------------------- new experiment */
 async function viewNew() {
   const fdef = META.default_factors;
-  view().innerHTML = `<h1>New experiment</h1><div class="tabs mode"><a href="#/new" class="on">Synthetic simulator</a><a href="#/new/live">Live simulator (EA SPORTS F1 25)</a></div><p class="sub">Define the setup variables, the objective and the stability constraint, then generate the design.</p><div id="err"></div>
+  view().innerHTML = `<div class="page-head"><div><h1>Create experiment</h1></div><a class="btn" href="#/experiments">Back to experiments</a></div><p class="sub">Define the setup variables, the objective and the stability constraint, then generate the design.</p><div id="err"></div>
   <form id="f" class="grid g21"><div>
     <div class="panel"><h2>1 &middot; Experiment</h2><div class="field"><label for="name">Name</label><input id="name" value="Wing & suspension screening" maxlength="80"></div>
       <div class="field"><label for="hyp">Hypothesis</label><textarea id="hyp" style="min-height:60px">A rearward aero balance improves lap time while keeping the car stable.</textarea></div></div>
@@ -111,159 +138,11 @@ async function viewDesign(id) {
     <div class="grid g21"><div class="panel"><h2>Generated setups (run order is randomised)</h2><div style="overflow:auto;max-height:520px"><table><thead><tr><th>#</th>${names.map((n) => `<th>${esc(flabel(d, n))}</th>`).join('')}<th>Replicate</th><th>Point</th></tr></thead><tbody>
       ${d.runs.map((r) => `<tr><td class="mono">${r.order + 1}</td>${names.map((n) => `<td class="num">${fmt(r.configuration[n], 2)} ${codedChip(r.coded[n])}</td>`).join('')}<td class="mono">${r.replicate + 1}</td><td class="dim">${esc(r.point_kind || (r.iteration ? 'optimiser ' + r.iteration : 'design'))}</td></tr>`).join('')}</tbody></table></div></div>
     <div><div class="panel"><h2>Design details</h2><table><tbody><tr><td class="dim">Randomisation</td><td>${esc(g.randomization || '')}</td></tr><tr><td class="dim">Control setup</td><td class="mono">${names.map((n) => esc(n) + '=' + fmt(g.control[n], 2)).join('<br>')}</td></tr>
-      <tr><td class="dim">Constraint</td><td>${isLive(d) ? `valid laps &ge; ${esc(d.min_valid_laps)}, lap spread &le; ${esc(d.max_lap_std)} s` : `stability &ge; ${esc(d.min_stability)}`}</td></tr><tr><td class="dim">Budget</td><td>${d.run_budget} runs</td></tr></tbody></table>
+      <tr><td class="dim">Constraint</td><td>stability &ge; ${esc(d.min_stability)}</td></tr><tr><td class="dim">Budget</td><td>${d.run_budget} runs</td></tr></tbody></table>
       <p class="hint">Coded levels: <span class="coded m1">-1</span> low end of range, <span class="coded p1">+1</span> high end, <span class="coded z">0</span> centre.</p></div>
       ${alias ? `<div class="panel"><h2>Alias structure</h2><table><tbody>${alias}</tbody></table></div>` : ''}</div></div>
-    <div class="row"><button class="btn primary" id="go" ${d.counts.queued ? '' : 'disabled'}>${isLive(d) ? 'Open run monitor' : `Run ${d.counts.queued} queued setups`}</button><span class="dim">${isLive(d) ? 'Each setup is driven by you in the game and verified from its UDP output.' : 'Runs execute on the synthetic simulator, 4 at a time.'}</span></div>${isLive(d) && d.catalog_verified === false ? '<div class="note">The game setup fields used here have not been verified with the probe script yet.</div>' : ''}`;
-  $('#go').addEventListener('click', async () => { try { if (!isLive(d)) await api('POST', `/api/experiments/${id}/execute`); location.hash = `#/e/${id}/runs`; } catch (e) { toast(e.message); } });
-}
-
-/* ------------------------------------------------------------- live simulator (EA SPORTS F1 25 over UDP) */
-const stintButtons = (r, ls) => (ls.stint && ls.stint.run_id === r.run_id
-  ? `<button class="btn small primary" data-submit="${esc(r.run_id)}">Submit stint</button>`
-  : `<button class="btn small" data-start="${esc(r.run_id)}" ${ls.listening && !ls.stint ? '' : 'disabled'}>Start stint</button>`);
-
-function liveRunPanel(d, ls) {
-  const act = ls.stint && ls.stint.experiment_id === d.id ? d.runs.find((r) => r.run_id === ls.stint.run_id) : null;
-  const rows = act ? d.factors.map((f) => {
-    const key = META.game.factors[f.name]?.packet_field, got = ls.current_setup ? ls.current_setup[key] : undefined, want = act.configuration[f.name];
-    const ok = got !== undefined && got !== null && Math.abs(got - want) < 0.011;
-    return `<tr><td>${esc(f.label)}</td><td class="num">${fmt(want, 0)}</td><td class="num">${got === undefined || got === null ? '&mdash;' : fmt(got, 0)}</td><td>${ok ? '<span class="good">match</span>' : '<span class="badc">differs</span>'}</td></tr>`;
-  }).join('') : '';
-  const link = '<a href="#/live">Live simulator page</a>';
-  const state = !ls.listening ? `<div class="note">Not listening for the game. ${link}.</div>`
-    : ls.connected ? '' : `<div class="note">Listening, but no packets for ${esc(ls.seconds_since_last_packet ?? '?')} s. Check the game's UDP settings. ${link}.</div>`;
-  const body = act
-    ? `<p class="hint">Stint in progress on run ${act.order + 1}. Laps recorded in this session so far: ${esc(ls.laps_recorded)}. Drive at least ${d.min_valid_laps + 1} laps (the first is the out-lap), then press <b>Submit stint</b>.</p>
-       <table><thead><tr><th>Setup</th><th class="num">Target</th><th class="num">Game reports</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
-    : '<p class="hint">1. Set a run\'s target setup in the game garage (see the Design tab). 2. Press <b>Start stint</b> on that run. 3. Drive your laps. 4. Press <b>Submit stint</b>. A stint is accepted only if the game reported exactly the target setup for the whole stint.</p>';
-  return `<div class="panel"><h2>Run instructions</h2>${state}${body}${STINT_MSG ? `<div class="errors" role="alert"><b>Stint not accepted:</b> ${esc(STINT_MSG)}</div>` : ''}</div>`;
-}
-
-/* ------------------------------------------------- live telemetry charts */
-const WHEELS = ['RL', 'RR', 'FL', 'FR'];
-const seriesFrom = (samples, fn, name, color) => ({ name, color, pts: downsample(samples.map((s) => ({ x: s.session_time, y: fn(s) })).filter((p) => p.y !== null && p.y !== undefined && !Number.isNaN(p.y))) });
-const wheelSeries = (samples, field, name, color) => WHEELS.map((w, i) => ({ name: `${name} ${w}`, color, pts: downsample(samples.map((s) => ({ x: s.session_time, y: s[field]?.[i] ?? null })).filter((p) => p.y !== null)) }));
-
-let liveChartKey = '';
-async function updateLiveCharts(s) {
-  const box = $('#live-charts'); if (!box) return;
-  const note = $('#live-tel-note');
-  if (note) note.innerHTML = s.connected ? '' : ' &middot; <span class="badc">no recent packets</span>';
-  let t;
-  try { t = await api('GET', '/api/live/telemetry?scope=live&limit=1500'); }
-  catch (e) { box.innerHTML = `<div class="errors">${esc(e.message)}</div>`; return; }
-  const samples = t.samples || [];
-  // Only rebuild the SVGs when the stream actually advanced; identical polls are a no-op.
-  const key = `${t.count ?? samples.length}:${samples.length ? samples[samples.length - 1].session_time : 0}`;
-  if (key === liveChartKey) return;
-  liveChartKey = key;
-  if (!samples.length) { box.innerHTML = '<div class="empty" style="grid-column:1/-1">No telemetry packets yet &mdash; the game must be in a session and sending UDP telemetry.</div>'; return; }
-  box.innerHTML = renderTelemetryCharts(samples);
-}
-
-/* Shared renderer for decoded UDP telemetry samples (live buffer or an archived stint series). */
-function renderTelemetryCharts(samples) {
-  const pct = (v) => v * 100;
-  const charts = [
-    { title: 'Speed', yLabel: 'km/h', series: [seriesFrom(samples, (s) => s.speed_kph, 'speed', '#e10600')] },
-    { title: 'Throttle &amp; brake', yLabel: 'input (%)', series: [seriesFrom(samples, (s) => pct(s.throttle), 'throttle', '#2ecc71'), seriesFrom(samples, (s) => pct(s.brake), 'brake', '#e10600')] },
-    { title: 'Steering', yLabel: 'steer (%)', series: [seriesFrom(samples, (s) => pct(s.steer), 'steer', '#4aa8ff')] },
-    { title: 'Engine RPM', yLabel: 'rpm', series: [seriesFrom(samples, (s) => s.rpm, 'rpm', '#ffb400')] },
-    { title: 'Gear', yLabel: 'gear', series: [seriesFrom(samples, (s) => s.gear, 'gear', '#c99bff')] },
-    { title: 'Clutch', yLabel: 'clutch', series: [seriesFrom(samples, (s) => s.clutch, 'clutch', '#95a5a6')] },
-    { title: 'DRS', yLabel: 'state', series: [seriesFrom(samples, (s) => s.drs, 'drs', '#00cec9')] },
-    { title: 'Rev lights', yLabel: '%', series: [seriesFrom(samples, (s) => s.rev_lights_percent, 'rev lights', '#ff9f43')] },
-    { title: 'Tyre surface temperature', yLabel: '&deg;C', series: wheelSeries(samples, 'tyre_surface_temperature_c', 'tyre', '#ff9f43') },
-    { title: 'Tyre inner temperature', yLabel: '&deg;C', series: wheelSeries(samples, 'tyre_inner_temperature_c', 'tyre inner', '#e17055') },
-    { title: 'Tyre pressure', yLabel: 'psi', series: wheelSeries(samples, 'tyre_pressure_psi', 'tyre', '#00cec9') },
-    { title: 'Brake temperature', yLabel: '&deg;C', series: wheelSeries(samples, 'brake_temperature_c', 'brake', '#d63031') },
-    { title: 'Track surface type', yLabel: 'type', series: wheelSeries(samples, 'surface_type', 'surface', '#6c5ce7') },
-  ];
-  return charts.map((c) => `<div class="panel" style="margin-bottom:0"><h2>${c.title}</h2>${Charts.lines({ series: c.series, xLabel: 'session time (s)', yLabel: c.yLabel, label: c.title })}</div>`).join('');
-}
-
-function liveStatusRows(s) {
-  return `<tr><td class="dim">Listening</td><td>${s.listening ? '<span class="good">yes</span>' : 'no'}</td></tr>
-    <tr><td class="dim">Receiving packets</td><td>${s.connected ? '<span class="good">yes</span>' : '<span class="badc">no</span>'}</td></tr>
-    <tr><td class="dim">Packets accepted</td><td class="num">${esc(s.packets ?? '&mdash;')}</td></tr>
-    <tr><td class="dim">Wrong format</td><td class="num ${s.wrong_format ? 'badc' : ''}">${esc(s.wrong_format ?? 0)}</td></tr>
-    <tr><td class="dim">Malformed</td><td class="num ${s.malformed ? 'badc' : ''}">${esc(s.malformed ?? 0)}</td></tr>
-    <tr><td class="dim">Laps in this session</td><td class="num">${esc(s.laps_recorded)}</td></tr>
-    <tr><td class="dim">Game session</td><td class="mono">${esc(s.session?.uid ?? '&mdash;')} &middot; car ${esc(s.session?.player_car ?? '&mdash;')} &middot; fmt ${esc(s.session?.packet_format ?? '&mdash;')}</td></tr>
-    <tr><td class="dim">Telemetry samples</td><td class="num">${esc(s.telemetry?.samples ?? 0)}${s.telemetry?.samples ? ` &middot; top ${esc(s.telemetry.top_speed_kph)} km/h` : ''}</td></tr>
-    <tr><td class="dim">Last error</td><td>${s.last_error ? `<span class="badc">${esc(s.last_error)}</span>` : '&mdash;'}</td></tr>`;
-}
-
-async function viewLive() {
-  // Static shell rendered once; the 1 s poll updates only the status table, setup panel and charts
-  // so form fields and scroll position are never reset.
-  view().innerHTML = `<div id="live-root"><h1>Live simulator</h1><p class="sub">Receive EA SPORTS F1 25 UDP telemetry on this computer. Setups come from the game itself, so every stint can be checked against the setup the experiment asked for.</p><div id="err"></div>
-    <div class="grid g2"><div class="panel"><h2>Receiver</h2>
-      <div class="grid g2"><div class="field"><label for="lhost">IP address</label><input id="lhost" value="127.0.0.1"></div><div class="field"><label for="lport">Port</label><input id="lport" type="number" min="1024" max="65535" value="${META.game.default_port}"></div></div>
-      <div class="row"><button class="btn primary" id="lcon">Start listening</button><button class="btn" id="ldis" disabled>Stop</button></div>
-      <h3>In the game</h3><p class="hint">Settings &rsaquo; Telemetry Settings: UDP Telemetry <b>On</b>, IP address and port as above, send rate 20 Hz or more, UDP format <b>F1 25</b> or <b>F1 25: 2026 Season Pack</b> (this app decodes packet format <span id="live-formats">&hellip;</span>).</p></div>
-    <div class="panel"><h2>Status</h2><table><tbody id="live-status"><tr><td class="dim">Loading&hellip;</td></tr></tbody></table><div id="live-extra"></div></div></div>
-    <div class="panel"><h2>Current setup reported by the game</h2><div id="live-setup"><p class="hint">Waiting for the first status update&hellip;</p></div></div>
-    <div class="panel"><h2>Live telemetry<span class="dim" id="live-tel-note"></span></h2><p class="hint">Decoded from the game's UDP packets. Last 1500 samples, peak-preserving downsampled for display.</p><div class="grid g2" id="live-charts"><div class="empty" style="grid-column:1/-1">Waiting for telemetry packets&hellip;</div></div></div>
-  </div>`;
-  const draw = async () => {
-    const s = await api('GET', '/api/live/status');
-    if (!document.getElementById('live-root')) return s;  // user navigated away; poll stops itself
-    $('#live-status').innerHTML = liveStatusRows(s);
-    const fmts = $('#live-formats'); if (fmts && s.accepted_formats) fmts.textContent = s.accepted_formats.join(', ');
-    $('#live-extra').innerHTML = s.wrong_format ? `<div class="note">${esc(s.format_help)}</div>` : '';
-    const setup = s.current_setup ? Object.entries(s.current_setup).map(([k, v]) => `<tr><td class="mono">${esc(k)}</td><td class="num">${esc(fmt(v, Number.isInteger(v) ? 0 : 2))}</td></tr>`).join('') : '';
-    $('#live-setup').innerHTML = setup ? `<table><tbody>${setup}</tbody></table>` : '<p class="hint">Waiting for a Car Setups packet (about twice a second while the game is in a session).</p>';
-    $('#lhost').disabled = $('#lport').disabled = s.listening;
-    $('#lcon').disabled = s.listening; $('#ldis').disabled = !s.listening;
-    updateLiveCharts(s);
-    return s;
-  };
-  $('#lcon').addEventListener('click', async () => { try { await api('POST', '/api/live/connect', { host: $('#lhost').value, port: +$('#lport').value }); draw(); } catch (e) { $('#err').innerHTML = errorsBox(e); } });
-  $('#ldis').addEventListener('click', async () => { await api('POST', '/api/live/disconnect'); draw(); });
-  const first = await draw();
-  poll(async () => { try { await draw(); } catch (_) { /* transient */ } }, 1000);
-  return first;
-}
-
-async function viewNewLive() {
-  const gf = META.game.factors, defaults = { front_wing: ['20,25,30', 25], rear_wing: ['24,29,34', 29], on_throttle_diff: ['40,50,60', 50], rear_anti_roll_bar: ['8,11,14', 11] };
-  const methods = META.methods.filter((m) => !META.game.unsupported_methods.includes(m.id));
-  view().innerHTML = `<h1>New experiment</h1><div class="tabs mode"><a href="#/new">Synthetic simulator</a><a href="#/new/live" class="on">Live simulator (EA SPORTS F1 25)</a></div>
-  <p class="sub">You set each generated setup in the game and drive a stint; the app records the laps and checks the game really used that setup.</p><div id="err"></div>
-  <form id="f" class="grid g21"><div>
-    <div class="panel"><h2>1 &middot; Experiment</h2><div class="field"><label for="name">Name</label><input id="name" value="Aero and differential screening" maxlength="80"></div>
-      <div class="field"><label for="hyp">Hypothesis</label><textarea id="hyp" style="min-height:60px">More rear wing costs straight-line speed but improves lap time on this track.</textarea></div></div>
-    <div class="panel"><h2>2 &middot; Setup variables</h2><table><thead><tr><th>Use</th><th>Setup</th><th>Values you will set (comma separated, 2&ndash;7)</th><th>Baseline</th><th>Mapping</th></tr></thead><tbody>
-      ${Object.entries(gf).map(([k, v]) => `<tr><td><input type="checkbox" data-en="${k}" checked></td><td>${esc(v.label)}<div class="dim mono">${k}</div></td>
-      <td><input data-vals="${k}" value="${defaults[k]?.[0] || ''}" aria-label="${esc(v.label)} values"></td><td><input type="number" step="any" data-base="${k}" value="${defaults[k]?.[1] ?? ''}" aria-label="${esc(v.label)} baseline"></td>
-      <td>${Object.entries(v.verification || {}).map(([variant, s]) => `<div>${s.verified ? '<span class="chip completed"' : '<span class="chip waiting_for_measurements"'} title="${esc(s.source)}">${esc((META.game.variants || {})[variant] || variant)}: ${s.verified ? 'verified' : 'not verified'}</span></div>`).join('')
-        || (v.verified ? '<span class="chip completed">verified</span>' : '<span class="chip waiting_for_measurements" title="Run scripts/probe_setup.py, then scripts/verify_setup_mapping.py">not verified</span>')}</td></tr>`).join('')}</tbody></table>
-      <p class="hint">The example values are placeholders: use values your game's garage actually offers. The baseline must be one of them.</p></div>
-    <div class="panel"><h2>3 &middot; Objective &amp; constraints</h2><div class="grid g2"><div class="field"><label>Objective</label><input value="Minimise mean lap time" disabled></div>
-      <div class="field"><label for="minlaps">Valid timed laps per stint</label><input id="minlaps" type="number" min="2" max="20" value="3"></div>
-      <div class="field"><label for="maxstd">Max lap-time spread (s)</label><input id="maxstd" type="number" step="any" min="0.01" max="30" value="1.5"><div class="hint">Consistency check: standard deviation of the stint's lap times.</div></div></div></div>
-  </div><div>
-    <div class="panel"><h2>4 &middot; Design</h2><div class="field"><label for="method">Method</label><select id="method">${methods.map((m) => `<option value="${m.id}">${esc(m.id.replaceAll('_', ' '))}</option>`).join('')}</select><div class="hint" id="mdesc"></div></div>
-      <div class="grid g2"><div class="field"><label for="reps">Replicates</label><input id="reps" type="number" min="1" max="10" value="2"></div><div class="field"><label for="nruns">Runs (random only)</label><input id="nruns" type="number" min="3" max="200" value="12"></div>
-      <div class="field"><label for="budget">Run budget (stints)</label><input id="budget" type="number" min="4" max="200" value="40"></div><div class="field"><label for="seed">Random seed</label><input id="seed" type="number" min="0" value="1"></div></div>
-      <p class="hint">Central composite and Box-Behnken need continuous settings and are not offered: the game only accepts fixed steps.</p></div>
-    <button class="btn primary" type="submit" style="width:100%;padding:12px">Generate design</button></div></form>`;
-  const md = () => { $('#mdesc').textContent = META.methods.find((m) => m.id === $('#method').value).description; };
-  $('#method').addEventListener('change', md); md();
-  $('#f').addEventListener('submit', async (ev) => {
-    ev.preventDefault();
-    const factors = {};
-    Object.keys(gf).forEach((k) => {
-      if (!$(`[data-en="${k}"]`).checked) return;
-      factors[k] = { values: $(`[data-vals="${k}"]`).value.split(',').map((x) => x.trim()).filter(Boolean).map(Number), baseline: parseFloat($(`[data-base="${k}"]`).value) };
-    });
-    const body = { name: $('#name').value, hypothesis: $('#hyp').value, mode: LIVE, live: { factors, min_valid_laps: +$('#minlaps').value, max_lap_std: parseFloat($('#maxstd').value) },
-      design: { method: $('#method').value, replicates: +$('#reps').value, n_runs: +$('#nruns').value, run_budget: +$('#budget').value, seed: +$('#seed').value } };
-    try { const d = await api('POST', '/api/experiments', body); toast('Design generated', true); location.hash = `#/e/${d.id}/design`; }
-    catch (e) { $('#err').innerHTML = errorsBox(e); window.scrollTo(0, 0); }
-  });
+    <div class="row"><button class="btn primary" id="go" ${d.counts.queued ? '' : 'disabled'}>Run ${d.counts.queued} queued setups</button><span class="dim">Runs execute on the synthetic simulator, 4 at a time.</span></div>`;
+  $('#go').addEventListener('click', async () => { try { await api('POST', `/api/experiments/${id}/execute`); location.hash = `#/e/${id}/runs`; } catch (e) { toast(e.message); } });
 }
 
 /* ------------------------------------------------------------- run monitor */
@@ -272,11 +151,11 @@ function runCharts(d) {
   let best = Infinity; const step = [];
   done.forEach((r) => { if (r.feasible && r.outcomes.lap_time < best) best = r.outcomes.lap_time; if (best < Infinity) step.push({ x: r.order + 1, y: best }); });
   const bestId = d.best?.run_id;
-  const pts = done.map((r) => ({ x: r.order + 1, y: r.outcomes.lap_time, cls: r.run_id === bestId ? 'pt-best' : r.feasible ? 'pt-ok' : 'pt-bad', r: r.run_id === bestId ? 7 : 4.5, title: `Run ${r.order + 1}: ${fmt(r.outcomes.lap_time, 3)} s, ${SECOND(d).name} ${fmt(r.outcomes[SECOND(d).key], SECOND(d).dp)}${r.feasible ? '' : ' (INFEASIBLE)'}` }));
-  const sc = done.filter((r) => r.outcomes[SECOND(d).key] !== undefined).map((r) => ({ x: r.outcomes.lap_time, y: r.outcomes[SECOND(d).key], cls: r.run_id === bestId ? 'pt-best' : r.feasible ? 'pt-ok' : 'pt-bad', r: r.run_id === bestId ? 7 : 4.5, title: `Run ${r.order + 1}` }));
+  const pts = done.map((r) => ({ x: r.order + 1, y: r.outcomes.lap_time, cls: r.run_id === bestId ? 'pt-best' : r.feasible ? 'pt-ok' : 'pt-bad', r: r.run_id === bestId ? 7 : 4.5, title: `Run ${r.order + 1}: ${fmt(r.outcomes.lap_time, 3)} s, stability ${fmt(r.outcomes['stability'], 1)}${r.feasible ? '' : ' (INFEASIBLE)'}` }));
+  const sc = done.filter((r) => r.outcomes['stability'] !== undefined).map((r) => ({ x: r.outcomes.lap_time, y: r.outcomes['stability'], cls: r.run_id === bestId ? 'pt-best' : r.feasible ? 'pt-ok' : 'pt-bad', r: r.run_id === bestId ? 7 : 4.5, title: `Run ${r.order + 1}` }));
   return `<div class="grid g2"><div class="panel"><h2>Lap time by run</h2>${Charts.scatter({ points: pts, step, xLabel: 'run', yLabel: 'mean lap (s)', label: 'lap time by run' })}
-    <div class="legend"><span><i style="background:var(--green)"></i>feasible</span><span><i style="background:var(--bad)"></i>${isLive(d) ? 'violates a constraint' : 'violates stability'}</span><span><i style="background:var(--amber)"></i>best feasible</span><span>line = best feasible so far</span></div></div>
-    <div class="panel"><h2>${cap(SECOND(d).name)} vs lap time</h2>${Charts.scatter({ points: sc, lines: d.min_stability != null ? [{ h: d.min_stability, label: `min ${d.min_stability}` }] : [], shade: d.min_stability != null ? { y0: 0, y1: d.min_stability } : null, ymin: sc.length ? Math.min(...sc.map((p) => p.y), d.min_stability - 3) : undefined, xLabel: 'mean lap (s)', yLabel: 'stability score', label: 'stability vs lap time' })}
+    <div class="legend"><span><i style="background:var(--green)"></i>feasible</span><span><i style="background:var(--bad)"></i>violates stability</span><span><i style="background:var(--amber)"></i>best feasible</span><span>line = best feasible so far</span></div></div>
+    <div class="panel"><h2>Stability vs lap time</h2>${Charts.scatter({ points: sc, lines: d.min_stability != null ? [{ h: d.min_stability, label: `min ${d.min_stability}` }] : [], shade: d.min_stability != null ? { y0: 0, y1: d.min_stability } : null, ymin: sc.length ? Math.min(...sc.map((p) => p.y), d.min_stability - 3) : undefined, xLabel: 'mean lap (s)', yLabel: 'stability score', label: 'stability vs lap time' })}
     <div class="legend"><span>shaded area = infeasible region</span></div></div></div>`;
 }
 async function viewRuns(id) {
@@ -284,33 +163,23 @@ async function viewRuns(id) {
   let open = null;
   const draw = async () => {
     const d = await api('GET', `/api/experiments/${id}`);
-    const live = isLive(d), ls = live ? await api('GET', '/api/live/status') : null;
     const root = $('#runs-root'); if (!root) return d;
     const names = d.factors.map((f) => f.name), c = d.counts, active = c.running + c.queued > 0 && d.status !== 'created';
     setLedFor(d);
     root.innerHTML = expHeader(d, 'runs') + `<div class="kpis"><div class="kpi"><b>${c.completed}</b><span>completed</span></div><div class="kpi"><b>${c.running}</b><span>running</span></div><div class="kpi"><b>${c.queued}</b><span>queued</span></div>
       <div class="kpi ${c.failed ? 'bad' : ''}"><b>${c.failed}</b><span>failed</span></div><div class="kpi good"><b>${d.best ? fmt(d.best.lap_time, 3) : '&mdash;'}</b><span>best feasible lap (s)</span></div></div>
-      <div class="row" style="margin-bottom:12px">${live ? '' : `<button class="btn primary" id="run" ${c.queued && !c.running ? '' : 'disabled'}>Run queued</button><button class="btn" id="cancel" ${c.queued || c.running ? '' : 'disabled'}>Cancel</button>
-      <button class="btn" id="retry" ${c.failed ? '' : 'disabled'}>Retry ${c.failed} failed</button>`}<span class="spacer"></span><a class="btn" href="/api/experiments/${esc(id)}/export/runs.csv">Export runs CSV</a></div>
-      ${live ? liveRunPanel(d, ls) : ''}${runCharts(d)}<div class="panel"><h2>Runs</h2><div style="overflow:auto;max-height:560px"><table><thead><tr><th>#</th><th>Status</th>${names.map((n) => `<th class="num">${esc(flabel(d, n))}</th>`).join('')}<th class="num">Lap (s)</th><th class="num">${cap(SECOND(d).name)}</th><th>Feasible</th><th class="num">Tries</th><th>Source</th><th></th></tr></thead><tbody>
+      <div class="row" style="margin-bottom:12px"><button class="btn primary" id="run" ${c.queued && !c.running ? '' : 'disabled'}>Run queued</button><button class="btn" id="cancel" ${c.queued || c.running ? '' : 'disabled'}>Cancel</button>
+      <button class="btn" id="retry" ${c.failed ? '' : 'disabled'}>Retry ${c.failed} failed</button><span class="spacer"></span><a class="btn" href="/api/experiments/${esc(id)}/export/runs.csv">Export runs CSV</a></div>
+      ${runCharts(d)}<div class="panel"><h2>Runs</h2><div style="overflow:auto;max-height:560px"><table><thead><tr><th>#</th><th>Status</th>${names.map((n) => `<th class="num">${esc(flabel(d, n))}</th>`).join('')}<th class="num">Lap (s)</th><th class="num">Stability</th><th>Feasible</th><th class="num">Tries</th><th>Source</th><th></th></tr></thead><tbody>
       ${d.runs.map((r) => `<tr><td class="mono">${r.order + 1}</td><td>${statusChip(r.status)}${r.status === 'running' ? ' <i class="led run"></i>' : ''}</td>${names.map((n) => `<td class="num">${fmt(r.configuration[n], 2)}</td>`).join('')}
-      <td class="num">${r.outcomes.lap_time !== undefined ? fmt(r.outcomes.lap_time, 3) : ''}</td><td class="num">${r.outcomes[SECOND(d).key] !== undefined ? fmt(r.outcomes[SECOND(d).key], SECOND(d).dp) : ''}</td>
+      <td class="num">${r.outcomes.lap_time !== undefined ? fmt(r.outcomes.lap_time, 3) : ''}</td><td class="num">${r.outcomes['stability'] !== undefined ? fmt(r.outcomes['stability'], 1) : ''}</td>
       <td>${r.feasible === true ? '<span class="good">yes</span>' : r.feasible === false ? '<span class="badc">NO</span>' : ''}</td><td class="num">${r.attempts}</td>
-      <td>${r.imported ? (live ? '<span class="chip simrec">sim-recorded</span>' : '<span class="chip imported">imported</span>') : r.status === 'completed' ? '<span class="chip synthetic">synthetic</span>' : ''}${r.iteration ? ` <span class="chip model">opt ${r.iteration}</span>` : ''}</td>
-      <td>${r.error ? `<span class="badc" title="${esc(r.error)}">${esc(r.error.slice(0, 60))}</span>` : live && r.status === 'completed' ? `<a href="/api/experiments/${esc(id)}/runs/${esc(r.run_id)}/evidence" target="_blank" rel="noopener">evidence</a>` : r.status === 'queued' && live ? stintButtons(r, ls) : r.status === 'queued' ? `<button class="btn small" data-imp="${esc(r.run_id)}" data-n="${r.order + 1}">Import telemetry</button>` : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
+      <td>${r.imported ? '<span class="chip imported">imported</span>' : r.status === 'completed' ? '<span class="chip synthetic">synthetic</span>' : ''}${r.iteration ? ` <span class="chip model">opt ${r.iteration}</span>` : ''}</td>
+      <td>${r.error ? `<span class="badc" title="${esc(r.error)}">${esc(r.error.slice(0, 60))}</span>` : r.status === 'queued' ? `<button class="btn small" data-imp="${esc(r.run_id)}" data-n="${r.order + 1}">Import telemetry</button>` : ''}</td></tr>`).join('')}</tbody></table></div></div>`;
     $('#run')?.addEventListener('click', async () => { try { await api('POST', `/api/experiments/${id}/execute`); poll(draw, 700); draw(); } catch (e) { toast(e.message); } });
     $('#cancel')?.addEventListener('click', async () => { await api('POST', `/api/experiments/${id}/cancel`); draw(); });
     $('#retry')?.addEventListener('click', async () => { try { await api('POST', `/api/experiments/${id}/retry`); poll(draw, 700); draw(); } catch (e) { toast(e.message); } });
     document.querySelectorAll('[data-imp]').forEach((b) => b.addEventListener('click', () => importModal(id, b.dataset.imp, b.dataset.n, draw)));
-    document.querySelectorAll('[data-start]').forEach((b) => b.addEventListener('click', async () => {
-      STINT_MSG = '';
-      try { await api('POST', `/api/experiments/${id}/runs/${b.dataset.start}/stint/start`); toast('Stint started: drive your laps, then press Submit stint', true); } catch (e) { STINT_MSG = e.message; }
-      draw();
-    }));
-    document.querySelectorAll('[data-submit]').forEach((b) => b.addEventListener('click', async () => {
-      try { await api('POST', `/api/experiments/${id}/runs/${b.dataset.submit}/stint/submit`); STINT_MSG = ''; toast('Stint accepted and recorded', true); } catch (e) { STINT_MSG = e.message; }
-      draw();
-    }));
     return d;
   };
   const d = await draw();
@@ -355,7 +224,6 @@ async function viewTelemetryStandalone() {
 }
 async function viewExpTelemetry(id) {
   const d = await api('GET', `/api/experiments/${id}`);
-  if (isLive(d)) return viewStintTelemetry(id, d);
   const tel = await api('GET', `/api/experiments/${id}/telemetry`);
   const queued = d.runs.filter((r) => r.status === 'queued');
   view().innerHTML = expHeader(d, 'telemetry') + `<div class="grid g21"><div><div class="panel"><h2>Run telemetry</h2>${tel.length ? `<div class="row"><select id="runsel" style="max-width:420px">${tel.map((t) => `<option value="${esc(t.run_id)}">Run ${t.order + 1} &middot; ${t.status} &middot; ${t.synthetic ? 'synthetic' : 'imported'}</option>`).join('')}</select></div><div id="tel"></div>` : '<div class="empty">No telemetry yet. Execute runs or import a CSV.</div>'}</div></div>
@@ -373,30 +241,6 @@ async function viewExpTelemetry(id) {
   $('#x-attach')?.addEventListener('click', async () => {
     try { const r = await api('POST', `/api/experiments/${id}/runs/${$('#x-run').value}/telemetry`, { csv: imp.csv(), time_unit: imp.unit(), filename: imp.name() }); toast('Telemetry attached; run completed', true); if (r.row_errors.length) toast(`${r.row_errors.length} row(s) skipped`); viewExpTelemetry(id); }
     catch (e) { $('#x-perr').innerHTML = errorsBox(e); }
-  });
-}
-/* Saved stints of a live experiment: the decoded UDP telemetry archived with each submitted stint (accepted or rejected). */
-async function viewStintTelemetry(id, d) {
-  const idx = await api('GET', `/api/experiments/${id}/telemetry/series-index`);
-  const stored = idx.filter((r) => r.samples);
-  const runNo = (rid) => (d.runs.find((x) => x.run_id === rid)?.order ?? 0) + 1;
-  const opt = (r) => `<option value="${esc(r.run_id)}">Run ${r.order + 1} &middot; ${esc(r.status)} &middot; ${r.samples} samples</option>`;
-  view().innerHTML = expHeader(d, 'telemetry') + `<div class="panel"><h2>Stint telemetry inspector</h2>
-    <p class="hint">Decoded UDP samples recorded during each submitted stint (SIM-RECORDED), exactly as stored. Pick a stint, choose channels and a time window, hover or replay, or compare two stints. CSV import is not available for live experiments: a CSV cannot prove which setup was driven.</p>
-    ${stored.length ? `<div class="row"><select id="tel-run" style="width:auto">${stored.map(opt).join('')}</select><select id="tel-cmp" style="width:auto"><option value="">no comparison</option>${stored.map((r) => `<option value="${esc(r.run_id)}">compare with run ${r.order + 1}</option>`).join('')}</select>
-      <button class="btn primary small" id="tel-series">Open recorded telemetry</button><span class="dim" id="tel-series-msg"></span></div><div id="tel-insp"></div>`
-    : '<div class="empty">No stint telemetry stored yet. Drive a stint (Run monitor &rarr; Start stint / Submit stint) to record one.</div>'}</div>`;
-  $('#tel-series')?.addEventListener('click', async () => {
-    const msg = $('#tel-series-msg'), a = $('#tel-run').value, other = $('#tel-cmp').value === a ? '' : $('#tel-cmp').value;
-    try {
-      const r = await api('GET', `/api/experiments/${id}/runs/${a}/telemetry/series?limit=20000`);
-      const b = other ? await api('GET', `/api/experiments/${id}/runs/${other}/telemetry/series?limit=20000`) : null;
-      const dl = (rid) => `<a class="btn small" href="/api/experiments/${esc(id)}/runs/${esc(rid)}/telemetry/series.csv" download>CSV, run ${runNo(rid)} (all samples)</a>
-        <a class="btn small" href="/api/experiments/${esc(id)}/runs/${esc(rid)}/telemetry/series?limit=20000" download="${esc(rid)}-telemetry.json">JSON, run ${runNo(rid)}</a>`;
-      msg.textContent = `${r.count} measured samples${b ? `; comparing with run ${runNo(other)} (${b.count})` : ''}`;
-      Inspector.mount($('#tel-insp'), { a: { label: `Run ${runNo(a)}`, samples: r.samples }, b: b && b.samples?.length ? { label: `Run ${runNo(other)}`, samples: b.samples } : null,
-        downloads: `<div class="row" style="margin-top:12px"><span class="dim">Download the decoded dataset:</span>${dl(a)}${b ? dl(other) : ''}</div>` });
-    } catch (e) { msg.innerHTML = `<span class="badc">${esc(e.message)}</span>`; }
   });
 }
 function importModal(id, runId, n, done) {
@@ -443,11 +287,11 @@ async function viewAnalysis(id) {
       $('#busy').textContent = '';
       const fx = a.effects, names = d.factors.map((f) => f.name);
       const eff = fx.effects.map((e) => ({ label: label(e.term), value: e.low_to_high, lo: e.ci_95?.[0], hi: e.ci_95?.[1], sig: e.significant, p: e.p_value }));
-      const sc = Object.values(a.runs).filter((r) => r.status === 'completed' && r.outcomes[SECOND(d).key] !== undefined).map((r) => ({ x: r.outcomes.lap_time, y: r.outcomes[SECOND(d).key], cls: r.run_id === a.best_run_id ? 'pt-best' : r.feasible ? 'pt-ok' : 'pt-bad', r: r.run_id === a.best_run_id ? 7 : 4.5, title: `Run ${r.order + 1}` }));
+      const sc = Object.values(a.runs).filter((r) => r.status === 'completed' && r.outcomes['stability'] !== undefined).map((r) => ({ x: r.outcomes.lap_time, y: r.outcomes['stability'], cls: r.run_id === a.best_run_id ? 'pt-best' : r.feasible ? 'pt-ok' : 'pt-bad', r: r.run_id === a.best_run_id ? 7 : 4.5, title: `Run ${r.order + 1}` }));
       const pair = names.length >= 2 ? [names[0], names[1]] : null;
       $('#res').innerHTML = recoCard(a.recommendation) + `<div class="grid g2"><div class="panel"><h2>Factor effects on lap time (low &rarr; high of tested range)</h2>${Charts.bars({ items: eff, goodNegative: true, xLabel: 'seconds (negative = faster); whiskers = 95% CI; * significant' })}
       <p class="hint">R&sup2; ${fmt(fx.r_squared, 3)} &middot; adj. ${fmt(fx.adjusted_r_squared, 3)} &middot; residual df ${fx.residual_df ?? 'n/a'}. Bars show the <em>linear</em> effect of moving a factor from the low to the high end (regression on coded factors). The ANOVA below treats levels as categories, so it can also flag <em>curvature</em> (centre vs ends) that a straight line misses &mdash; a factor can be non-significant here and significant there.</p></div>
-      <div class="panel"><h2>Feasibility: ${SECOND(d).name} vs lap time</h2>${Charts.scatter({ points: sc, lines: d.min_stability != null ? [{ h: d.min_stability, label: `min ${d.min_stability}` }] : [], shade: d.min_stability != null ? { y0: 0, y1: d.min_stability } : null, ymin: sc.length ? Math.min(...sc.map((p) => p.y), d.min_stability - 3) : undefined, xLabel: 'mean lap (s)', yLabel: 'stability' })}
+      <div class="panel"><h2>Feasibility: stability vs lap time</h2>${Charts.scatter({ points: sc, lines: d.min_stability != null ? [{ h: d.min_stability, label: `min ${d.min_stability}` }] : [], shade: d.min_stability != null ? { y0: 0, y1: d.min_stability } : null, ymin: sc.length ? Math.min(...sc.map((p) => p.y), d.min_stability - 3) : undefined, xLabel: 'mean lap (s)', yLabel: 'stability' })}
       <div class="legend"><span>${a.feasible_run_ids.length} feasible &middot; ${a.infeasible.length} infeasible</span><span>Pareto-optimal runs: ${a.pareto_run_ids.length}</span></div></div></div>
       <div class="grid g2"><div class="panel"><h2>ANOVA (Type II) &mdash; lap time</h2>${fx.anova && fx.anova.rows.length ? `<table><thead><tr><th>Term</th><th class="num">SS</th><th class="num">df</th><th class="num">F</th><th class="num">p</th></tr></thead><tbody>${fx.anova.rows.map((r) => `<tr><td>${esc(label(r.term))}</td><td class="num">${fmt(r.sum_squares, 4)}</td><td class="num">${r.df}</td><td class="num">${r.f_statistic == null ? '' : fmt(r.f_statistic, 2)}</td><td class="num ${r.p_value != null && r.p_value < a.alpha ? 'good' : ''}">${r.p_value == null ? '' : pfmt(r.p_value)}</td></tr>`).join('')}</tbody></table>${warnBlock(fx.anova.warnings || [])}` : '<div class="note">ANOVA not available (not enough residual degrees of freedom).</div>'}</div>
       <div class="panel"><h2>Interactions</h2>${fx.interactions.length ? `<table><thead><tr><th>Term</th><th class="num">Coef.</th><th class="num">p</th></tr></thead><tbody>${fx.interactions.map((i) => `<tr><td>${esc(i.term.split(':').map(label).join(' × '))}</td><td class="num">${fmt(i.coefficient, 3)}</td><td class="num ${i.significant ? 'good' : ''}">${pfmt(i.p_value)}</td></tr>`).join('')}</tbody></table>` : '<div class="dim">No interaction terms estimable.</div>'}

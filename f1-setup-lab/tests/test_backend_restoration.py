@@ -23,7 +23,6 @@ from fastapi.testclient import TestClient
 
 from db import create_db_engine, migrate
 from f1lab.api.app import create_app
-from f1lab.catalogs.verification import save_probe_report
 
 APP_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = APP_DIR.parent
@@ -64,16 +63,15 @@ def test_manifest_excludes_files_modified_on_restore():
 def test_manifest_covers_the_required_restored_modules():
     names = set(MANIFEST["files"])
     base = "f1-setup-lab/backend/f1lab/"
-    for rel in ("adapters/vehicle_model.py", "adapters/sim_adapter.py", "adapters/telemetry.py", "catalogs/ea_f1_25.py",
-                "catalogs/verification.py", "services/lab.py", "services/narrative.py", "services/report_html.py"):
+    for rel in ("adapters/vehicle_model.py", "adapters/sim_adapter.py", "adapters/telemetry.py"):
         assert base + rel in names, rel
-    udp = [n for n in names if n.startswith(base + "integrations/game_udp/")]
-    assert len(udp) == 12, sorted(udp)  # every .py of the package incl. protocols/ (the spec's "11" omits capture.py or __init__)
-    assert {n.rsplit("/", 1)[1] for n in udp} >= {"receiver.py", "recorder.py", "probe.py", "live.py", "evidence.py", "capture.py"}
-    on_disk = {str(q.relative_to(REPO_ROOT)) for q in (BACKEND / "integrations" / "game_udp").rglob("*.py")}
-    assert on_disk == set(udp), sorted(on_disk ^ set(udp))
-
-
+    for rel in ("services/lab.py", "services/narrative.py", "services/report_html.py"):  # edited when the recorded-stint feature was removed
+        assert base + rel in MANIFEST["modified_on_restore"], rel
+        assert (REPO_ROOT / (base + rel)).is_file(), rel
+    # the recorded-stint feature was removed: only the historical integration and the synthetic setup packages remain
+    assert {p.name for p in (BACKEND / "integrations").iterdir() if p.is_dir() and p.name != "__pycache__"} == {"historical"}
+    assert {p.name for p in BACKEND.iterdir() if p.is_dir() and p.name != "__pycache__"} == {"adapters", "api", "integrations", "services"}
+    assert not [n for n in names if n.endswith("inspector.js")]
 def test_checker_names_every_missing_and_differing_file_in_a_tampered_copy(tmp_path):
     for rel in MANIFEST["files"]:
         dest = tmp_path / rel
@@ -81,7 +79,7 @@ def test_checker_names_every_missing_and_differing_file_in_a_tampered_copy(tmp_p
         shutil.copyfile(REPO_ROOT / rel, dest)
     assert check_manifest(MANIFEST["files"], tmp_path) == []
     rels = sorted(MANIFEST["files"])
-    changed, changed2, removed, removed2 = rels[0], rels[5], rels[10], rels[20]
+    changed, changed2, removed, removed2 = rels[0], rels[2], rels[4], rels[-1]
     with open(tmp_path / changed, "ab") as f:
         f.write(b"\n# tampered\n")
     (tmp_path / changed2).write_bytes(b"")
@@ -103,7 +101,7 @@ def test_schema_class_names_are_unique_across_api_and_historical_schemas():
     allnames = api + hist
     dupes = sorted({n for n in allnames if allnames.count(n) > 1})
     assert not dupes, f"class names defined more than once: {dupes}"
-    for n in ("ExperimentRequest", "TelemetryRequest", "LiveConnectRequest", "HistoricalImportRequest", "HistoricalCompareRequest"):
+    for n in ("ExperimentRequest", "TelemetryRequest", "HistoricalImportRequest", "HistoricalCompareRequest"):
         assert n in allnames
 
 
@@ -125,11 +123,7 @@ def test_no_fastf1_import_anywhere_in_f1lab():
 
 EXPECTED_SYNTHETIC = (
     "SYNTHETIC DATA: the vehicle model is an invented response surface. This is not real Formula 1 telemetry, "
-    "and synthetic experiments use no game, car or timing data."
-)
-EXPECTED_LIVE = (
-    "SIMULATOR-RECORDED DATA: laps were driven by one person in EA SPORTS F1 25 on one track and setups were read from the game's UDP output. "
-    "This is video-game data, not real Formula 1 telemetry, and the findings say nothing about a real car or other drivers."
+    "and synthetic experiments use no car or timing data."
 )
 EXPECTED_HISTORICAL = (
     "HISTORICAL F1 DATA: real Formula 1 session data from OpenF1 (unofficial, not affiliated with Formula 1). "
@@ -152,8 +146,8 @@ def _literal_assignments(path: Path) -> dict:
 def test_notices_equal_expected_values_from_the_ast():
     env = _literal_assignments(BACKEND / "__init__.py")
     assert env["SYNTHETIC_NOTICE"] == EXPECTED_SYNTHETIC
-    assert env["SIM_RECORDED_NOTICE"] == EXPECTED_LIVE
-    assert env["NOTICES"] == {"synthetic": EXPECTED_SYNTHETIC, "live_simulator": EXPECTED_LIVE, "historical": EXPECTED_HISTORICAL}
+    assert "SIM_RECORDED_NOTICE" not in env
+    assert env["NOTICES"] == {"synthetic": EXPECTED_SYNTHETIC, "historical": EXPECTED_HISTORICAL}
     assert env["__version__"] == "2.1.0"
 
 
@@ -162,15 +156,15 @@ def test_notices_exported_at_runtime_equal_expected_values():
 
     assert f1lab.SYNTHETIC_NOTICE == EXPECTED_SYNTHETIC
     assert f1lab.NOTICES["synthetic"] == EXPECTED_SYNTHETIC
-    assert f1lab.NOTICES["live_simulator"] == EXPECTED_LIVE
+    assert set(f1lab.NOTICES) == {"synthetic", "historical"}
     assert f1lab.NOTICES["historical"] == EXPECTED_HISTORICAL
 
 
 # ----------------------------------------------------------------------------- import isolation (4.8)
-def test_importing_historical_loads_no_game_udp_adapter_simulator_or_lab_modules():
+def test_importing_historical_loads_no_adapter_simulator_or_lab_modules():
     code = (
         "import sys, f1lab.integrations.historical\n"
-        "bad = sorted(m for m in sys.modules if m.startswith(('f1lab.integrations.game_udp', 'f1lab.adapters', 'f1lab.services')))\n"
+        "bad = sorted(m for m in sys.modules if m.startswith(('f1lab.adapters', 'f1lab.services')))\n"
         "print('BAD:' + ','.join(bad))\n"
     )
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60, cwd=APP_DIR)
@@ -204,7 +198,7 @@ def test_pyproject_version_and_description():
     assert proj["version"] == "2.1.0"
     desc = proj["description"]
     assert 1 <= len(desc) < 200
-    for ws in ("Setup Engineering", "Live Simulator", "Historical F1"):
+    for ws in ("Setup Engineering", "Historical F1"):
         assert ws in desc
 
 
@@ -213,23 +207,17 @@ def test_pyproject_does_not_declare_fastf1_anywhere():
     assert "fastf1" not in json.dumps(PYPROJECT["project"]).lower()
 
 
-def test_pyproject_ruff_exempts_only_protocols_and_capture_from_e702():
+def test_pyproject_ruff_has_no_e702_exemptions_left():
     ruff = PYPROJECT["tool"]["ruff"]
     lint = ruff.get("lint", {})
     for key in ("ignore", "extend-ignore"):
         assert "E702" not in lint.get(key, []) and "E702" not in ruff.get(key, [])
-    exempt = {pat for pat, rules in lint.get("per-file-ignores", {}).items() if "E702" in rules}
-    exempt |= {pat for pat, rules in ruff.get("per-file-ignores", {}).items() if "E702" in rules}
-    exempt |= {pat for pat, rules in lint.get("extend-per-file-ignores", {}).items() if "E702" in rules}
-    assert exempt == {"backend/f1lab/integrations/game_udp/protocols/*.py", "backend/f1lab/integrations/game_udp/capture.py"}
-    assert list(APP_DIR.glob("backend/f1lab/integrations/game_udp/protocols/*.py"))
-    assert (APP_DIR / "backend/f1lab/integrations/game_udp/capture.py").is_file()
-
-
+    for table in (lint.get("per-file-ignores", {}), ruff.get("per-file-ignores", {}), lint.get("extend-per-file-ignores", {})):
+        assert not {pat for pat, rules in table.items() if "E702" in rules}
 # ----------------------------------------------------------------------------- restored routes with a stub lab (5.1, 5.2)
-ASYNC_METHODS = {"startup", "shutdown", "cancel", "attach_telemetry", "live_connect", "stint_submit", "analyse", "recommendation",
+ASYNC_METHODS = {"startup", "shutdown", "cancel", "attach_telemetry", "analyse", "recommendation",
                  "optimise_suggest", "optimise_apply", "report", "report_html"}
-TEXT_METHODS = {"telemetry_series_csv", "csv_export", "report_html"}
+TEXT_METHODS = {"csv_export", "report_html"}
 
 
 class StubLab:
@@ -255,7 +243,7 @@ class StubLab:
         return call
 
 
-RESTORED_PREFIXES = ("/api/experiments", "/api/live/", "/api/game/", "/api/telemetry/preview", "/api/demo/")
+RESTORED_PREFIXES = ("/api/experiments", "/api/telemetry/preview", "/api/demo/")
 EXP = "/api/experiments/e1"
 RUN = f"{EXP}/runs/r1"
 REQUESTS = {  # (method, route template) -> (concrete url, json body)
@@ -269,19 +257,6 @@ REQUESTS = {  # (method, route template) -> (concrete url, json body)
     ("POST", "/api/telemetry/preview"): ("/api/telemetry/preview", {"csv": "lap,sector_1\n1,28\n"}),
     ("GET", "/api/experiments/{exp_id}/telemetry"): (f"{EXP}/telemetry", None),
     ("POST", "/api/experiments/{exp_id}/runs/{run_id}/telemetry"): (f"{RUN}/telemetry", {"csv": "lap,sector_1\n1,28\n"}),
-    ("GET", "/api/live/status"): ("/api/live/status", None),
-    ("POST", "/api/live/connect"): ("/api/live/connect", {"host": "127.0.0.1", "port": 20777}),
-    ("POST", "/api/live/disconnect"): ("/api/live/disconnect", None),
-    ("GET", "/api/live/telemetry"): ("/api/live/telemetry", None),
-    ("POST", "/api/experiments/{exp_id}/runs/{run_id}/stint/start"): (f"{RUN}/stint/start", None),
-    ("POST", "/api/experiments/{exp_id}/runs/{run_id}/stint/submit"): (f"{RUN}/stint/submit", None),
-    ("GET", "/api/experiments/{exp_id}/runs/{run_id}/evidence"): (f"{RUN}/evidence", None),
-    ("GET", "/api/experiments/{exp_id}/telemetry/series-index"): (f"{EXP}/telemetry/series-index", None),
-    ("GET", "/api/experiments/{exp_id}/runs/{run_id}/telemetry/series.csv"): (f"{RUN}/telemetry/series.csv", None),
-    ("GET", "/api/experiments/{exp_id}/runs/{run_id}/telemetry/series"): (f"{RUN}/telemetry/series", None),
-    ("GET", "/api/game/verification"): ("/api/game/verification", None),
-    ("GET", "/api/game/probe-reports"): ("/api/game/probe-reports", None),
-    ("GET", "/api/game/probe-reports/{report_id}"): ("/api/game/probe-reports/rep1", None),
     ("POST", "/api/experiments/{exp_id}/analysis"): (f"{EXP}/analysis", None),
     ("GET", "/api/experiments/{exp_id}/recommendation"): (f"{EXP}/recommendation", None),
     ("POST", "/api/experiments/{exp_id}/optimise/suggest"): (f"{EXP}/optimise/suggest", None),
@@ -313,7 +288,6 @@ def stub_app(tmp_path, monkeypatch):
     db.parent.mkdir()
     engine = create_db_engine(f"sqlite:///{db}")
     migrate(engine)
-    save_probe_report(engine, {"report_id": "rep1", "game_variants": ["f1_25"], "packet_formats": [2025]})  # for GET /api/game/probe-reports/{id}
     stub = StubLab(engine)
 
     def boom(*a, **k):
@@ -328,7 +302,7 @@ def stub_app(tmp_path, monkeypatch):
 def test_request_table_covers_every_restored_route(stub_app):
     app, _, _ = stub_app
     routes = restored_routes(app)
-    assert len(routes) >= 30
+    assert len(routes) >= 20
     assert routes == set(REQUESTS), f"uncovered: {sorted(routes - set(REQUESTS))}; stale: {sorted(set(REQUESTS) - routes)}"
 
 
@@ -367,13 +341,14 @@ def test_meta_lists_historical_and_setup_modules_by_name(client):
     assert mods["historical"]["label"] == "Historical F1"
     assert mods["setup"]["label"] == "Setup Engineering"
     # keys of both the setup and the historical halves, with their types
-    expected = {"notice": str, "notices": dict, "modes": list, "game": dict, "version": str, "trialforge_version": str,
+    expected = {"notice": str, "notices": dict, "modes": list, "version": str, "trialforge_version": str,
                 "factors": dict, "default_factors": dict, "methods": list, "optimisers": list, "provider": str,
                 "first_year": int, "modules": list, "telemetry_columns": list}
     for key, typ in expected.items():
         assert key in meta, key
         assert isinstance(meta[key], typ), (key, type(meta[key]))
     assert meta["provider"] == "openf1"
+    assert set(meta) == set(expected) and [m["id"] for m in meta["modes"]] == ["synthetic"]
 
 
 def test_health_has_sdk_fields_and_keeps_existing_fields_and_types(client):
@@ -392,7 +367,7 @@ def test_health_has_sdk_fields_and_keeps_existing_fields_and_types(client):
 
 
 # ----------------------------------------------------------------------------- route list (6.5)
-SETUP_TOKENS = ("experiment", "live", "game", "telemetry/preview", "demo", "stint", "probe", "evidence", "optimise")
+SETUP_TOKENS = ("experiment", "telemetry/preview", "demo", "optimise")
 HISTORICAL_TOKENS = ("historical", "openf1", "import")
 
 
@@ -400,10 +375,11 @@ def test_no_route_converts_between_historical_and_setup_data(tmp_path):
     app = create_app(str(tmp_path / "trialforge.db"))
     paths = sorted({r.path for r in app.routes if getattr(r, "path", "").startswith("/api/")})
     assert "/api/historical/sessions" in paths and "/api/experiments" in paths
+    assert not [p for p in paths if p.startswith(("/api/live", "/api/game"))]  # the recorded-stint routes are gone
     hist = [p for p in paths if p.startswith("/api/historical")]
     other = [p for p in paths if not p.startswith("/api/historical")]
-    for p in hist:  # historical routes never address experiments, live capture, game probes or stints
-        assert not any(t in p.removeprefix("/api/historical") for t in ("experiment", "live", "game", "stint", "probe", "evidence", "optimise")), p
+    for p in hist:  # historical routes never address experiments
+        assert not any(t in p.removeprefix("/api/historical") for t in ("experiment", "optimise")), p
     for p in other:  # setup routes never address historical sessions or imports
         assert not any(t in p for t in HISTORICAL_TOKENS), p
     for p in paths:  # a conversion route would name both domains, or use a conversion verb
@@ -413,3 +389,11 @@ def test_no_route_converts_between_historical_and_setup_data(tmp_path):
     for r in app.routes:
         if getattr(r, "path", "").startswith("/api/historical"):
             assert "exp_id" not in r.path and "run_id" not in r.path
+# ----------------------------------------------------------------------------- the recorded-stint feature is gone
+def test_removed_routes_are_not_served_and_the_old_experiment_mode_is_rejected(client):
+    for method, url in (("GET", "/api/live/status"), ("POST", "/api/live/connect"), ("GET", "/api/game/verification"),
+                        ("POST", "/api/experiments/e1/runs/r1/stint/start"), ("GET", "/api/experiments/e1/runs/r1/evidence"),
+                        ("GET", "/api/experiments/e1/telemetry/series-index")):
+        assert client.request(method, url).status_code in (404, 405), (method, url)
+    r = client.post("/api/experiments", json={"name": "x", "mode": "live"})
+    assert r.status_code == 422 and any(i["field"] == "mode" for i in r.json()["detail"])

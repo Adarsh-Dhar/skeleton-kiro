@@ -9,10 +9,9 @@ from sqlalchemy import text
 
 from db import create_db_engine, current_version
 from db.migrations import migrate
-from db.migrations.versions import create_tables
+from db.migrations.game_data import DDL, create_game_tables
 
-RESTORED = ("f1_udp_recording", "f1_udp_packet", "f1_stint_evidence", "f1_stint_telemetry", "f1_probe_report",
-            "f1_setup_mapping_confirmation")
+RESTORED = tuple(DDL)  # the six tables migration 9 creates, parents first
 
 ids = st.text(alphabet="abcdefghijklmnopqrstuvwxyz0123456789-", min_size=1, max_size=12)
 
@@ -62,7 +61,7 @@ def _populate(engine, s) -> None:
             c.execute(text("INSERT INTO app_experiment_owner (experiment_id, app, created_at) VALUES (:e, :a, CURRENT_TIMESTAMP)"),
                       {"e": eid, "a": app})
         # any subset of the restored tables already present, with rows (parents first)
-        create_tables(c, *[t for t in RESTORED if t in s["present"]])
+        create_game_tables(c, *[t for t in RESTORED if t in s["present"]])
         if "f1_udp_recording" in s["present"]:
             for r in s["recordings"]:
                 c.execute(text("INSERT INTO f1_udp_recording (recording_id, started_at, source) VALUES (:r, CURRENT_TIMESTAMP, 'live')"), {"r": r})

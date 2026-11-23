@@ -1,8 +1,10 @@
+> **Note (removed feature).** The recorded-stint feature described in this document was removed from F1 SETUP LAB (migration 10; see the note in `requirements.md`). Parts of this document that describe it no longer apply.
+
 # Implementation Plan: F1 SETUP LAB Restoration (v2.1.0)
 
 ## Overview
 
-The design is Python (FastAPI, SQLAlchemy, SQLite) with a static JavaScript frontend and shell scripts, so all tasks use those. The work restores the setup engineering system and live simulator from the Release_Archive (`~/Downloads/skeleton-kiro-main (1).zip`, unzipped to `/tmp/rel/`, cross-checked against git commit `dfa519e`). It starts by freezing the current behaviour (golden files and baselines), then adds the database layer, restores and merges the backend, restores tests, merges the frontend, updates scripts and READMEs, and ends with a full run and report.
+The design is Python (FastAPI, SQLAlchemy, SQLite) with a static JavaScript frontend and shell scripts, so all tasks use those. The work restores the setup engineering system and recorded-stint feature from the Release_Archive (`~/Downloads/skeleton-kiro-main (1).zip`, unzipped to `/tmp/rel/`, cross-checked against git commit `dfa519e`). It starts by freezing the current behaviour (golden files and baselines), then adds the database layer, restores and merges the backend, restores tests, merges the frontend, updates scripts and READMEs, and ends with a full run and report.
 
 Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is the Root_DB package, and `scripts/` holds the shell scripts. Restored archive files must stay byte-identical (design section "Restore plan by area"). Property tests use Hypothesis, each tagged `# Feature: f1-setup-lab-restoration, Property N: <text>`, with at least 100 examples except where the design allows fewer (Properties 3, 4, 5 and 12).
 
@@ -27,7 +29,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
     - _Requirements: 9.6_
 
   - [x] 1.4 Build the restoration manifest from the archive
-    - Compute sha256 for every file to restore: adapters, catalogs, `game_udp` (11 files), services, `api/schemas.py`, `inspector.js`, the three scripts, and the restored test modules and `udp_packets.py`
+    - Compute sha256 for every file to restore: adapters, catalogs, `recorded_stint` (11 files), services, `api/schemas.py`, `inspector.js`, the three scripts, and the restored test modules and `stint_packets.py`
     - Cross-check each hash against `dfa519e`
     - Save to `f1-setup-lab/tests/fixtures/restoration_manifest.json`
     - Record the expected hashes of `scripts/refresh_openf1_fixtures.py` and `scripts/import_historical.py` from the current tree
@@ -41,7 +43,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
 
 - [x] 2. Database layer: models, migration 9, backup, write guard
   - [x] 2.1 Append the six restored models to `db/models/f1.py`
-    - Copy `UdpRecording`, `UdpPacket`, `StintEvidence`, `StintTelemetrySample`, `ProbeReport` and `SetupMappingConfirmation` from the archive, keeping the archive class names (design D1)
+    - Copy `Recording`, `Packet`, `StintEvidence`, `StintTelemetrySample`, `ProbeReport` and `SetupMappingConfirmation` from the archive, keeping the archive class names (design D1)
     - Add the `LargeBinary` and `UniqueConstraint` imports
     - Leave every existing model unchanged
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6_
@@ -105,7 +107,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
 
 - [x] 4. Restore and merge the backend
   - [x] 4.1 Copy the unchanged modules from the archive
-    - `adapters/` (`vehicle_model`, `sim_adapter`, `telemetry` and `__init__`), `catalogs/` (`ea_f1_25`, `verification`, `__init__`), `services/` (`lab`, `narrative`, `report_html`, `__init__`), `integrations/game_udp/` (all 11 files with `protocols/`) and `api/schemas.py`
+    - `adapters/` (`vehicle_model`, `sim_adapter`, `telemetry` and `__init__`), `catalogs/` (`ea_f1_25`, `verification`, `__init__`), `services/` (`lab`, `narrative`, `report_html`, `__init__`), `integrations/recorded_stint/` (all 11 files with `protocols/`) and `api/schemas.py`
     - Files must hash-match the restoration manifest
     - Confirm `integrations/historical/__init__.py` imports nothing from the setup packages and that no module imports `fastf1`
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.7, 4.8_
@@ -114,13 +116,13 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
     - Version `2.1.0`, three-workspace docstring without FastF1 text
     - `SYNTHETIC_NOTICE` and `SIM_RECORDED_NOTICE` byte-identical to the archive
     - Keep the current OpenF1 `HISTORICAL_NOTICE`
-    - Export `NOTICES` with keys `synthetic`, `live_simulator`, `historical`; keep `notice_for`
+    - Export `NOTICES` with keys `synthetic`, `recorded_stint`, `historical`; keep `notice_for`
     - _Requirements: 4.6, 7.8, 7.9_
 
   - [x] 4.3 Update `f1-setup-lab/pyproject.toml`
     - Version `2.1.0`, description under 200 characters naming the three workspaces
     - Exactly one `trialforge-core>=0.2.0,<0.3` dependency, no `fastf1` anywhere
-    - Per-file E702 ignores for `backend/f1lab/integrations/game_udp/protocols/*.py` and `.../game_udp/capture.py` only
+    - Per-file E702 ignores for `backend/f1lab/integrations/recorded_stint/protocols/*.py` and `.../recorded_stint/capture.py` only
     - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
   - [x] 4.4 Merge `api/app.py`
@@ -175,15 +177,15 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
     - **Property 13: Experiment listing is scoped to F1 SETUP LAB**
     - **Validates: Requirements 6.6**
 
-  - [x] 4.14 Write property test for UDP packet round trip
-    - **Property 15: Recorded UDP packets round-trip**
+  - [x] 4.14 Write property test for packet packet round trip
+    - **Property 15: Recorded packet packets round-trip**
     - Cover `RawRecorder`/`read_raw` and `write_raw_file`/`read_raw_file`
     - **Validates: Requirements 9.2**
 
   - [x] 4.15 Write unit and integration tests for the backend
     - Manifest comparison test that names every missing or differing file, plus a tampered-copy test of the checker
     - AST tests: unique schema class names across `api/schemas.py` and `integrations/historical/schemas.py`, no `fastf1` import, `NOTICES` equal to the expected values
-    - Subprocess test: importing `f1lab.integrations.historical` loads no game_udp, adapter or lab module
+    - Subprocess test: importing `f1lab.integrations.historical` loads no recorded_stint, adapter or lab module
     - pyproject parse test (1.1 to 1.4)
     - Each restored route returns 2xx within 2 seconds with a stub lab; `lab_factory` isolation (no default database touched)
     - `/api/meta` and `/api/health` key and type checks; route-list test for 6.5
@@ -194,7 +196,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
 
 - [x] 6. Restore and update tests
   - [x] 6.1 Restore the archive test modules and merge `conftest.py`
-    - Copy `test_api_workflow`, `test_game_udp`, `test_live_mode`, `test_probe_and_verification`, `test_protocol_2026`, `test_stint_measurements`, `test_telemetry_inspector`, `test_vehicle_and_telemetry`, `test_csv_timestamps` and `udp_packets.py`
+    - Copy `test_api_workflow`, `test_recorded_stint`, `test_live_mode`, `test_probe_and_verification`, `test_protocol_2026`, `test_stint_measurements`, `test_telemetry_inspector`, `test_vehicle_and_telemetry`, `test_csv_timestamps` and `stint_packets.py`
     - Rewrite `test_notices.py` for the OpenF1 historical notice (design D2)
     - Restore `test_verification_scripts.py` without the `smoke_fastf1_import` tests
     - Merge `conftest.py`: one `db_path`, a `lab_factory` fixture and a `client` fixture, without breaking the OpenF1 fixtures; do not restore the archive `test_historical*.py` or `test_ui_browser.py`
@@ -207,7 +209,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
     - _Requirements: 3.11, 9.4, 9.6_
 
   - [x] 6.3 Write the notice-location test
-    - Assert the SYNTHETIC_NOTICE and each game-mode notice appear in API output and in the Frontend files at each location Requirement 7 requires; the test fails if any location lacks its notice
+    - Assert the SYNTHETIC_NOTICE and each recorded-mode notice appear in API output and in the Frontend files at each location Requirement 7 requires; the test fails if any location lacks its notice
     - _Requirements: 9.10, 7.8, 7.9_
 
 - [x] 7. Merge the frontend
@@ -224,9 +226,9 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
     - _Requirements: 7.3, 7.4_
 
   - [x] 7.3 Update `index.html`, `app.js` and `style.css`
-    - Six nav entries under three headings (Setup Engineering: Dashboard, New experiment, Telemetry import; Live Simulator: Live simulator; Historical F1: Historical F1, Imported sessions)
+    - Six nav entries under three headings (Setup Engineering: Dashboard, New experiment, Telemetry import; Recorded Stint: Recorded stint; Historical F1: Historical F1, Imported sessions)
     - Script order `charts.js`, `inspector.js`, `hist_race.js`, `hist_picker.js`, `setup_lab.js`, `app.js`; router dispatches setup and historical routes; historical views read `META.notices.historical`
-    - Render the synthetic and game-mode notices in the fixed header so they are visible without scrolling
+    - Render the synthetic and recorded-mode notices in the fixed header so they are visible without scrolling
     - Views render into a nested container so an API failure shows the Backend message (or a generic `request failed`) and keeps earlier data and navigation
     - No tyre, standings or new report views; no wind direction in any view
     - _Requirements: 7.1, 7.2, 7.6, 7.7, 7.8, 7.9, 7.10, 7.11, 7.12_
@@ -241,7 +243,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
 
 - [x] 9. Scripts and release check
   - [x] 9.1 Restore the three scripts
-    - Copy `scripts/probe_setup.py`, `scripts/verify_setup_mapping.py` and `scripts/inspect_udp_recording.py` from the archive, changing only import statements whose modules moved
+    - Copy `scripts/probe_setup.py`, `scripts/verify_setup_mapping.py` and `scripts/inspect_recording.py` from the archive, changing only import statements whose modules moved
     - Leave `refresh_openf1_fixtures.py` and `import_historical.py` untouched
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6_
 
@@ -270,8 +272,8 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
 
 - [x] 10. Documentation
   - [x] 10.1 Update `f1-setup-lab/README.md` and the root `README.md`
-    - F1 README: one section per workspace (at most 100 words each), SDK named as a dependency with its role in at most 3 sentences, simulator data labelled SYNTHETIC, live UDP capture needs the running game
-    - Both READMEs: F1 SETUP LAB uses the TRIALFORGE_SDK, FastF1 is not supported and history comes from OpenF1, and a list by name of live behaviours verified only with recorded packets, stated as not tested against the live game
+    - F1 README: one section per workspace (at most 100 words each), SDK named as a dependency with its role in at most 3 sentences, simulator data labelled SYNTHETIC, live packet capture needs the running recording source
+    - Both READMEs: F1 SETUP LAB uses the TRIALFORGE_SDK, FastF1 is not supported and history comes from OpenF1, and a list by name of live behaviours verified only with recorded packets, stated as not tested against the live recording source
     - Remove any statement that the Simulator was removed or that F1 does not use the SDK
     - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6, 10.7, 10.9_
 
@@ -281,7 +283,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
 
 - [x] 11. Full run and report
   - [x] 11.1 Run the full suites and write the test report
-    - Run root and F1 suites in a clean environment with the SDK installed; confirm 0 failures and 0 collection errors, and that each of the 11 modules plus `udp_packets` collects at least one test
+    - Run root and F1 suites in a clean environment with the SDK installed; confirm 0 failures and 0 collection errors, and that each of the 11 modules plus `stint_packets` collects at least one test
     - Run the F1 suite in a venv with `pandas>=3`; record the result of the string dtype round-trip test, or state the cause with the pandas version and failing test name (design D9)
     - Document each environment-caused failure with test name, condition and cause, list the 5 opt-in skips (D10), and compare the historical test count with the task 1.5 baseline
     - _Requirements: 9.4, 9.6, 9.7_
@@ -299,7 +301,7 @@ Paths are relative to the workspace root. `f1-setup-lab/` is the app, `db/` is t
 - Tasks marked with `*` are optional and can be skipped for a faster MVP.
 - Task 1 must land before any other change, because the golden files must describe current behaviour.
 - Restored files must remain byte-identical to the archive; only the merged files (`__init__.py`, `app.py`, `charts.js`, `app.js`, `index.html`, `conftest.py`, `pyproject.toml`, `db/models/f1.py`) are edited by hand.
-- Live UDP behaviour is verified with recorded packets only.
+- Live packet behaviour is verified with recorded packets only.
 - Open items from the design: the glossary model names (D1) and the `NOTICES["historical"]` deviation (D2) should be corrected in requirements.md.
 
 ## Task Dependency Graph

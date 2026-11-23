@@ -13,12 +13,12 @@ from sqlalchemy import text
 from db import create_db_engine, current_version
 from db.migrations import migrate
 from db.migrations import versions
-from db.migrations.versions import MIGRATIONS, create_tables
+from db.migrations.game_data import DDL, create_game_tables
+from db.migrations.versions import MIGRATIONS
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "f1-setup-lab" / "tests" / "fixtures"
-RESTORED = ("f1_udp_recording", "f1_udp_packet", "f1_stint_evidence", "f1_stint_telemetry", "f1_probe_report",
-            "f1_setup_mapping_confirmation")
+RESTORED = tuple(DDL)  # the six tables migration 9 creates, parents first
 def _golden(name):
     data = json.loads((FIXTURES / name).read_text())
     for t in data.values():  # the seq number of an index is not stable across runs; compare the rest
@@ -50,13 +50,13 @@ def _tables(engine) -> set[str]:
 def test_create_tables_matches_restored_schema(tmp_path):
     e = create_db_engine(tmp_path / "a.db")
     with e.begin() as c:
-        create_tables(c, *RESTORED)
+        create_game_tables(c, *RESTORED)
     assert _dump(e, RESTORED) == RESTORED_SCHEMA
 
 
 def test_migration_9_matches_restored_and_pre_restoration_schemas(tmp_path):
     e = create_db_engine(tmp_path / "b.db")
-    migrate(e)
+    migrate(e, target=9)
     assert current_version(e) == 9
     assert _dump(e, RESTORED) == RESTORED_SCHEMA
     others = _tables(e) - set(RESTORED)
@@ -67,12 +67,12 @@ def test_migration_9_matches_restored_and_pre_restoration_schemas(tmp_path):
 def test_create_tables_keeps_rows_and_creates_only_missing(tmp_path):
     e = create_db_engine(tmp_path / "c.db")
     with e.begin() as c:
-        create_tables(c, "f1_udp_recording", "f1_probe_report")
+        create_game_tables(c, "f1_udp_recording", "f1_probe_report")
         c.execute(text("INSERT INTO f1_udp_recording (recording_id, started_at, source) VALUES ('r1', CURRENT_TIMESTAMP, 'live')"))
         c.execute(text("INSERT INTO f1_probe_report (report_id, created_at, report_json) VALUES ('p1', CURRENT_TIMESTAMP, '{}')"))
     assert _tables(e) == {"f1_udp_recording", "f1_probe_report"}
     with e.begin() as c:
-        create_tables(c, *RESTORED)
+        create_game_tables(c, *RESTORED)
     assert set(RESTORED) <= _tables(e)
     with e.connect() as c:
         assert c.execute(text("SELECT recording_id FROM f1_udp_recording")).all() == [("r1",)]
@@ -87,17 +87,17 @@ def test_duplicate_table_name_raises_at_import_and_names_the_table():
         "from sqlalchemy import Integer\n"
         "from sqlalchemy.orm import Mapped, mapped_column\n"
         "class Dup(Base):\n"
-        "    __tablename__ = 'f1_udp_recording'\n"
+        "    __tablename__ = 'f1_import_job'\n"
         "    id: Mapped[int] = mapped_column(Integer, primary_key=True)\n"
     )
     r = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True)
     assert r.returncode != 0
-    assert "InvalidRequestError" in r.stderr and "f1_udp_recording" in r.stderr
+    assert "InvalidRequestError" in r.stderr and "f1_import_job" in r.stderr
 
 
-def test_migration_list_ends_with_9_and_docstrings_are_updated():
-    assert [m.version for m in MIGRATIONS] == list(range(1, 10))
-    assert MIGRATIONS[-1].version == 9
+def test_migration_list_ends_with_10_and_docstrings_are_updated():
+    assert [m.version for m in MIGRATIONS] == list(range(1, 11))
+    assert MIGRATIONS[-1].version == 10
     assert "one-time cleanup" in inspect.getdoc(versions._m008_f1_openf1_only)
     assert "migration 9" in inspect.getdoc(versions._m004_f1_retired).lower()
 
@@ -116,11 +116,11 @@ def test_migrations_1_to_8_then_9_keep_historical_data_and_add_restored_tables(t
             return [c.execute(text(f"SELECT * FROM {t} ORDER BY 1, 2")).all() for t in ("f1_hist_session", "f1_hist_frame")]
 
     before = rows()
-    applied = migrate(e)
+    applied = migrate(e, target=9)
     assert [m.version for m in applied] == [9]
     assert rows() == before
     assert set(RESTORED) | {"app_experiment_owner"} <= _tables(e)
-    assert migrate(e) == []
+    assert migrate(e, target=9) == []
 
 
 def test_migration_list_is_sorted_unique():

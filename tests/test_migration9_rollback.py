@@ -12,13 +12,11 @@ from sqlalchemy import text
 from db import create_db_engine, current_version
 from db.migrations import migrate
 from db.base import Base
+from db.migrations import game_data
 from db.migrations import MigrationError
 
 # The statements of migration 9, in order (see _m009_f1_setup_restored).
-STATEMENTS = (
-    "app_experiment_owner", "f1_udp_recording", "f1_udp_packet", "f1_stint_evidence",
-    "f1_stint_telemetry", "f1_probe_report", "f1_setup_mapping_confirmation",
-)
+STATEMENTS = ("app_experiment_owner", *game_data.DDL)
 
 
 def _tables(engine) -> set[str]:
@@ -46,10 +44,13 @@ def test_failing_statement_rolls_back_migration_9(k: int) -> None:
             assert current_version(engine) == 8
 
             failing = STATEMENTS[k]
-            table = Base.metadata.tables[failing]
-            with mock.patch.object(table, "create", side_effect=RuntimeError("injected failure")):
+            if failing in game_data.DDL:  # the game tables are created from frozen DDL: break the statement of the failing table
+                inject = mock.patch.dict(game_data.DDL, {failing: "CREATE TABLE injected failure ("})
+            else:
+                inject = mock.patch.object(Base.metadata.tables[failing], "create", side_effect=RuntimeError("injected failure"))
+            with inject:
                 with pytest.raises(MigrationError) as info:
-                    migrate(engine)
+                    migrate(engine, target=9)
 
             assert failing in str(info.value)
             assert current_version(engine) == 8
