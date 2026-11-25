@@ -1,0 +1,9 @@
+# start-f1.sh start then TERM, after the EXIT-trap fix (throw-away port 18003, pid dir and database)
+health: {"status":"ok","app":"f1-setup-lab","version":"2.1.0","data":"openf1","interrupted_imports":0,"trialforge":"0.2.2","tria
+pid files while running: f1.pid
+pid files after stop: []
+port 18003 listeners after stop:        0
+--- script output:
+trialforge-core 0.2.2 OK
+Starting F1 SETUP LAB on http://127.0.0.1:18003  (database: /var/folders/pb/d0ngpzts0gn8tts09wczfwzh0000gn/T/tmp.msL7mdPlNp/t.db)
+--- 'unbound variable' occurrences: 0

@@ -1,0 +1,33 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.11, pytest-9.2.0, pluggy-1.7.0 -- /Users/adarsh/Documents/skeleton-kiro-main/.run/release-venv/bin/python
+hypothesis profile 'default'
+rootdir: /Users/adarsh/Documents/skeleton-kiro-main/f1-setup-lab
+configfile: pyproject.toml
+plugins: hypothesis-6.170.17, anyio-4.16.0, asyncio-1.5.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collecting ... collected 16 items
+
+tests/test_provenance.py::test_imported_notice_text_and_is_not_a_mode_notice PASSED [  6%]
+tests/test_provenance.py::test_provenance_follows_only_the_completed_runs PASSED [ 12%]
+tests/test_provenance.py::test_synthetic_experiment_exports_say_synthetic PASSED [ 18%]
+tests/test_provenance.py::test_historical_sessions_are_labelled_and_never_reachable_as_experiments PASSED [ 25%]
+tests/test_provenance_ui.py::test_header_shows_synthetic_then_imported_then_mixed PASSED [ 31%]
+tests/test_continuous_analysis.py::test_sixteen_run_random_design_has_anova_and_no_level_comparisons PASSED [ 37%]
+tests/test_continuous_analysis.py::test_random_design_reports_that_replicates_and_centre_points_are_not_used PASSED [ 43%]
+tests/test_continuous_analysis.py::test_central_composite_includes_quadratic_terms_and_pure_error PASSED [ 50%]
+tests/test_continuous_analysis.py::test_frontend_explains_continuous_effects_and_disables_unused_design_settings PASSED [ 56%]
+tests/test_report_gaps_trends_weather.py::test_gap_display_uses_seconds_text_or_blank PASSED [ 62%]
+tests/test_report_gaps_trends_weather.py::test_report_results_show_numeric_finishing_gaps PASSED [ 68%]
+tests/test_report_gaps_trends_weather.py::test_trend_text_never_claims_the_tyre_improved PASSED [ 75%]
+tests/test_report_gaps_trends_weather.py::test_report_labels_the_slope_as_an_observed_trend PASSED [ 81%]
+tests/test_report_gaps_trends_weather.py::test_weather_dropout_zero_is_masked_but_real_values_are_kept PASSED [ 87%]
+tests/test_report_gaps_trends_weather.py::test_weather_route_masks_the_dropout_and_says_so PASSED [ 93%]
+tests/test_report_gaps_trends_weather.py::test_report_end_to_end_gaps_standings_reason_and_weather_min PASSED [100%]
+
+=============================== warnings summary ===============================
+../.run/release-venv/lib/python3.13/site-packages/fastapi/testclient.py:1
+  /Users/adarsh/Documents/skeleton-kiro-main/.run/release-venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 16 passed, 1 warning in 6.85s =========================

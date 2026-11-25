@@ -380,3 +380,14 @@ def test_release_check_compares_the_sdk_for_both_apps():
     assert "both apps use the installed SDK $SDK_VERSION" in text
     assert "the SDK version, for both apps" in text
     assert 'body.get("trialforge") != sdk' in text and "F1 SETUP LAB and WATTWISE LAB need it" in text
+
+
+def test_exit_trap_does_not_read_a_function_local_variable():
+    """``$name`` is local to run_app and unset when the EXIT trap runs; under ``set -u`` that aborted the trap with "name: unbound
+    variable" and left the pid file behind. The trap must carry the already-expanded path."""
+    import re
+
+    text = (ROOT / "scripts" / "lib" / "common.sh").read_text()
+    traps = re.findall(r"^\s*trap\s+(.+?)\s+EXIT\s*$", text, re.M)
+    assert traps, "expected an EXIT trap in common.sh"
+    assert all(not re.search(r"'[^']*\$name", t) for t in traps), traps

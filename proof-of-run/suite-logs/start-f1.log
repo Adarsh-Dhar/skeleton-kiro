@@ -1,0 +1,5 @@
+trialforge-core 0.2.2 OK
+Starting F1 SETUP LAB on http://127.0.0.1:18001  (database: /var/folders/pb/d0ngpzts0gn8tts09wczfwzh0000gn/T/tmp.tF2EJHm47A/startup-smoke/trialforge.db)
+/Users/adarsh/Documents/skeleton-kiro-main/scripts/start-f1.sh: line 11: name: unbound variable
+.13/site-packages/trialforge
+HTTP 200, f1-setup-lab, trialforge 0.2.2

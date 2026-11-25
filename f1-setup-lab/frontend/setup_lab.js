@@ -18,11 +18,21 @@ const isActive = (d) => ['running', 'queued'].includes(d.status) || d.counts.run
 
 const TABS = [['design', 'Setup design'], ['runs', 'Run monitor'], ['telemetry', 'Telemetry'], ['analysis', 'Analysis'], ['optimise', 'Optimisation'], ['report', 'Report']];
 
+/* Where the completed runs of this experiment came from: the backend's source_label and source_counts (never assumed synthetic). */
+function sourceBadge(d) {
+  const label = d.source_label || 'SYNTHETIC';
+  const cls = label === 'SYNTHETIC' ? 'synthetic' : label === 'IMPORTED TELEMETRY' ? 'imported' : 'mixed';
+  const c = d.source_counts || { synthetic: 0, imported: 0 };
+  return `<span class="chip ${cls}" id="source-label" title="provenance of the completed runs">${esc(label)}</span>
+    <span class="mono dim" id="source-counts">${c.synthetic} synthetic &middot; ${c.imported} imported (completed runs)</span>`;
+}
 function expHeader(d, tab) {
   setBanner(d.mode);
   const done = d.counts.completed + d.counts.failed + d.counts.cancelled;
+  const importedNote = d.source_label && d.source_label !== 'SYNTHETIC' && d.notice
+    ? `<div class="note info" id="source-notice">${esc(d.notice)}</div>` : '';
   return `<div class="row"><div><h1>${esc(d.name)}</h1><p class="sub">${esc(d.hypothesis || 'No hypothesis stated')}</p></div><div class="spacer"></div>
-    <div><span class="chip synthetic">SYNTHETIC</span> ${statusChip(d.status)}</div></div>
+    <div>${sourceBadge(d)} ${statusChip(d.status)}</div></div>${importedNote}
     <div class="row"><div style="flex:1">${progress(d.counts.completed, d.runs_total)}</div><span class="mono dim">${d.counts.completed}/${d.runs_total} runs complete &middot; budget ${d.runs_total}/${d.run_budget}</span></div>
     <div class="tabs">${TABS.map(([k, n]) => `<a href="#/e/${esc(d.id)}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div>`;
 }

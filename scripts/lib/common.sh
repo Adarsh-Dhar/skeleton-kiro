@@ -243,7 +243,10 @@ run_app() {
     local child=$!
     echo "$child" > "$(pid_file "$name")"
     trap 'kill -TERM "$child" 2>/dev/null || true' INT TERM
-    trap 'rm -f "$(pid_file "$name")"' EXIT
+    # expand the pid-file path now: $name is local to this function and is gone when the EXIT trap runs (set -u would abort it)
+    local pidfile; pidfile="$(pid_file "$name")"
+    # shellcheck disable=SC2064
+    trap "rm -f '$pidfile'" EXIT
     if [[ "$sdk" == yes ]]; then
         local cause
         if ! cause="$(health_check "$venv/bin/python" "$port" "$child" "${HEALTH_TIMEOUT:-30}")"; then

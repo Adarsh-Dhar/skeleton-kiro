@@ -1,0 +1,49 @@
+TRIALFORGE release check  (2026-11-25T20:13:42Z)
+base interpreter: /opt/homebrew/bin/python3.13 (Python 3.13.11); release environment: /Users/adarsh/Documents/skeleton-kiro-main/.run/release-venv (fresh)
+
+create release virtual environment                         PASSED
+install build tools (pip, build, ruff, packaging)          PASSED
+build SDK wheel trialforge-core 0.2.2                      PASSED
+install SDK wheel with test extras                         PASSED
+install root database package (trialforge-db)              PASSED
+install F1 SETUP LAB + test dependencies                   PASSED
+install WATTWISE LAB + test dependencies                   PASSED
+build root db package wheel                                PASSED
+build f1-setup-lab wheel                                   PASSED
+build wattwise-lab wheel                                   PASSED
+import both applications                                   PASSED
+both apps use the installed SDK 0.2.2 from site-packages; F1 has no FastF1 PASSED
+lint: root (db, scripts, tests)                            PASSED
+lint: f1-setup-lab                                         PASSED
+lint: wattwise-lab                                         PASSED
+lint: SDK (skeleton)                                       PASSED
+compile all Python files                                   PASSED
+JavaScript syntax (both frontends)                         PASSED
+startup scripts: bash syntax                               PASSED
+SDK tests (trialforge-core)                                PASSED  (263 passed in 20.34s)
+SDK workspace tests (skeleton/tests)                       PASSED  (54 passed in 30.33s)
+root tests (db, scoping, start scripts, migration)         PASSED  (120 passed, 1 skipped, 1 warning in 61.02s (0:01:01))
+F1 SETUP LAB backend tests                                 PASSED  (283 passed, 5 skipped, 1 warning in 126.05s (0:02:06))
+WATTWISE LAB backend tests                                 PASSED  (252 passed, 1 xfailed, 1 warning in 56.26s)
+F1 SETUP LAB browser tests (Chromium)                      PASSED  (7 passed, 1 warning in 19.43s)
+WATTWISE LAB browser tests (Chromium)                      PASSED  (9 passed, 1 warning in 16.39s)
+real OpenF1 imports (5 sessions, 2023-2026)                PASSED
+startup smoke: start f1-setup-lab on port 18001            PASSED  (pid 13412, HTTP 200, f1-setup-lab, trialforge 0.2.2)
+startup smoke: start wattwise-lab on port 18002            PASSED  (pid 13631, HTTP 200, wattwise-lab, trialforge 0.2.2)
+startup smoke: both apps healthy at the same time          PASSED
+startup smoke: shared database created and migrated        PASSED
+startup smoke: WATTWISE keeps running after F1 stops       PASSED
+startup smoke: F1 port 18001 released after stop           PASSED
+startup smoke: WATTWISE port 18002 released after stop     PASSED
+real household meter export, tariff and bill reconciliation SKIPPED (manual gate: needs your data)
+
+PASSED      34
+FAILED      0
+SKIPPED     3
+  - root tests (db, scoping, start scripts, migration): [1] tests/test_start_scripts.py:110: full install+start smoke test is opt-in (RUN_START_SMOKE=1; needs network for pip)
+  - F1 SETUP LAB backend tests: [5] tests/test_openf1.py:394: set RUN_NETWORK_TESTS=1 to contact api.openf1.org
+  - real household meter export, tariff and bill reconciliation: manual gate: needs your data
+UNAVAILABLE 0
+environment: /Users/adarsh/Documents/skeleton-kiro-main/.run/release-venv
+logs: /var/folders/pb/d0ngpzts0gn8tts09wczfwzh0000gn/T/tmp.1QBR6BnICA
+Skipped and unavailable checks are NOT passes.

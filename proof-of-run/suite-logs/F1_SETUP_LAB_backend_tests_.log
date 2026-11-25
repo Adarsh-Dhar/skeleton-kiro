@@ -1,0 +1,13 @@
+........................................................................ [ 25%]
+..................................................................sssss. [ 50%]
+........................................................................ [ 75%]
+........................................................................ [100%]
+=============================== warnings summary ===============================
+../.run/release-venv/lib/python3.13/site-packages/fastapi/testclient.py:1
+  /Users/adarsh/Documents/skeleton-kiro-main/.run/release-venv/lib/python3.13/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [5] tests/test_openf1.py:394: set RUN_NETWORK_TESTS=1 to contact api.openf1.org
+283 passed, 5 skipped, 1 warning in 126.05s (0:02:06)

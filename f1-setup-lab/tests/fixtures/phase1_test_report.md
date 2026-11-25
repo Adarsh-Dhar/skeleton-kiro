@@ -3,64 +3,52 @@
 Requirement 9.5. Baseline: `phase1_baseline.json` (task 1.1, tree before any phase 1 code change).
 
 ## Environment
-
-| | Root `.venv` | `/tmp/pd3` |
-|---|---|---|
-| Python | 3.12.0 | 3.12.12 |
-| pandas | 2.3.3 | 3.1.1 |
-| playwright | installed | not installed |
-
-Each suite ran separately, one at a time, from its own directory.
-
+Refreshed on 2026-11-25/26 by a clean `scripts/check-release.sh` run (fresh release virtual environment). The root suite was re-run afterwards (121 passed) because one test was added for a start-script fix; every other count is from that run. Evidence: `proof-of-run/PROOF_OF_RUN.md`.
+| | Release environment |
+|---|---|
+| Python | 3.13.11 |
+| pandas | 3.1.1 |
+| numpy / scipy | 2.5.5 / 1.18.1 |
+| trialforge-core (installed wheel) | 0.2.2 |
+| playwright (Chromium) | 1.65.2, installed |
+| pytest / hypothesis | 9.2.0 / 6.170.17 |
+Each suite ran separately, one at a time, from its own directory. The earlier two-environment comparison (pandas 2.3.3 and 3.1.1) is not repeated: the release environment is pandas 3.1.1 and pandas 2 was not re-run.
 ## Results against the baseline
-
-| Suite | Environment | Passed | Failed | Skipped | XFail | Baseline passed / failed / skipped / xfail | Change in passed |
-|---|---|---|---|---|---|---|---|
-| Root (`.venv/bin/python -m pytest tests -q -rs`) | root `.venv` | 106 | 0 | 1 | 0 | 106 / 0 / 1 / 0 | 0 |
-| F1 (`cd f1-setup-lab && ../.venv/bin/python -m pytest tests -q -rsx`) | root `.venv` | 352 | 0 | 5 | 2 | 288 / 0 / 5 / 2 | +64 |
-| WATTWISE (`cd wattwise-lab && ../.venv/bin/python -m pytest tests -q -rs`) | root `.venv` | 155 | 0 | 0 | 0 | not in baseline (restoration report: 155 / 0 / 0 / 0) | 0 |
-| F1 | `/tmp/pd3` (pandas 3.1.1) | 303 | 0 | 8 | 2 | not in baseline | n/a |
-
-No test failed in any run. The 64 extra F1 tests are the phase 1 property, route, frontend and doc tests. The root suite did not change because phase 1 added no root tests. The skip counts match the baseline on the root `.venv`.
-
+| Suite | Passed | Failed | Skipped | XFail | Baseline passed / failed / skipped / xfail | Change in passed |
+|---|---|---|---|---|---|---|
+| SDK (`skeleton/packages/trialforge-core/tests`) | 263 | 0 | 0 | 0 | not in baseline | n/a |
+| SDK workspace (`skeleton/tests`) | 54 | 0 | 0 | 0 | not in baseline | n/a |
+| Root (`tests`) | 121 | 0 | 1 | 0 | 106 / 0 / 1 / 0 | +15 |
+| F1 (`f1-setup-lab/tests`, includes the Chromium tests) | 283 | 0 | 5 | 0 | 288 / 0 / 5 / 2 | -5 |
+| F1 Chromium browser tests (run separately) | 7 | 0 | 0 | 0 | not in baseline | n/a |
+| WATTWISE (`wattwise-lab/tests`) | 252 | 0 | 0 | 1 | not in baseline (restoration report: 155 / 0 / 0 / 0) | n/a |
+| WATTWISE Chromium browser tests (run separately) | 9 | 0 | 0 | 0 | not in baseline | n/a |
+| Real OpenF1 imports, five sessions 2023-2026 (`RUN_NETWORK_TESTS=1`) | 5 | 0 | 0 | 0 | not run in baseline | n/a |
+No test failed. The F1 count is 5 below the baseline of 288 because the tests of the removed recorded-stint feature (including `test_restored_scripts.py`, which held the two baseline xfails) no longer exist since migration 10, partly offset by tests added since; the removed tests were not itemised. The 5 F1 skips are the live OpenF1 tests in `tests/test_openf1.py`, which the release script runs as their own check (passed). The one root skip is the full install and start smoke in `tests/test_start_scripts.py`, which the release script also runs as its own checks (passed).
 ## Environment-caused failures
-
-None in these runs.
-
-Two environment conditions caused skips, not failures:
-
-1. **pandas 3 venv, 3 browser tests skipped** (`test_frontend_setup_lab.py:106`, `test_phase1_frontend.py:71`, `test_ui_openf1.py:16`).
-   - Condition: `/tmp/pd3` has no `playwright`.
-   - Cause: the venv was built for the pandas check only. All three run and pass in the root `.venv`. Together with the 5 live OpenF1 skips this gives 8 skips on pandas 3 against 5 on the root `.venv`.
-2. **5 live OpenF1 tests skipped** (`tests/test_openf1.py:394`).
-   - Condition: `RUN_NETWORK_TESTS` is not set.
-   - Cause: opt-in, they contact `api.openf1.org`.
-
-Other skips and expected failures, unchanged from the baseline:
-- Root: `tests/test_start_scripts.py:106`, opt-in `RUN_START_SMOKE=1` (needs network for pip).
-- F1 xfail (`strict=False`) in `tests/test_restored_scripts.py`: `test_probe_missing_recording` and `test_verify_missing_report`. Both are known requirement 8.4 message gaps in restored scripts that are byte-identical to the archive.
-
+None in this run.
+Skips, all expected:
+- **5 live OpenF1 tests** in `tests/test_openf1.py:394`, opt-in (`RUN_NETWORK_TESTS`). The release script ran the real imports as a separate check and it passed.
+- **1 root start smoke** in `tests/test_start_scripts.py:110`, opt-in (`RUN_START_SMOKE=1`). The release script ran the startup smoke as separate checks and they passed.
+- **WATTWISE xfail** (1): a known, non-strict expected failure that is unchanged.
 A `StarletteDeprecationWarning` about `httpx` vs `httpx2` appears in every run.
-
 ## Checks left to the user
-
-1. **Live OpenF1 suite.** Run `cd f1-setup-lab && RUN_NETWORK_TESTS=1 ../.venv/bin/python -m pytest tests/test_openf1.py -q -rs`. It needs network and `api.openf1.org` availability. It was not run.
-2. **Real headshot loading from formula1.com hosts.** Tests cover the load-failure fallback (coded circle) and URL cleaning, but no test fetches an image from a real host. Open an imported session in a browser and confirm the images load with `referrerpolicy="no-referrer"`. Only sessions imported after this change carry headshots (re-import with force to refresh).
-3. **`scripts/check-release.sh`.** Not run in this task. Run it before release.
-
+1. **Real headshot loading from formula1.com hosts.** Tests cover the load-failure fallback (coded circle) and URL cleaning, but no test fetches an image from a real host. Open an imported session in a browser and confirm the images load with `referrerpolicy="no-referrer"`. Only sessions imported after the phase 1 change carry headshots (re-import with force to refresh).
+2. **Real household data.** The release script reports the household meter export, tariff and bill reconciliation as a manual gate (skipped by design).
+Done since the previous version of this report: the live OpenF1 suite (five real sessions) and `scripts/check-release.sh` (34 checks passed, 0 failed).
 ## Known limits
 
 - **Tyres tab fit line.** The fitted line is drawn through the centroid of the points with the response slope, not from a stored intercept.
 - **OpenF1 laps without `is_valid`.** Laps with no `is_valid` value are treated as valid, so they stay in the tyre fit.
 - **Standings CSV.** The standings export is untested with real rows from the fixtures.
-- **Fuel burn.** Tyre slopes do not correct for fuel burn (stated on the tab and in the READMEs).
+- **Fuel burn.** Tyre slopes are observed lap-time trends and do not correct for fuel burn (stated on the tab, in the report and in the READMEs).
 - **Mini-sector distance.** Distance is an estimate (stated on the tab and in the READMEs).
 - **Headshots and team colours.** Present only for sessions imported after this change.
-- **pandas support.** The F1 suite passes on pandas 2.3.3 and 3.1.1. Other versions were not run.
+- **pandas support.** The F1 suite passes on pandas 3.1.1 in the release environment. pandas 2.x was not re-run for this refresh.
 
 ## Requirement-to-test map (task 11)
 
-Final F1 run (root `.venv`): 352 passed, 5 skipped, 2 xfailed, 0 failed.
+Final F1 run (release environment, 2026-11-26): 283 passed, 5 skipped, 0 failed (see Results above).
 
 | Req | Covered by | Note |
 |---|---|---|
