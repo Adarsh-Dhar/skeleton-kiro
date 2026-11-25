@@ -2,11 +2,13 @@
 **Validates: Requirements 3.4, 3.5, 3.6**
 """
 from __future__ import annotations
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
+
 from wattwise.services.meter_library import PROVENANCE_LABELS, provenance_badge
 
-ALL_TEXTS = {provenance_badge(l)["text"] for l in PROVENANCE_LABELS}
+ALL_TEXTS = {provenance_badge(label)["text"] for label in PROVENANCE_LABELS}
 
 
 # Feature: wattwise-household-model-improvements, Property 8: Exactly one badge per label

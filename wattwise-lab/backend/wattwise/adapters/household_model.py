@@ -177,11 +177,11 @@ def validate_tariff(t: dict[str, Any]) -> list[str]:
     return issues
 
 
-def _month_day(tariff: dict[str, Any], abs_hour: float, ctx: "TM.WindowContext | None") -> tuple[int | None, str | None]:
+def _month_day(tariff: dict[str, Any], abs_hour: float, ctx: TM.WindowContext | None) -> tuple[int | None, str | None]:
     return ctx.for_hour(abs_hour) if ctx is not None else TM.simulation_context(tariff)
 
 
-def price_at(tariff: dict[str, Any], abs_hour: float, ctx: "TM.WindowContext | None" = None) -> float:
+def price_at(tariff: dict[str, Any], abs_hour: float, ctx: TM.WindowContext | None = None) -> float:
     hod = abs_hour % 24
     if TM.date_dependent(tariff):
         return float(TM.period_for(tariff, hod, *_month_day(tariff, abs_hour, ctx))["price"])
@@ -191,7 +191,7 @@ def price_at(tariff: dict[str, Any], abs_hour: float, ctx: "TM.WindowContext | N
     raise ValueError(f"tariff has no period for hour {hod}")
 
 
-def period_label(tariff: dict[str, Any], abs_hour: float, ctx: "TM.WindowContext | None" = None) -> str:
+def period_label(tariff: dict[str, Any], abs_hour: float, ctx: TM.WindowContext | None = None) -> str:
     hod = abs_hour % 24
     if TM.date_dependent(tariff):
         p = TM.period_for(tariff, hod, *_month_day(tariff, abs_hour, ctx))
@@ -203,7 +203,7 @@ def departure_abs(hour_of_day: float) -> float:
     return hour_of_day if hour_of_day >= WINDOW_START else hour_of_day + 24
 
 
-def _window_ctx(tariff: dict[str, Any], household: dict[str, Any]) -> "TM.WindowContext | None":
+def _window_ctx(tariff: dict[str, Any], household: dict[str, Any]) -> TM.WindowContext | None:
     """Window context for one simulated day: the household's ``window_start_date`` or a reference date for the tariff's simulation day."""
     if not TM.date_dependent(tariff):
         return None
@@ -278,7 +278,7 @@ def simulate(setup: dict[str, float], household: dict[str, Any], rng: random.Ran
 
 
 def summarise(readings: list[tuple[float, float]], tariff: dict[str, Any], *, step_h: float = STEP_H, ev_kw: list[float] | None = None,
-              departure_charge_pct: float | None = None, ctx: "TM.WindowContext | None" = None,
+              departure_charge_pct: float | None = None, ctx: TM.WindowContext | None = None,
               billing_cycle_kwh: float | None = None) -> dict[str, Any]:
     """Energy, cost (tariff + demand charge), peak and cost by period from (abs_hour, kW) readings.
 
@@ -310,7 +310,7 @@ def summarise(readings: list[tuple[float, float]], tariff: dict[str, Any], *, st
 
 
 def _summarise_extended(readings: list[tuple[float, float]], tariff: dict[str, Any], *, step_h: float, ev_kw: list[float] | None,
-                        departure_charge_pct: float | None, ctx: "TM.WindowContext | None" = None,
+                        departure_charge_pct: float | None, ctx: TM.WindowContext | None = None,
                         billing_cycle_kwh: float | None = None) -> dict[str, Any]:
     """One simulated day under an extended tariff. Billing-period items (monthly charge, billing-period demand) are prorated.
 

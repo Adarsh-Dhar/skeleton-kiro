@@ -1,7 +1,10 @@
 """Property tests for tyre degradation (Requirements 6.2, 6.3, design D8)."""
 from __future__ import annotations
+
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from f1lab.integrations.historical.analysis import FEW_LAPS_REASON, tyre_degradation
 
 DRIVER = "VER"

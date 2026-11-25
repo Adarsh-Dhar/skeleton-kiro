@@ -1,6 +1,7 @@
 """Phase 1 historical routes: error table, empty data and table access
 (Requirements 4.4, 5.4, 6.6, 7.6, 7.7, 8.1, 9.1, 9.3). Fixtures only, no network."""
 from __future__ import annotations
+
 import csv
 import io
 import json
@@ -8,15 +9,19 @@ import re
 import sys
 import time
 from pathlib import Path
+
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import event
+
 from f1lab.api.app import create_app
 from f1lab.integrations.historical.openf1_client import OpenF1Client, RateLimiter
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import gen_historical_manifest as gen  # noqa: E402
+
 PRE = "/api/historical"
 FIXTURES = sorted((Path(__file__).parent / "fixtures" / "openf1").glob("*.json"))
 def _import(http, year, event_name, code, driver):

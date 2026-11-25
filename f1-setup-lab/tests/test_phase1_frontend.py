@@ -2,6 +2,7 @@
 and browser tests of the new views. The browser tests serve the real frontend from the app and answer ``/api/historical/**``
 with fixtures, so each scenario (failed dataset, null cells, qualifying session) is exact. No network is used."""
 from __future__ import annotations
+
 import json
 import re
 import shutil
@@ -11,9 +12,11 @@ import threading
 import time
 from pathlib import Path
 from urllib.parse import unquote, urlparse
+
 import pytest
 import uvicorn
 from openf1_fakes import FakeOpenF1, fake_client
+
 from f1lab.api.app import create_app
 
 FRONTEND = Path(__file__).resolve().parents[1] / "frontend"

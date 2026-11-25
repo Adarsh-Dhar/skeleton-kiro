@@ -271,8 +271,9 @@ No task edits `trialforge`.
     - Assert no `trialforge` file imports `wattwise`, and no electricity terms appear in identifiers added to `trialforge`
     - _Requirements: 16.3, 16.4, 16.5_
 
-- [-] 13. Final checkpoint - Ensure all tests pass
+- [x] 13. Final checkpoint - Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise. All 133 previously passing tests must pass unmodified (Requirements 16.1, 16.2); `test_application_runs_on_the_installed_sdk_not_a_copy` stays out of scope.
+  - Completed: `scripts/check-release.sh` ran the WATTWISE backend suite (252 passed, 1 xfailed, including the property tests under `tests/props`, run with `hypothesis` installed) and the Chromium browser workflow (9 passed). Two stale tests were corrected, not weakened: the provenance tests no longer drop columns by hand to imitate schema version 10 (migration 6 now creates the real version-6 tables), and the browser tests clear the meter library between imports of the same demo file and expect `SYNTHETIC DEMO` for it.
 
 ## Notes
 

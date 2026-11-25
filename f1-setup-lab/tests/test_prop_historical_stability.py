@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
-from functools import lru_cache
+from functools import cache, lru_cache
 from pathlib import Path
 
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -27,7 +28,7 @@ def current_routes() -> dict:
     return {(r["method"], r["path"]): json.loads(json.dumps(r, sort_keys=True)) for r in routes}
 
 
-@lru_cache(maxsize=None)
+@cache
 def current_observed(session: str) -> dict:
     with tempfile.TemporaryDirectory(prefix="hist-stable-") as tmp:
         d = json.loads((gen.FIXTURES / f"{session}.json").read_text())

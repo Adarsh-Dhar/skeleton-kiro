@@ -84,6 +84,7 @@
         "README.md",
         "scripts/**",
         "tests/test_docs.py",
+        "tests/test_coffee_integration.py",
         "packages/trialforge-core/tests/contracts/**"
       ],
       "duties": "Examples use only `from trialforge import ...` and label synthetic data (.kiro/steering/domain-independence.md). Docs snippets marked `# docs-test` must run. Regenerate docs/api_reference/index.md with scripts/gen_api_reference.py instead of editing it.",

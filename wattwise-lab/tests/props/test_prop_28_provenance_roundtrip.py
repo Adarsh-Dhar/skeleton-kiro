@@ -59,11 +59,6 @@ def test_pre_migration_row_reads_back_unknown_and_other_fields_unchanged(vals, l
         engine = _engine(d, target=10)
         try:
             with engine.begin() as c:
-                # make the tables look like schema version 10: no provenance, totals or export columns yet
-                for col in ("provenance", "total_import_kwh", "total_export_kwh"):
-                    c.execute(text(f"ALTER TABLE ww_meter_import DROP COLUMN {col}"))
-                for col in ("export_kwh", "export_kw"):
-                    c.execute(text(f"ALTER TABLE ww_meter_reading DROP COLUMN {col}"))
                 c.execute(text(
                     "INSERT INTO ww_meter_import (import_id, file_name, imported_at, source, timezone, reading_kind, unit, interval_minutes, first_ts_utc, "
                     "last_ts_utc, rows_total, rows_used, rows_skipped, content_sha256, options_json, warnings_json, row_log_json, gaps_json) VALUES "

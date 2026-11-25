@@ -10,8 +10,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from wattwise.adapters.household_model import (
-    CHARGER_MAX_KW, CHARGER_MIN_KW, DEFAULT_APPLIANCES, DEFAULT_EV, FACTORS, MAX_FLEXIBLE_APPLIANCES,
-    appliance_id, factor_limits,
+    CHARGER_MAX_KW,
+    CHARGER_MIN_KW,
+    DEFAULT_APPLIANCES,
+    DEFAULT_EV,
+    FACTORS,
+    MAX_FLEXIBLE_APPLIANCES,
+    appliance_id,
+    factor_limits,
 )
 
 METHODS = ("full_factorial", "fractional_factorial", "ofat", "central_composite", "box_behnken", "random")

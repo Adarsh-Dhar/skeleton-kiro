@@ -1,9 +1,13 @@
 """Property tests for CSV safety and report escaping (Requirements 7.2, 7.5)."""
 from __future__ import annotations
+
 import csv
 import io
 from html import escape
-from hypothesis import given, settings, strategies as st
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from f1lab.integrations.historical.analysis import csv_text, report_html
 
 _text = st.text(

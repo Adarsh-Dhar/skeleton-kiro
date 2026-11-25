@@ -1,12 +1,16 @@
 """Task 3: start scripts. Fast checks use the ``check`` command (no installs); a full start is opt-in (RUN_START_SMOKE=1)."""
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
@@ -165,10 +169,6 @@ def test_start_all_check_stop_status_and_unknown_command():
 
 
 # ------------------------------------------------------------------ wheel failure, health check and release script (task 9.4)
-import json
-import shutil
-import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
 COMMON = ROOT / "scripts" / "lib" / "common.sh"
 FAKE_SDK = "9.9.9"

@@ -12,11 +12,11 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta
 
+import legacy_reference as LHM
+import legacy_tariff_reference as LTM
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-import legacy_reference as LHM
-import legacy_tariff_reference as LTM
 from wattwise.adapters import household_model as HM
 from wattwise.adapters import tariff_model as TM
 

@@ -2,10 +2,13 @@
 **Validates: Requirements 8.4**
 """
 from __future__ import annotations
+
 import copy
 from datetime import UTC, datetime, timedelta
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
+
 from wattwise.adapters import meter_import as MI
 
 BASE = datetime(2024, 1, 1, tzinfo=UTC)

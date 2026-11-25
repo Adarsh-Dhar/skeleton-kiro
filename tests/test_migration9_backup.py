@@ -10,13 +10,13 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-from hypothesis import HealthCheck, given, settings, strategies as st
-from sqlalchemy import text
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from db import create_db_engine, current_version
-from db.migrations import migrate
 from db.backup import BACKUP_FILE_NAME, backup_hook
 from db.migrate import main
+from db.migrations import migrate
 from db.migrations.versions import MIGRATIONS, Migration
 
 rows_st = st.lists(

@@ -21,7 +21,7 @@ Extensions (generic structure only; real values must come from the user's own ta
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 EXTENSION_KEYS = ("fixed_daily_charge", "fixed_monthly_charge", "tiers", "tier_basis", "surcharge_per_kwh", "tax_pct",
@@ -286,7 +286,7 @@ def price_reading(t: dict[str, Any], start_local: datetime, duration_s: float, k
     if not duration_s > 0:
         return []
     tz = start_local.tzinfo
-    utc = timezone.utc
+    utc = UTC
     cur = start_local.astimezone(utc) if tz else start_local
     end = cur + timedelta(seconds=duration_s)
     bounds = sorted({0.0, *(float(p[k]) for p in t["periods"] for k in ("start", "end"))})

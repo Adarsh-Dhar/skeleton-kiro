@@ -5,7 +5,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from sqlalchemy import create_engine, text
 
 from db.guard import PERMITTED, TableNotPermitted, install_guard

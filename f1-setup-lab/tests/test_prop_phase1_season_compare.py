@@ -1,6 +1,9 @@
 """Property tests for season comparison shape (Requirements 4.2, 4.3, design D9)."""
 from __future__ import annotations
-from hypothesis import given, settings, strategies as st
+
+from hypothesis import given, settings
+from hypothesis import strategies as st
+
 from f1lab.integrations.historical.analysis import COMPARE_METRICS, season_compare
 
 CODES = ["VER", "HAM", "LEC", "NOR", "ALO", "RUS"]

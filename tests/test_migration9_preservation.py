@@ -4,7 +4,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from sqlalchemy import text
 
 from db import create_db_engine, current_version

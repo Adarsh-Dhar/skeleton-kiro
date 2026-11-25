@@ -6,14 +6,13 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from sqlalchemy import text
 
 from db import create_db_engine, current_version
-from db.migrations import migrate
 from db.base import Base
-from db.migrations import game_data
-from db.migrations import MigrationError
+from db.migrations import MigrationError, game_data, migrate
 
 # The statements of migration 9, in order (see _m009_f1_setup_restored).
 STATEMENTS = ("app_experiment_owner", *game_data.DDL)

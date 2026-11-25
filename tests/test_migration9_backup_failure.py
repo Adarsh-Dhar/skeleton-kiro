@@ -3,6 +3,7 @@ Example count is 25 instead of the default 100: every example builds a SQLite fi
 migration entry point, which costs tens of milliseconds each; the input space (a few rows, two failure modes) is small.
 """
 from __future__ import annotations
+
 import contextlib
 import dataclasses
 import io
@@ -10,12 +11,16 @@ import sqlite3
 import tempfile
 from pathlib import Path
 from unittest import mock
-from hypothesis import HealthCheck, given, settings, strategies as st
+
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
+
 import db.backup as backup_mod
 from db import create_db_engine
-from db.migrations import migrate
 from db.migrate import main
+from db.migrations import migrate
 from db.migrations.versions import MIGRATIONS
+
 rows_st = st.lists(st.tuples(st.text(max_size=100), st.integers(-(2**40), 2**40)), max_size=30)
 class _SizeLiar:
     """Read-only source proxy that reports one page too many, so the backup size check fails."""

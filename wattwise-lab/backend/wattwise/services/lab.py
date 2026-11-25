@@ -36,6 +36,7 @@ from db.config import resolve_db_url
 from db.models.common import APP_WATTWISE
 from db.scoped import ScopedExperimentRepository
 from wattwise import SIMULATED_NOTICE
+from wattwise.adapters import tariff_model as TM
 from wattwise.adapters.household_model import (
     METRIC_UNITS,
     STEP_H,
@@ -51,11 +52,10 @@ from wattwise.adapters.household_model import (
     household_catalog,
     simulate,
 )
-from wattwise.adapters.tariff_model import MissingStartDate  # noqa: F401  (re-exported: the API layer maps it to a validation error)
 from wattwise.adapters.meter_adapter import MeterSimulatorAdapter
 from wattwise.adapters.meter_csv import ParsedMeter, parse_meter_csv, to_series
-from wattwise.adapters import tariff_model as TM
 from wattwise.adapters.meter_import import Reading, interpret
+from wattwise.adapters.tariff_model import MissingStartDate  # noqa: F401  (re-exported: the API layer maps it to a validation error)
 from wattwise.api.schemas import DayRequest, ExperimentRequest, MeterAttachRequest, MeterRequest
 from wattwise.services import baseline, narrative, report_html
 from wattwise.services.baseline import (  # noqa: F401  (re-exported: the API layer maps these to validation errors)

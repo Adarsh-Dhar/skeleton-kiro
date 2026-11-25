@@ -4,7 +4,8 @@ from __future__ import annotations
 import re
 from urllib.parse import urlsplit
 
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from f1lab.integrations.historical.analysis import clean_colour, clean_url
 

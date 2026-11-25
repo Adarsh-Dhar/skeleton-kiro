@@ -10,14 +10,15 @@ import math
 import re
 from urllib.parse import urlsplit
 
+import numpy as np
+import pandas as pd
+
 # Local copy so this module stays pure; a test keeps it equal to f1lab.HISTORICAL_NOTICE.
 HISTORICAL_NOTICE = (
     "HISTORICAL F1 DATA: real Formula 1 session data from OpenF1 (unofficial, not affiliated with Formula 1). "
     "Used for analysis only; some values are estimated from it, and the import coverage on each session says which."
 )
 
-import numpy as np  # noqa: F401  (used by later analysis functions)
-import pandas as pd  # noqa: F401  (used by later analysis functions)
 
 _COMPASS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 _HEX6 = re.compile(r"[0-9A-Fa-f]{6}")

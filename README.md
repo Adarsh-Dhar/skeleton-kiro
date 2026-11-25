@@ -16,6 +16,11 @@ How both apps use the SDK: each builds an `ExperimentSpec`, registers an app-own
 (design, execute through `LocalBackgroundRunner`, `ingest_measurements`, `analyse`, `optimise`, `report`). It imports only the SDK's public
 top-level API, from the installed wheel, never from the source tree. The SDK is frozen: nothing in this release changes it.
 
+**Third-domain demonstration.** `scripts/demo-coffee-integration.sh` runs a coffee-roasting experiment through the installed SDK, using an
+adapter registered in an `AdapterRegistry` and selected by `ExperimentSpec.adapter_name` (see
+[skeleton/examples/third_domain_adapter](skeleton/examples/third_domain_adapter/README.md)). The roaster is synthetic, and the SDK has no
+coffee-specific code.
+
 ## Install and run
 
 Requires Python 3.11 or newer (`PYTHON_BIN` selects the interpreter). Each start script creates or reuses the app's virtual environment,

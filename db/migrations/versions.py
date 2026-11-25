@@ -50,8 +50,30 @@ def _m005_ww_household_tariffs(conn: Connection) -> None:
     create_tables(conn, "ww_household", "ww_tariff")
 
 
+# Frozen version-6 DDL of the WATTWISE meter library. Migration 6 must not build these tables from the current models: the models
+# now carry the columns migration 11 adds (provenance, total_import_kwh, total_export_kwh, export_kwh, export_kw), so a database
+# stopped at version 6-10 would already have them. Migration 11 adds them.
+_M006_DDL = (
+    """CREATE TABLE IF NOT EXISTS ww_meter_import (
+        import_id VARCHAR(40) NOT NULL, file_name VARCHAR(300) NOT NULL, imported_at DATETIME NOT NULL, source VARCHAR(120) NOT NULL,
+        timezone VARCHAR(60) NOT NULL, reading_kind VARCHAR(20) NOT NULL, unit VARCHAR(10) NOT NULL, interval_minutes FLOAT,
+        resample_minutes FLOAT, first_ts_utc VARCHAR(40), last_ts_utc VARCHAR(40), rows_total INTEGER NOT NULL,
+        rows_used INTEGER NOT NULL, rows_skipped INTEGER NOT NULL, content_sha256 VARCHAR(64) NOT NULL, options_json TEXT NOT NULL,
+        warnings_json TEXT NOT NULL, row_log_json TEXT NOT NULL, gaps_json TEXT NOT NULL,
+        CONSTRAINT pk_ww_meter_import PRIMARY KEY (import_id))""",
+    "CREATE INDEX IF NOT EXISTS ix_ww_meter_import_content_sha256 ON ww_meter_import (content_sha256)",
+    """CREATE TABLE IF NOT EXISTS ww_meter_reading (
+        import_id VARCHAR(40) NOT NULL, seq INTEGER NOT NULL, ts_utc VARCHAR(40) NOT NULL, original_ts VARCHAR(80),
+        source_row INTEGER, interval_minutes FLOAT NOT NULL, power_kw FLOAT NOT NULL, energy_kwh FLOAT NOT NULL, flags VARCHAR(200),
+        CONSTRAINT pk_ww_meter_reading PRIMARY KEY (import_id, seq),
+        CONSTRAINT fk_ww_meter_reading_import_id_ww_meter_import FOREIGN KEY(import_id)
+            REFERENCES ww_meter_import (import_id) ON DELETE CASCADE)""",
+    "CREATE INDEX IF NOT EXISTS ix_ww_meter_reading_import_ts ON ww_meter_reading (import_id, ts_utc)",
+)
 def _m006_ww_meter_library(conn: Connection) -> None:
-    create_tables(conn, "ww_meter_import", "ww_meter_reading")
+    """Create the version-6 meter tables from frozen DDL (not the current models). Migration 11 adds the later columns."""
+    for statement in _M006_DDL:
+        conn.exec_driver_sql(statement)
 
 
 def _m007_f1_hist_datasets(conn: Connection) -> None:
@@ -105,7 +127,8 @@ def _m010_remove_game_data(conn: Connection) -> None:
 
 def _m011_ww_provenance_and_export(conn: Connection) -> None:
     """Add the meter-file provenance label, import/export totals and per-reading export quantities. Each column is added only
-    if missing (a fresh database already has them, because migration 6 builds the tables from the current models). Existing
+    if missing (migration 6 creates the version-6 tables without them; a database that an earlier build created from the current
+    models already has them). Existing
     imports get provenance 'unknown', ``total_import_kwh`` = the sum of their ``energy_kwh`` and ``total_export_kwh`` = 0."""
     from sqlalchemy import text
 

@@ -5,7 +5,8 @@ import math
 
 import numpy as np
 import pytest
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from f1lab.errors import Conflict
 from f1lab.integrations.historical.analysis import mini_sectors

@@ -173,7 +173,8 @@ def test_my_usage_library_baseline_and_comparison(page):
     page.wait_for_selector("[data-open]")
     page.wait_for_selector("#u-base")
     assert "mean daily energy" in page.inner_text("#u-detail").lower()
-    assert "MEASURED" in page.inner_text("#u-detail")
+    # the bundled demo file is labelled SYNTHETIC DEMO; only a file the user labels "real meter" reads MEASURED
+    assert "SYNTHETIC DEMO" in page.inner_text("#u-detail h2") and "MEASURED" not in page.inner_text("#u-detail h2")
     page.click("#u-base")  # use as household baseline (stored on the server)
     page.wait_for_selector("text=Stop using as baseline")
     hh = page.evaluate("fetch('/api/household').then(r => r.json())")
@@ -206,8 +207,15 @@ def test_tariff_editor_keeps_and_edits_advanced_fields(page):
     assert saved["tax_pct"] == 7.5 and saved["fixed_daily_charge"] == 0.25 and saved["fixed_monthly_charge"] == 9.0
     assert saved["tiers"] == body["tiers"] and saved["billing_days"] == 30
     assert page.errors == [], page.errors
+def _clear_meter_library(page):
+    """The library rejects a file that was already imported with the same options, so each test starts from an empty library."""
+    page.evaluate("""async () => {
+        const imports = await fetch('/api/meter/imports').then(r => r.json());
+        for (const m of imports) await fetch('/api/meter/imports/' + m.import_id, {method: 'DELETE'});
+    }""")
 def _import_with_label(page, value):
     """Fill the demo CSV, pick a provenance in the select, preview, import; return (preview chips, detail chips)."""
+    _clear_meter_library(page)
     fresh(page, "#/usage")
     page.wait_for_selector("#u-demo")
     page.click("#u-demo")
@@ -232,6 +240,7 @@ def test_provenance_badge_matches_label_on_preview_and_detail(page, value, text,
         assert "MEASURED" not in page.inner_text("#u-detail h2")
     assert page.errors == [], page.errors
 def test_demo_button_selects_synthetic_demo_and_imports_with_that_label(page):
+    _clear_meter_library(page)
     fresh(page, "#/usage")
     page.wait_for_selector("#u-demo")
     page.click("#u-demo")

@@ -12,7 +12,6 @@ import re
 from pathlib import Path
 
 import pytest
-
 import trialforge
 
 SDK_DIR = Path(trialforge.__file__).resolve().parent

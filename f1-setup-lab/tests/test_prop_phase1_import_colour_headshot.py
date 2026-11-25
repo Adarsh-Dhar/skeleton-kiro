@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 from db import create_db_engine, migrate
 from f1lab.integrations.historical.openf1_normalizer import driver_list

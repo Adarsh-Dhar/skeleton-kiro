@@ -7,9 +7,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
-from sqlalchemy import text
-
 from conftest import wait_done
+from sqlalchemy import text
 
 DISH = {"name": "Dish", "power_kw": 1.0, "duration_h": 1.0}
 BIG = {"name": "Big", "power_kw": 6.0, "duration_h": 1.0}  # too large to be mistaken for the 2 kW evening load

@@ -2,9 +2,12 @@
 **Validates: Requirements 5.8**
 """
 from __future__ import annotations
+
 from datetime import date, timedelta
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
+
 from wattwise.services import baseline as B
 
 SLOTS = 96

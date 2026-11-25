@@ -1,11 +1,16 @@
 """CSV export and HTML report routes (Requirements 7.1, 7.3, 7.4, 7.6, 7.7, 7.8)."""
 from __future__ import annotations
+
 import csv
 import io
+
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
+
 from f1lab.api.app import create_app
+
+
 @pytest.fixture
 def api(tmp_path):
     app = create_app(str(tmp_path / "trialforge.db"))

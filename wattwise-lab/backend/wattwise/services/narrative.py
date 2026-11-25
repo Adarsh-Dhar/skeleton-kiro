@@ -7,7 +7,7 @@ from typing import Any
 from trialforge import AnalysisResult, ExperimentResult, RunStatus
 
 from wattwise import SIMULATED_NOTICE
-from wattwise.adapters.household_model import APPLIANCE_KEY_PREFIX, BASELINE, FACTORS, baseline_setup, clock, household_catalog, simulate
+from wattwise.adapters.household_model import APPLIANCE_KEY_PREFIX, FACTORS, baseline_setup, clock, household_catalog, simulate
 
 LABEL = {k: v["label"] for k, v in FACTORS.items()}
 
@@ -89,11 +89,12 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, household
     bs = baseline_setup(household)
     base = simulate(bs, household)["metrics"]
     saving = base["energy_cost"] - o["energy_cost"]
+    plug_in = f"plug in at {clock(bs['charge_start'])}, {bs['charge_power_kw']:.1f} kW, " if has_ev else ""
     reasons = [
         f"Cheapest feasible schedule: {o['energy_cost']:.2f} per day, {o['energy_kwh']:.1f} kWh, peak {o['peak_power_kw']:.1f} kW, "
         f"{o['departure_charge_pct']:.0f}% charge at departure" + (f" (required {desired:g}%)." if desired is not None else ".")
         if has_ev and "departure_charge_pct" in o else ".",
-        f"Baseline schedule ({f'plug in at {clock(bs['charge_start'])}, {bs['charge_power_kw']:.1f} kW, ' if has_ev else ''}appliances at {clock(bs['appliance_start'])}) costs "
+        f"Baseline schedule ({plug_in}appliances at {clock(bs['appliance_start'])}) costs "
         f"{base['energy_cost']:.2f}: saving {saving:.2f} per day ({100 * saving / base['energy_cost']:.0f}%) at "
         f"{base['peak_power_kw']:.1f} kW baseline peak vs {o['peak_power_kw']:.1f} kW.",
     ]  # fmt: skip

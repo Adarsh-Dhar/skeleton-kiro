@@ -1,10 +1,14 @@
 """Property test: unexpected Lab_Service exceptions give a fixed-shape 500 without a stack trace."""
 from __future__ import annotations
+
 import hashlib
 import re
+
 import pytest
 from fastapi.testclient import TestClient
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
+
 from f1lab.api.app import create_app
 
 FIXED_BODY = {"detail": [{"field": "server", "message": "internal error"}]}

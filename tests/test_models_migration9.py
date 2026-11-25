@@ -7,12 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 from sqlalchemy import text
 
 from db import create_db_engine, current_version
-from db.migrations import migrate
-from db.migrations import versions
+from db.migrations import migrate, versions
 from db.migrations.game_data import DDL, create_game_tables
 from db.migrations.versions import MIGRATIONS
 

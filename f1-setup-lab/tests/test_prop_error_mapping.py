@@ -5,7 +5,8 @@ import tempfile
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 import f1lab.errors as app_errors
 import f1lab.services.lab as lab_module

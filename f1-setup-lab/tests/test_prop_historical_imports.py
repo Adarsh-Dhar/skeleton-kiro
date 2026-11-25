@@ -16,15 +16,15 @@ from pathlib import Path
 from unittest import mock
 
 from fastapi.testclient import TestClient
-from hypothesis import HealthCheck, given, settings, strategies as st
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 
+from db.guard import HISTORICAL_TABLES, SETUP_SDK_TABLES, target_table
 from f1lab.api.app import create_app
 from f1lab.integrations.historical import repository as R
 from f1lab.integrations.historical.openf1_client import OpenF1Client, RateLimiter
-
-from db.guard import HISTORICAL_TABLES, SETUP_SDK_TABLES, target_table
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))

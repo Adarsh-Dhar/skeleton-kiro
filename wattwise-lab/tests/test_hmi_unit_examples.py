@@ -97,10 +97,6 @@ def test_version_10_database_migrates_and_existing_file_reads_unknown(tmp_path: 
     try:
         migrate(engine, target=10)
         with engine.begin() as c:
-            for col in ("provenance", "total_import_kwh", "total_export_kwh"):
-                c.execute(text(f"ALTER TABLE ww_meter_import DROP COLUMN {col}"))
-            for col in ("export_kwh", "export_kw"):
-                c.execute(text(f"ALTER TABLE ww_meter_reading DROP COLUMN {col}"))
             c.execute(text(
                 "INSERT INTO ww_meter_import (import_id, file_name, imported_at, source, timezone, reading_kind, unit, interval_minutes, first_ts_utc, "
                 "last_ts_utc, rows_total, rows_used, rows_skipped, content_sha256, options_json, warnings_json, row_log_json, gaps_json) VALUES "

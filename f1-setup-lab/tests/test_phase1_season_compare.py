@@ -16,9 +16,9 @@ def api(tmp_path):
 
 def test_validation_and_404_and_values(tmp_path):
     from db import create_db_engine, migrate
-    from f1lab.integrations.historical.service import HistoricalService
     from f1lab.errors import NotFound
     from f1lab.integrations.historical.schemas import SeasonCompareRequest
+    from f1lab.integrations.historical.service import HistoricalService
 
     engine = create_db_engine(tmp_path / "t.db")
     migrate(engine)
