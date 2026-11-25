@@ -324,8 +324,14 @@ class HistoricalService:
 
     def weather(self, sid: str) -> dict:
         self._manifest(sid)  # 404 for an unknown session
-        df = self.repo.weather(sid)
-        return {"samples": _records(df), "count": len(df), "note": "weather is sampled sparsely by the timing feed"}
+        df, masked = analysis.mask_weather_dropouts(self.repo.weather(sid))
+        out = {"samples": _records(df), "count": len(df), "note": "weather is sampled sparsely by the timing feed"}
+        if masked:
+            what = ", ".join(f"{n} {c}" for c, n in masked.items())
+            out["masked_dropouts"] = masked
+            out["note"] += (f". Treated as missing, not as real readings: {what} sample(s) of exactly 0 that OpenF1 reported "
+                            "while the other channels were normal (sensor dropout). The stored data is unchanged.")
+        return out
 
     def track_map(self, sid: str, driver: str | None = None, lap: int | None = None) -> dict:
         m = self._manifest(sid)
@@ -477,9 +483,23 @@ class HistoricalService:
         results = self.repo.dataset(sid, "session_result")
         standings = self.standings(sid)
         tyres = self.tyre_degradation(sid)
-        weather = self.weather(sid)["samples"]
-        reasons = {"tyre_degradation": tyres.get("coverage_note")}
-        return analysis.report_html(summary, results, standings, tyres, weather, reasons)
+        weather_view = self.weather(sid)
+        reasons = {"tyre_degradation": tyres.get("coverage_note"), "standings": self._standings_reason(m)}
+        return analysis.report_html(summary, results, standings, tyres, weather_view["samples"], reasons,
+                                    weather_note=weather_view["note"] if weather_view.get("masked_dropouts") else None)
+
+    @staticmethod
+    def _standings_reason(m: dict) -> str:
+        """Why the championship standings are empty, from the import coverage (not an import failure when OpenF1 had none)."""
+        endpoints = (m.get("coverage") or {}).get("endpoints") or {}
+        found = [endpoints[k] for k in ("drivers_championship", "teams_championship") if k in endpoints]
+        if not found:
+            return "championship standings were not requested when this session was imported (re-import with race data to try)"
+        if all(e.get("status") == "empty" for e in found):
+            return ("OpenF1 published no championship standings for this session (a beta endpoint, often missing for recent races). "
+                    "The import did not fail; re-import later to check again")
+        problems = "; ".join(f"{e.get('endpoint')}: {e.get('status')}" + (f" ({e['note']})" if e.get("note") else "") for e in found)
+        return f"championship standings could not be stored ({problems})"
 
     # ------------------------------------------------------------- comparison
     def compare(self, sid: str, req: HistoricalCompareRequest) -> dict:

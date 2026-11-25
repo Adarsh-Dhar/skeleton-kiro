@@ -305,7 +305,7 @@ const HistAnalysis = (() => {
   }
 
   /* ------------------------------------------------------------------ Tyres tab (hist session tab "tyres") */
-  const CAVEAT = 'Fuel burn is not corrected; a negative slope can be caused by falling fuel load.';
+  const CAVEAT = 'Fuel burn is not corrected; a negative slope can be caused by falling fuel load. These slopes are observed lap-time trends, not a fuel-corrected tyre-wear model: fuel burn, track evolution, safety cars, traffic and driver management also change lap times, so a negative slope does not show that the tyres improve with age.';
   const cell = (v, d) => (num(v) === null ? '<span class="dim">&mdash;</span>' : esc(d === undefined ? v : r3(v).toFixed(d)));
 
   /* groups: [{key, label, colour, pts:[{x,y}], slope}] -> scatter of lap time vs tyre age with one fitted line per group. */
@@ -348,7 +348,7 @@ const HistAnalysis = (() => {
     const drivers = [...new Set(stints.map((s) => s.driver))];
     body.innerHTML = `${caveat}<div class="panel"><div class="field" style="max-width:260px"><label for="tydrv">Driver (scatter)</label><select id="tydrv">`
       + `${drivers.map((d) => `<option value="${esc(d)}">${esc(d)}</option>`).join('')}<option value="">all drivers</option></select></div><div id="typlot"></div></div>
-      <div class="panel"><h2>Degradation by stint</h2><div style="overflow:auto"><table><thead><tr><th>Driver</th><th class="num">Stint</th><th>Compound</th><th class="num">First age</th><th class="num">Last age</th><th class="num">Laps used</th><th>Excluded</th><th class="num">Slope (s/lap)</th><th class="num">R&sup2;</th><th>Note</th></tr></thead><tbody>`
+      <div class="panel"><h2>Observed lap-time trend by stint</h2><div style="overflow:auto"><table><thead><tr><th>Driver</th><th class="num">Stint</th><th>Compound</th><th class="num">First age</th><th class="num">Last age</th><th class="num">Laps used</th><th>Excluded</th><th class="num">Lap-time trend (s/lap)</th><th class="num">R&sup2;</th><th>Note</th></tr></thead><tbody>`
       + stints.map((s) => {
         const ex = s.laps_excluded || {};
         const exTxt = Object.keys(ex).map((k) => `${k.replace('_', ' ')}: ${ex[k]}`).join(', ');
@@ -357,7 +357,7 @@ const HistAnalysis = (() => {
           + `<td class="num">${cell(s.r_squared, 3)}</td><td class="dim">${esc(s.reason || '')}</td></tr>`;
       }).join('')
       + `</tbody></table></div></div>`
-      + `<div class="panel"><h2>By compound</h2><table><thead><tr><th>Compound</th><th class="num">Median slope (s/lap)</th><th class="num">Stints</th></tr></thead><tbody>${
+      + `<div class="panel"><h2>By compound</h2><table><thead><tr><th>Compound</th><th class="num">Median lap-time trend (s/lap)</th><th class="num">Stints</th></tr></thead><tbody>${
         ((r && r.by_compound) || []).map((c) => `<tr><td>${esc(c.compound || '')}</td><td class="num">${num(c.median_slope_s_per_lap) === null ? '<span class="dim">&mdash;</span>' : esc(signed(c.median_slope_s_per_lap))}</td><td class="num">${cell(c.stints)}</td></tr>`).join('')
         || '<tr><td colspan="3" class="dim">No compound summary.</td></tr>'}</tbody></table></div>`;
     const plot = body.querySelector('#typlot'), pick = body.querySelector('#tydrv');

@@ -180,7 +180,11 @@ def mini_sectors(telemetry: object, count: int, ref: object = None) -> dict:
 # ---------------------------------------------------------------------------
 MIN_DEGRADATION_LAPS = 5
 FEW_LAPS_REASON = "fewer than 5 usable laps"
-FUEL_CAVEAT = "Fuel burn is not corrected; a negative slope can be caused by falling fuel load."
+FUEL_CAVEAT = (
+    "Fuel burn is not corrected; a negative slope can be caused by falling fuel load. These slopes are observed lap-time trends, "
+    "not a fuel-corrected tyre-wear model: fuel burn, track evolution, safety cars, traffic and driver management also change lap "
+    "times, so a negative slope does not show that the tyres improve with age."
+)
 _SC_START = ("SAFETY CAR DEPLOYED", "VIRTUAL SAFETY CAR DEPLOYED", "VSC DEPLOYED")
 _SC_END = ("SAFETY CAR IN THIS LAP", "VIRTUAL SAFETY CAR ENDING", "VSC ENDING")
 
@@ -439,6 +443,56 @@ def season_compare(sessions: list, drivers: list, metric: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Report helpers: finishing gaps, observed trend wording, weather sensor dropouts
+# ---------------------------------------------------------------------------
+def gap_display(row: dict) -> str:
+    """Finishing gap for the report. OpenF1 gives seconds, or text such as '+1 LAP' for lapped cars, or nothing (DNF, DNS)."""
+    text = row.get("gap_to_leader_text")
+    if text:
+        return str(text)
+    seconds = _num(row.get("gap_to_leader_s"))
+    if seconds is None:
+        seconds = _num(row.get("gap_to_leader"))
+    if seconds is None:
+        return ""
+    return "leader" if seconds == 0 and row.get("position") in (1, 1.0) else f"+{seconds:.3f} s"
+def trend_text(slope: object, r_squared: object = None) -> str:
+    """Plain description of a stint's lap-time slope. It describes the lap times, not the tyre."""
+    s = _num(slope)
+    if s is None:
+        return ""
+    fit = _num(r_squared)
+    fit_txt = f", R\u00b2 {fit:.2f}" if fit is not None else ""
+    if fit is not None and fit < 0.1:
+        return f"no clear trend ({s:+.3f} s/lap{fit_txt}); the line explains almost none of the lap-time variation"
+    if abs(s) < 0.005:
+        return f"lap times roughly flat ({s:+.3f} s/lap{fit_txt})"
+    if s < 0:
+        return f"lap times fell {abs(s):.3f} s/lap{fit_txt}; not evidence that the tyre improved (fuel burn, track evolution)"
+    return f"lap times rose {s:.3f} s/lap{fit_txt}; includes fuel-load effect, so it understates tyre wear"
+def mask_weather_dropouts(df: object) -> tuple[object, dict]:
+    """Treat an exact 0 that cannot be a real reading as a missing sample. OpenF1 sometimes reports 0.0 for a channel that has
+    dropped out for one sample. A track temperature of exactly 0.0 beside an air temperature above 5 C (and the reverse), and a
+    pressure of exactly 0, are masked to NaN. Returns a copy and the number masked per channel; the stored data is not changed."""
+    if not isinstance(df, pd.DataFrame) or df.empty:
+        return df, {}
+    out = df.copy()
+    masked: dict[str, int] = {}
+    air = pd.to_numeric(out["air_temp_c"], errors="coerce") if "air_temp_c" in out else None
+    track = pd.to_numeric(out["track_temp_c"], errors="coerce") if "track_temp_c" in out else None
+    rules = []
+    if track is not None and air is not None:
+        rules.append(("track_temp_c", (track == 0.0) & (air > 5.0)))
+        rules.append(("air_temp_c", (air == 0.0) & (track > 5.0)))
+    if "pressure_hpa" in out:
+        rules.append(("pressure_hpa", pd.to_numeric(out["pressure_hpa"], errors="coerce") == 0.0))
+    for col, mask in rules:
+        n = int(mask.sum())
+        if n:
+            out[col] = pd.to_numeric(out[col], errors="coerce").mask(mask)
+            masked[col] = n
+    return out, masked
+# ---------------------------------------------------------------------------
 # HTML report (D11)
 # ---------------------------------------------------------------------------
 _REPORT_STYLE = (
@@ -522,6 +576,7 @@ def report_html(
     weather: object = None,
     unavailable: dict | None = None,
     notice: str | None = None,
+    weather_note: str | None = None,
 ) -> str:
     """Build one self-contained, escaped HTML document (D11, Requirements 7.4, 7.5, 7.7).
 
@@ -549,9 +604,9 @@ def report_html(
         f"<li><strong>{escape(k)}:</strong> {_cell_text(v)}</li>" for k, v in items
     ) + "</ul>"
 
-    res_rows = _records(results)
+    res_rows = [{**r, "gap_to_leader": gap_display(r)} for r in _records(results)]
     res_html = (
-        _html_table(["position", "driver", "laps", "points", "gap_to_leader_text", "dnf", "dns", "dsq"], res_rows)
+        _html_table(["position", "driver", "laps", "points", "gap_to_leader", "dnf", "dns", "dsq"], res_rows)
         if res_rows else missing("results")
     )
 
@@ -568,17 +623,20 @@ def report_html(
             row = dict(s)
             ex = s.get("laps_excluded") or {}
             row["laps_excluded"] = ", ".join(f"{k}: {v}" for k, v in ex.items()) if isinstance(ex, dict) else ex
+            row["observed_trend"] = trend_text(s.get("slope_s_per_lap"), s.get("r_squared"))
             flat.append(row)
         caveat = (tyre_degradation or {}).get("caveat") or FUEL_CAVEAT
         tyre_html = _html_table(
             ["driver", "stint", "compound", "tyre_age_first", "tyre_age_last", "laps_used",
-             "laps_excluded", "slope_s_per_lap", "r_squared", "reason"], flat
+             "laps_excluded", "slope_s_per_lap", "r_squared", "observed_trend", "reason"], flat
         ) + f"<p><strong>Caveat:</strong> {escape(str(caveat), quote=True)}</p>"
     else:
         tyre_html = missing("tyre_degradation")
 
     w_rows = _weather_rows(weather)
     weather_html = _html_table(["channel", "min", "max", "mean"], w_rows) if w_rows else missing("weather")
+    if w_rows and weather_note:
+        weather_html += f'<p class="na">{escape(str(weather_note), quote=True)}</p>'
 
     notice_html = f'<p class="notice">{escape(str(notice), quote=True)}</p><p>Data source: OpenF1</p>'
 
@@ -586,7 +644,7 @@ def report_html(
         _section("Summary", summary_html),
         _section("Results", res_html),
         _section("Standings", st_html),
-        _section("Tyre degradation", tyre_html),
+        _section("Tyre degradation: observed lap-time trend by stint (not fuel-corrected)", tyre_html),
         _section("Weather summary", weather_html),
         _section("Historical data notice", notice_html),
     ]

@@ -78,7 +78,7 @@ All seven read only data already stored by the OpenF1 import and are labelled `H
 * **Headshots and team colours**: driver photos in the driver picker and standings, and team colours on chart lines, chips and track-map dots. A missing or failed photo falls back to a coloured circle with the driver code. **They appear only for sessions imported after this change; re-import the session with force to refresh older ones.**
 * **Season comparison** (screen): compare drivers across several imported sessions, matched by driver code.
 * **Mini-sectors** (session tab): a lap cut into equal-distance slices with slice times, optionally against a reference lap. **The distance is an estimate** (speed integrated within each lap), so slice boundaries are approximate.
-* **Tyres** (session tab): lap-time slope per lap of tyre age for each stint, with R². **Slopes do not correct for fuel burn**, so they understate true tyre wear. Stints with fewer than 5 usable laps show no slope.
+* **Tyres** (session tab): lap-time slope per lap of tyre age for each stint, with R². These are **observed lap-time trends, not a fuel-corrected tyre-wear model**: fuel burn, track evolution, safety cars and traffic also move lap times, so a negative slope does not mean the tyre improved with age. Stints with fewer than 5 usable laps show no slope.
 * **Export**: buttons in the session header download CSV tables and a self-contained HTML report (`/api/historical/sessions/{id}/export.csv?table=` and `/report.html`).
 
 From the command line:
