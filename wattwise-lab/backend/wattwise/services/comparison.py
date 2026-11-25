@@ -14,12 +14,21 @@ from __future__ import annotations
 import statistics
 from typing import Any
 
-from wattwise.adapters.household_model import BASELINE, FACTORS, simulate
+from wattwise.adapters.household_model import FACTORS, baseline_setup, household_catalog, simulate
 from wattwise.services import narrative
 
 
-def _sched(cfg: dict[str, float]) -> str:
-    return ", ".join(f"{FACTORS[k]['label']} {v}" for k, v in narrative.schedule_text({**BASELINE, **cfg}).items() if k in FACTORS)
+def _sched(cfg: dict[str, float], hh: dict[str, Any]) -> str:
+    catalog = household_catalog(hh)
+    has_ev = hh.get("ev") is not None
+    full = {**baseline_setup(hh), **cfg}
+    full = {k: v for k, v in full.items() if has_ev or k in catalog}  # no EV: EV-only values are not shown
+    return ", ".join(f"{catalog.get(k, FACTORS.get(k, {})).get('label', k)} {v}" for k, v in narrative.schedule_text(full, catalog).items())
+
+def _ev_pct(hh: dict[str, Any], value: float | None, prov: str) -> dict[str, Any]:
+    """The EV row is omitted for a household without an EV."""
+    return {"ev_charge_at_departure_pct": _v(value, prov, "%")} if hh.get("ev") is not None else {}
+
 
 LABELS = {
     "historical_measured": "MEASURED (your imported meter readings)",
@@ -58,7 +67,7 @@ def build(lab, import_id: str, exp_id: str) -> dict[str, Any]:
     per_day_by_period = cd["cost_by_period_per_day"] if cd else {}
 
     # projected: today's schedule and the best completed run, both on this experiment's household (no noise)
-    base_sim = simulate(BASELINE, hh)["metrics"]
+    base_sim = simulate(baseline_setup(hh), hh)["metrics"]
     rows = [lab._run_row(r) for r in res.runs]
     done = [r for r in rows if r["status"] == "completed" and r["feasible"] and "energy_cost" in r["outcomes"]]
     projected = [r for r in done if not r["imported"]]
@@ -108,16 +117,16 @@ def build(lab, import_id: str, exp_id: str) -> dict[str, Any]:
             "coverage": hist["coverage"], "warnings": hist["warnings"],
         },
         "schedules": {
-            "current": {"schedule": _sched(BASELINE), "cost": _v(base_sim["energy_cost"], base_prov, "currency/day"),
+            "current": {"schedule": _sched({}, hh), "cost": _v(base_sim["energy_cost"], base_prov, "currency/day"),
                         "kwh": _v(base_sim["energy_kwh"], base_prov, "kWh"), "peak_kw": _v(base_sim["peak_power_kw"], base_prov, "kW"),
-                        "ev_charge_at_departure_pct": _v(base_sim["departure_charge_pct"], base_prov, "%")},
+                        **_ev_pct(hh, base_sim.get("departure_charge_pct"), base_prov)},
             "best_projected": None if not best_sim else {
-                "run_id": best["run_id"], "schedule": _sched(best["configuration"]), "cost": _v(best_sim["energy_cost"], "projected", "currency/day"),
+                "run_id": best["run_id"], "schedule": _sched(best["configuration"], hh), "cost": _v(best_sim["energy_cost"], "projected", "currency/day"),
                 "kwh": _v(best_sim["energy_kwh"], "projected", "kWh"), "peak_kw": _v(best_sim["peak_power_kw"], "projected", "kW"),
-                "ev_charge_at_departure_pct": _v(best_sim["departure_charge_pct"], "projected", "%")},
-            "measured": [{"run_id": r["run_id"], "schedule": _sched(r["configuration"]), "cost": _v(r["outcomes"]["energy_cost"], "measured_schedule", "currency/day"),
+                **_ev_pct(hh, best_sim.get("departure_charge_pct"), "projected")},
+            "measured": [{"run_id": r["run_id"], "schedule": _sched(r["configuration"], hh), "cost": _v(r["outcomes"]["energy_cost"], "measured_schedule", "currency/day"),
                           "kwh": _v(r["outcomes"].get("energy_kwh"), "measured_schedule", "kWh"), "peak_kw": _v(r["outcomes"].get("peak_power_kw"), "measured_schedule", "kW"),
-                          "ev_charge_at_departure_pct": _v(r["outcomes"].get("departure_charge_pct"), "measured_schedule", "%")} for r in measured],
+                          **_ev_pct(hh, r["outcomes"].get("departure_charge_pct"), "measured_schedule")} for r in measured],
         },
         "cost_by_period": by_period,
         "savings": savings,

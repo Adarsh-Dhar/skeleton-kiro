@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+from datetime import date, datetime
 from typing import Any
 
 from wattwise.adapters import tariff_model as TM
@@ -37,6 +38,79 @@ DEFAULT_APPLIANCES = [
     {"name": "Washing machine", "power_kw": 0.5, "duration_h": 1.5, "flexible": True, "fixed_start": 19.0},
     {"name": "Tumble dryer", "power_kw": 2.0, "duration_h": 1.5, "flexible": False, "fixed_start": 18.0},
 ]  # fmt: skip
+
+CHARGER_MIN_KW = 1.4
+CHARGER_MAX_KW = 350.0
+DEFAULT_CHARGER_MAX_KW = 11.0
+MAX_FLEXIBLE_APPLIANCES = 20
+APPLIANCE_KEY_PREFIX = "appliance_start__"
+
+
+class ChargerCapacityError(ValueError):
+    """The charging power of a setup exceeds the household's charger capacity."""
+
+
+class FactorConflict(ValueError):
+    """A setup mixes the legacy shared ``appliance_start`` with per-appliance start factors."""
+
+
+def _slug(name: str) -> str:
+    out = "".join(c if c.isalnum() and c.isascii() else "-" for c in str(name).lower()).strip("-")
+    while "--" in out:
+        out = out.replace("--", "-")
+    return out[:39] or "appliance"
+
+
+def appliance_id(name: str, explicit: str | None = None) -> str:
+    """Explicit id when given (non-blank), otherwise a slug of the appliance name."""
+    if explicit is not None and str(explicit).strip():
+        return str(explicit).strip()
+    return _slug(name)
+
+
+def appliance_key(app: dict[str, Any]) -> str:
+    """Factor name of one appliance's start time: ``appliance_start__<token>`` (token = id with '-' replaced by '_')."""
+    aid = appliance_id(app.get("name", ""), app.get("id"))
+    return APPLIANCE_KEY_PREFIX + aid.replace("-", "_")
+
+
+def factor_limits(charger_capacity_kw: float | None = None, appliances: list[dict[str, Any]] | None = None,
+                  has_ev: bool = True) -> dict[str, dict[str, Any]]:
+    """Factor catalog valid for one household. With default arguments this is a copy of ``FACTORS``."""
+    out: dict[str, dict[str, Any]] = {}
+    for name, f in FACTORS.items():
+        if not has_ev and name in ("charge_start", "charge_power_kw"):
+            continue
+        f = dict(f)
+        if name == "charge_power_kw":
+            f["high"] = float(charger_capacity_kw) if charger_capacity_kw is not None else DEFAULT_CHARGER_MAX_KW
+        out[name] = f
+    template = FACTORS["appliance_start"]
+    for app in appliances or []:
+        if app.get("flexible"):
+            out[appliance_key(app)] = {**template, "label": f"Start: {app.get('name', '')}"}
+    return out
+
+
+def household_catalog(household: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """``factor_limits`` for a household dict (capacity, appliances and EV presence read from it)."""
+    return factor_limits(household.get("charger_capacity_kw"), household.get("appliances") or [], household.get("ev") is not None)
+
+
+def baseline_setup(household: dict[str, Any]) -> dict[str, float]:
+    """BASELINE with the charging power clipped to the household's charger capacity (when it has one)."""
+    setup = dict(BASELINE)
+    cap = household.get("charger_capacity_kw")
+    if cap is not None:
+        setup["charge_power_kw"] = min(setup["charge_power_kw"], float(cap))
+    return setup
+
+
+def check_setup_keys(setup: dict[str, Any]) -> None:
+    """Raise FactorConflict when a setup has both ``appliance_start`` and per-appliance start keys."""
+    per = sorted(k for k in setup if k.startswith(APPLIANCE_KEY_PREFIX))
+    if "appliance_start" in setup and per:
+        raise FactorConflict(f"setup contains both 'appliance_start' and per-appliance start factors: {', '.join(per)}")
 
 
 def clock(h: float) -> str:
@@ -103,20 +177,24 @@ def validate_tariff(t: dict[str, Any]) -> list[str]:
     return issues
 
 
-def price_at(tariff: dict[str, Any], abs_hour: float) -> float:
+def _month_day(tariff: dict[str, Any], abs_hour: float, ctx: "TM.WindowContext | None") -> tuple[int | None, str | None]:
+    return ctx.for_hour(abs_hour) if ctx is not None else TM.simulation_context(tariff)
+
+
+def price_at(tariff: dict[str, Any], abs_hour: float, ctx: "TM.WindowContext | None" = None) -> float:
     hod = abs_hour % 24
     if TM.date_dependent(tariff):
-        return float(TM.period_for(tariff, hod, *TM.simulation_context(tariff))["price"])
+        return float(TM.period_for(tariff, hod, *_month_day(tariff, abs_hour, ctx))["price"])
     for p in tariff["periods"]:
         if _in_period(p, hod):
             return float(p["price"])
     raise ValueError(f"tariff has no period for hour {hod}")
 
 
-def period_label(tariff: dict[str, Any], abs_hour: float) -> str:
+def period_label(tariff: dict[str, Any], abs_hour: float, ctx: "TM.WindowContext | None" = None) -> str:
     hod = abs_hour % 24
     if TM.date_dependent(tariff):
-        p = TM.period_for(tariff, hod, *TM.simulation_context(tariff))
+        p = TM.period_for(tariff, hod, *_month_day(tariff, abs_hour, ctx))
         return p.get("label") or f"{p['start']}-{p['end']}"
     return next((p.get("label") or f"{p['start']}-{p['end']}" for p in tariff["periods"] if _in_period(p, hod)), "?")
 
@@ -125,14 +203,42 @@ def departure_abs(hour_of_day: float) -> float:
     return hour_of_day if hour_of_day >= WINDOW_START else hour_of_day + 24
 
 
+def _window_ctx(tariff: dict[str, Any], household: dict[str, Any]) -> "TM.WindowContext | None":
+    """Window context for one simulated day: the household's ``window_start_date`` or a reference date for the tariff's simulation day."""
+    if not TM.date_dependent(tariff):
+        return None
+    start = household.get("window_start_date")
+    if isinstance(start, str):
+        start = date.fromisoformat(start)
+    elif isinstance(start, datetime):
+        start = start.date()
+    if start is None:
+        month, day_type = TM.simulation_context(tariff)
+        start = TM.reference_date(int(month or 1), str(day_type or "weekday"))
+    return TM.window_context(tariff, start)
+
+
 def simulate(setup: dict[str, float], household: dict[str, Any], rng: random.Random | None = None) -> dict[str, Any]:
-    """Simulate one day for a schedule. ``setup`` may omit factors (baseline values are used). Noise only if ``rng`` is given."""
+    """Simulate one day for a schedule. ``setup`` may omit factors (baseline values are used). Noise only if ``rng`` is given.
+
+    ``household["ev"]`` may be ``None`` (no EV: no charging, no ``departure_charge_pct``). A ``charger_capacity_kw`` in the household
+    bounds ``charge_power_kw``. Flexible appliances start at ``appliance_start__<id>`` when given, else at ``appliance_start``.
+    """
+    check_setup_keys(setup)
     s = {**BASELINE, **setup}
     ev, tariff, apps = household["ev"], household["tariff"], household["appliances"]
-    cap_kwh, eff = ev["battery_kwh"], ev["efficiency"]
-    soc = cap_kwh * ev["initial_soc_pct"] / 100
-    depart = departure_abs(ev["departure_hour"])
-    flex_start = s["appliance_start"]
+    cap_limit = household.get("charger_capacity_kw")
+    if ev is not None and cap_limit is not None and s["charge_power_kw"] > float(cap_limit):
+        raise ChargerCapacityError(f"charging power {s['charge_power_kw']:g} kW exceeds the charger capacity {float(cap_limit):g} kW")
+    ctx = _window_ctx(tariff, household)
+    if ev is not None:
+        cap_kwh, eff = ev["battery_kwh"], ev["efficiency"]
+        soc = cap_kwh * ev["initial_soc_pct"] / 100
+        depart = departure_abs(ev["departure_hour"])
+    else:
+        cap_kwh = eff = soc = depart = 0.0
+    starts = [(appliance_id(a.get("name", ""), a.get("id")), a, s.get(appliance_key(a), s["appliance_start"]) if a["flexible"] else a["fixed_start"])
+              for a in apps]
     soc_at_departure = None
     steps: list[dict[str, Any]] = []
     for i in range(STEPS):
@@ -145,39 +251,52 @@ def simulate(setup: dict[str, float], household: dict[str, Any], rng: random.Ran
             base = household.get("base_load_kw", 0.35) + (1.0 if 18 <= hod < 21 else 0.0) + (0.6 if 6.5 <= hod < 8.5 else 0.0)
         if rng:
             base += abs(rng.gauss(0, 0.03))
-        app = sum(a["power_kw"] for a in apps if (flex_start if a["flexible"] else a["fixed_start"]) <= t < (flex_start if a["flexible"] else a["fixed_start"]) + a["duration_h"])
+        by_app: dict[str, float] = {}
+        kws = []
+        for aid, a, st in starts:
+            kw = a["power_kw"] if st <= t < st + a["duration_h"] else 0.0
+            kws.append(kw)
+            by_app[aid] = by_app.get(aid, 0.0) + kw
+        app = sum(kws)
         ev_kw = 0.0
-        if s["charge_start"] <= t < depart and soc < cap_kwh - 1e-9:
-            frac = soc / cap_kwh
-            taper = 1.0 if frac <= 0.8 else max(0.3, 1 - 0.7 * (frac - 0.8) / 0.2)  # charging slows above 80 %
-            ev_kw = min(s["charge_power_kw"] * taper, (cap_kwh - soc) / (eff * STEP_H))
-            soc += ev_kw * eff * STEP_H
-        if soc_at_departure is None and t + STEP_H > depart:
-            soc_at_departure = soc / cap_kwh * 100
-        steps.append({"t": t, "base": base, "appliances": app, "ev": ev_kw, "kw": base + app + ev_kw, "price": price_at(tariff, t)})
-    if soc_at_departure is None:
+        if ev is not None:
+            if s["charge_start"] <= t < depart and soc < cap_kwh - 1e-9:
+                frac = soc / cap_kwh
+                taper = 1.0 if frac <= 0.8 else max(0.3, 1 - 0.7 * (frac - 0.8) / 0.2)  # charging slows above 80 %
+                ev_kw = min(s["charge_power_kw"] * taper, (cap_kwh - soc) / (eff * STEP_H))
+                soc += ev_kw * eff * STEP_H
+            if soc_at_departure is None and t + STEP_H > depart:
+                soc_at_departure = soc / cap_kwh * 100
+        steps.append({"t": t, "base": base, "appliances": app, "ev": ev_kw, "kw": base + app + ev_kw, "price": price_at(tariff, t, ctx),
+                      "by_appliance": by_app})
+    if ev is not None and soc_at_departure is None:
         soc_at_departure = soc / cap_kwh * 100
-    return {"steps": steps, "metrics": summarise([(st["t"], st["kw"]) for st in steps], tariff, ev_kw=[st["ev"] for st in steps], departure_charge_pct=soc_at_departure)}
+    billing = household.get("billing_cycle_kwh")
+    return {"steps": steps, "metrics": summarise([(st["t"], st["kw"]) for st in steps], tariff, ev_kw=[st["ev"] for st in steps],
+                                                 departure_charge_pct=soc_at_departure, ctx=ctx,
+                                                 billing_cycle_kwh=float(billing) if billing is not None else None)}
 
 
 def summarise(readings: list[tuple[float, float]], tariff: dict[str, Any], *, step_h: float = STEP_H, ev_kw: list[float] | None = None,
-              departure_charge_pct: float | None = None) -> dict[str, Any]:
+              departure_charge_pct: float | None = None, ctx: "TM.WindowContext | None" = None,
+              billing_cycle_kwh: float | None = None) -> dict[str, Any]:
     """Energy, cost (tariff + demand charge), peak and cost by period from (abs_hour, kW) readings.
 
     Tariffs that use the optional extensions (fixed charges, tiers, taxes, export credits, seasonal/day-type periods) are
     priced by ``_summarise_extended``; original tariffs keep this exact code path (identical costs).
     """
     if TM.is_extended(tariff):
-        return _summarise_extended(readings, tariff, step_h=step_h, ev_kw=ev_kw, departure_charge_pct=departure_charge_pct)
+        return _summarise_extended(readings, tariff, step_h=step_h, ev_kw=ev_kw, departure_charge_pct=departure_charge_pct, ctx=ctx,
+                                   billing_cycle_kwh=billing_cycle_kwh)
     kwh = sum(kw * step_h for _, kw in readings)
     peak = max((kw for _, kw in readings), default=0.0)
     by_period: dict[str, dict[str, float]] = {}
     energy_cost = 0.0
     for t, kw in readings:
         e = kw * step_h
-        c = e * price_at(tariff, t)
+        c = e * price_at(tariff, t, ctx)
         energy_cost += c
-        d = by_period.setdefault(period_label(tariff, t), {"kwh": 0.0, "cost": 0.0})
+        d = by_period.setdefault(period_label(tariff, t, ctx), {"kwh": 0.0, "cost": 0.0})
         d["kwh"] += e
         d["cost"] += c
     demand = float(tariff.get("demand_charge_per_kw", 0) or 0) * peak
@@ -191,15 +310,21 @@ def summarise(readings: list[tuple[float, float]], tariff: dict[str, Any], *, st
 
 
 def _summarise_extended(readings: list[tuple[float, float]], tariff: dict[str, Any], *, step_h: float, ev_kw: list[float] | None,
-                        departure_charge_pct: float | None) -> dict[str, Any]:
-    """One simulated day under an extended tariff. Billing-period items (monthly charge, billing-period demand) are prorated."""
-    month, day_type = TM.simulation_context(tariff)
+                        departure_charge_pct: float | None, ctx: "TM.WindowContext | None" = None,
+                        billing_cycle_kwh: float | None = None) -> dict[str, Any]:
+    """One simulated day under an extended tariff. Billing-period items (monthly charge, billing-period demand) are prorated.
+
+    ``ctx`` gives each reading its own month and day type (window crossing midnight); ``billing_cycle_kwh`` seeds the tier
+    accumulator only for tiered tariffs with ``tier_basis == "billing_period"``.
+    """
     kwh = sum(kw * step_h for _, kw in readings)
     peak = max((kw for _, kw in readings), default=0.0)
     by_period: dict[str, dict[str, float]] = {}
-    charge = credit = cum = 0.0
+    charge = credit = 0.0
+    cum = float(billing_cycle_kwh or 0.0) if tariff.get("tiers") and tariff.get("tier_basis") == "billing_period" else 0.0
     for t, kw in readings:
         e = kw * step_h
+        month, day_type = _month_day(tariff, t, ctx)
         r = TM.price_interval(tariff, t % 24, e, cum, month, day_type)
         cum += r["import_kwh"]
         charge += r["charge"]

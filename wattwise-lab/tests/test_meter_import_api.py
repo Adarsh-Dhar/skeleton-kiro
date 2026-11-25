@@ -117,3 +117,14 @@ def test_attach_validation_and_unknown_ids(make_experiment, client):
     assert client.post(f"/api/experiments/{d['id']}/runs/{run}/meter", json={"csv": csv_text, "departure_charge_pct": 150}).status_code == 422
     assert client.post(f"/api/experiments/{d['id']}/runs/nope/meter", json={"csv": csv_text, "departure_charge_pct": 80}).status_code == 404
     assert client.post("/api/experiments/nope/runs/x/meter", json={"csv": csv_text, "departure_charge_pct": 80}).status_code == 404
+
+
+def test_source_label_on_library_summary_and_adhoc_preview(client):
+    """Requirement 3.7 (C1): ``source_label`` sits next to the fixed quantity-kind ``provenance``."""
+    csv_text = client.get("/api/demo/meter.csv").text
+    m = client.post("/api/meter/import", json={"csv": csv_text, "file_name": "real.csv", "provenance": "real_meter"})
+    assert m.status_code == 201, m.text
+    s = client.get(f"/api/meter/imports/{m.json()['import_id']}/summary").json()
+    assert s["provenance"] == "historical_measured" and s["source_label"] == "real_meter"
+    p = client.post("/api/meter/preview", json={"csv": csv_text}).json()
+    assert p["provenance"] == "historical_measured" and p["source_label"] == "unknown"

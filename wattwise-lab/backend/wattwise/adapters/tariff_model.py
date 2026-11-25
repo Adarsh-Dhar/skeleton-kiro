@@ -20,7 +20,8 @@ Extensions (generic structure only; real values must come from the user's own ta
 """
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 EXTENSION_KEYS = ("fixed_daily_charge", "fixed_monthly_charge", "tiers", "tier_basis", "surcharge_per_kwh", "tax_pct",
@@ -228,3 +229,95 @@ def bill(t: dict[str, Any], intervals: list[tuple[datetime, float, float]]) -> d
     return {"total": parts["total"], "energy_charge": energy_charge, "fixed_charge": parts["fixed_charge"], "demand_charge": parts["demand_charge"],
             "tax": parts["tax"], "export_credit": credit, "import_kwh": imp, "export_kwh": exp, "days": days, "peak_kw": peak_all,
             "demand_basis": "daily" if daily_demand else "billing_period", "cost_by_period": by_period, "by_day": by_day}  # fmt: skip
+
+
+class MissingStartDate(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class WindowContext:
+    """Maps hours since the start of a simulated window (hour 0 = local midnight of ``start_date``) to a month and day type."""
+
+    start_date: date
+
+    def for_hour(self, abs_hour: float) -> tuple[int, str]:
+        d = self.start_date + timedelta(days=int(abs_hour // 24))
+        return d.month, day_type_of(d)  # type: ignore[arg-type]  # date has weekday() like datetime
+
+
+def window_context(tariff: dict[str, Any], start_date: date | None) -> WindowContext | None:
+    """None for tariffs that are not date dependent; MissingStartDate for date-dependent tariffs without a start date."""
+    if not date_dependent(tariff):
+        return None
+    if start_date is None:
+        raise MissingStartDate(f"tariff '{tariff.get('name', '')}' is date dependent and needs the simulated window's start date")
+    return WindowContext(start_date)
+
+
+def reference_date(month: int, day_type: str) -> date:
+    """A Tuesday (weekday) or Saturday (weekend) in ``month``; the first one is within days 1-7, so never the month's last day.
+
+    The next calendar day (Wednesday or Sunday) is then in the same month with the same day type.
+    """
+    target = 5 if day_type == "weekend" else 1
+    d = date(2025, int(month), 1)
+    return d + timedelta(days=(target - d.weekday()) % 7)
+
+
+@dataclass(frozen=True)
+class Slice:
+    start: datetime
+    seconds: float
+    kwh: float
+    label: str
+    charge: float
+    credit: float
+
+
+def price_reading(t: dict[str, Any], start_local: datetime, duration_s: float, kwh: float, cum_import_kwh: float = 0.0, *,
+                  use_real_dates: bool = False) -> list[Slice]:
+    """Split one reading at every tariff period boundary and local midnight inside [start, start+duration) and price each slice.
+
+    Slice energy is ``kwh * slice_seconds / duration_s``. Only the reading's own interval is priced (no gap filling).
+    By default the tariff's ``simulation_day`` supplies month and day type (as meter pricing always did); with
+    ``use_real_dates`` each slice uses its own local date.
+    """
+    if not duration_s > 0:
+        return []
+    tz = start_local.tzinfo
+    utc = timezone.utc
+    cur = start_local.astimezone(utc) if tz else start_local
+    end = cur + timedelta(seconds=duration_s)
+    bounds = sorted({0.0, *(float(p[k]) for p in t["periods"] for k in ("start", "end"))})
+    sim_ctx = simulation_context(t)
+    eps = timedelta(microseconds=1)
+
+    def local(x: datetime) -> datetime:
+        return x.astimezone(tz) if tz else x
+
+    def next_boundary(x: datetime) -> datetime:
+        mid = local(x).replace(hour=0, minute=0, second=0, microsecond=0, tzinfo=None)
+        best = end
+        for off in (0, 1):
+            for h in bounds:
+                naive = mid + timedelta(days=off, hours=h)
+                cand = naive.replace(tzinfo=tz).astimezone(utc) if tz else naive
+                if x + eps < cand < best:
+                    best = cand
+        return best
+
+    out: list[Slice] = []
+    cum = cum_import_kwh
+    while cur < end:
+        nxt = next_boundary(cur)
+        secs = (nxt - cur).total_seconds()
+        loc = local(cur)
+        hod = round(loc.hour + loc.minute / 60 + loc.second / 3600 + loc.microsecond / 3.6e9, 9)
+        month, dtype = (loc.month, day_type_of(loc)) if use_real_dates else sim_ctx
+        e = kwh * secs / duration_s
+        r = price_interval(t, hod, e, cum, month, dtype)
+        cum += r["import_kwh"]
+        out.append(Slice(loc, secs, e, r["label"], r["charge"], r["credit"]))
+        cur = nxt
+    return out

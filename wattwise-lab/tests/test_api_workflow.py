@@ -110,7 +110,7 @@ def test_two_factors_with_ofat_and_disabled_factor_stays_at_baseline(make_experi
         ({"design": {"run_budget": 6}}, "exceeds budget"),
         ({"design": {"replicates": 0}}, "greater than or equal to 1"),
         ({"simulator": {"fault_rate": 2}}, "less than or equal to 1"),
-        ({"appliances": [{"name": f"a{i}", "power_kw": 1, "duration_h": 1} for i in range(7)]}, "at most 6"),
+        ({"appliances": [{"name": f"a{i}", "power_kw": 1, "duration_h": 1} for i in range(21)]}, "at most 20"),
         ({"appliances": [{"name": "x", "power_kw": 0, "duration_h": 1}]}, "greater than 0"),
         ({"experiment_id": "Bad Id"}, "pattern"),
     ],

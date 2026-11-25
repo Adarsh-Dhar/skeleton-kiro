@@ -79,6 +79,7 @@ td input[type=number]{min-width:72px}td input[type=time]{min-width:122px}td inpu
 /* provenance chips: measured vs synthetic vs projected (My usage) */
 .chip.prov-m,.chip.prov-mt{color:#1b7f3b;border-color:#a7d8b9}.chip.prov-s{color:#8a5a00;border-color:#e6cf9a}
 .chip.prov-p{color:#6b3fb0;border-color:#c9bbef}.chip.prov-ms{color:#0b5394;border-color:#a9c8ea}
+.chip.prov-u{color:#6b6b6b;border-color:#c4c4c4;background:#f2f2f2}
 .scroll{max-height:320px;overflow:auto}
 /* tariff period rows: compact so Days/Months fit without sideways scrolling */
 #periods input,#periods select{min-width:0}

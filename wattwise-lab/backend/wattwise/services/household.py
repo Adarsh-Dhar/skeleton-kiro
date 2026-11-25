@@ -9,7 +9,7 @@ from sqlalchemy import Engine, delete, select
 
 from db.engine import immediate_transaction
 from db.models.wattwise import Household
-from wattwise.api.schemas import HouseholdSettings
+from wattwise.api.schemas import HouseholdSettings, validate_charger_capacity
 
 ROW_ID = 1
 
@@ -24,8 +24,18 @@ class HouseholdStore:
             row = c.execute(select(Household.settings_json, Household.source, Household.updated_at).where(Household.id == ROW_ID)).first()
         if row is None:
             return {"settings": HouseholdSettings().model_dump(), "saved": False, "source": "defaults", "updated_at": None}
-        settings = HouseholdSettings.model_validate_json(row[0]).model_dump()
-        return {"settings": settings, "saved": True, "source": row[1], "updated_at": str(row[2])}
+        raw = json.loads(row[0])
+        notice = None
+        try:
+            validate_charger_capacity(raw.get("charger_capacity_kw"))
+        except ValueError as exc:  # stored value is out of range: treat as unset instead of failing every read
+            raw["charger_capacity_kw"] = None
+            notice = f"stored charger capacity ignored (treated as not set): {exc}"
+        settings = HouseholdSettings.model_validate(raw).model_dump()
+        out = {"settings": settings, "saved": True, "source": row[1], "updated_at": str(row[2])}
+        if notice:
+            out["notice"] = notice
+        return out
 
     def put(self, settings: HouseholdSettings, source: str = "user") -> dict[str, Any]:
         body = json.dumps(settings.model_dump())

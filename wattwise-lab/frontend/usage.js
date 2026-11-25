@@ -5,6 +5,12 @@ const PROV = {
   projected: ['PROJECTED', 'prov-p'], measured_schedule: ['MEASURED SCHEDULE', 'prov-ms'],
 };
 const provChip = (p) => { const [t, c] = PROV[p] || [p, '']; return `<span class="chip ${c}" title="${esc(p)}">${esc(t)}</span>`; };
+// One badge per file label, from /api/meta (META.provenance_badges); MEASURED only for a real_meter file.
+const FALLBACK_BADGES = { real_meter: { text: 'MEASURED', css: 'prov-m' }, synthetic_demo: { text: 'SYNTHETIC DEMO', css: 'prov-s' }, unknown: { text: 'UNVERIFIED SOURCE', css: 'prov-u' } };
+const labelBadge = (label) => {
+  const l = label || 'unknown', b = ((typeof META !== 'undefined' && META && META.provenance_badges) || FALLBACK_BADGES)[l] || FALLBACK_BADGES.unknown;
+  return `<span class="chip ${esc(b.css)}" title="${esc(l)}">${esc(b.text)}</span>`;
+};
 const pv = (v, d = 2) => (!v ? '&mdash;' : `${v.value === null || v.value === undefined ? '<span class="dim">not estimated</span>' : esc(fmt(v.value, d))} ${esc(v.unit || '')} ${provChip(v.provenance)}${v.note ? `<div class="hint">${esc(v.note)}</div>` : ''}`);
 
 function importOptions() {
@@ -24,13 +30,13 @@ function importOptions() {
   return o;
 }
 
-function previewHtml(p) {
+function previewHtml(p, label) {
   const s = p.summary, it = p.interpretation;
   const rows = p.readings_preview.map((r) => `<tr><td class="num">${r.source_row}</td><td class="mono">${esc(r.original_ts)}</td><td class="mono">${esc(r.start_utc.replace('+00:00', 'Z'))}</td>
     <td class="num">${fmt(r.interval_minutes, 0)}</td><td class="num">${fmt(r.kwh, 4)}</td><td class="num">${fmt(r.kw, 3)}</td><td>${esc((r.flags || []).join(', '))}</td></tr>`).join('');
   const log = p.row_log.map((l) => `<tr><td class="num">${l.line ?? ''}</td><td>${esc(l.action)}</td><td>${esc(l.reason)}</td></tr>`).join('');
   const gaps = p.gaps.map((g) => `<tr><td class="mono">${esc(g.from_utc)}</td><td class="mono">${esc(g.to_utc)}</td><td class="num">${g.missing_intervals}</td><td>${esc(g.note || '')}</td></tr>`).join('');
-  return `<div class="panel"><h2>How this file will be read ${provChip('historical_measured')}</h2>
+  return `<div class="panel"><h2>How this file will be read ${labelBadge(label)}</h2>
     <p>Source columns: ${p.columns.map((c) => `<code>${esc(c)}</code>`).join(' ')}. Timestamp <code>${esc(it.timestamp_column)}</code>, value <code>${esc(it.value_column)}</code>
       read as <b>${esc(it.reading_kind)}</b> in <b>${esc(it.unit)}</b>; delimiter <code>${esc(it.delimiter === '\t' ? 'tab' : it.delimiter)}</code>; time zone <b>${esc(p.options.timezone)}</b>.</p>
     <div class="kpis">${kpi(`${s.rows_used} / ${s.rows_total}`, 'rows used')}${kpi(String(s.rows_skipped), 'rows skipped')}${kpi(fmt(s.interval_minutes, 0) + ' min', 'interval')}
@@ -60,21 +66,22 @@ async function viewUsage() {
     <div class="field"><label for="u-fmt">Timestamp format (if not ISO-8601)</label><input id="u-fmt" placeholder="e.g. %d/%m/%Y %H:%M"></div>
     <div class="field"><label for="u-resample">Resample to (minutes)</label><input id="u-resample" type="number" min="1" placeholder="keep"></div>
     <div class="field"><label for="u-roll">Register rollover (kWh)</label><input id="u-roll" type="number" min="1" placeholder="none"></div>
+    <div class="field"><label for="u-prov">Provenance of this file</label><select id="u-prov"><option value="">unspecified</option><option value="real_meter">real meter</option><option value="synthetic_demo">synthetic demo</option><option value="unknown">unknown</option></select></div>
     <div class="field"><label for="u-src">Source</label><input id="u-src" value="csv upload"></div></div>
     <button class="btn primary" id="u-prev" style="width:100%">Preview interpretation</button></div></div>
   <div id="u-res"></div>
   <div class="panel"><h2>Library</h2><div id="u-lib">Loading&hellip;</div></div><div id="u-detail"></div>`;
   let fileName = 'meter.csv';
   $('#u-file').addEventListener('change', async () => { const f = $('#u-file').files[0]; if (!f) return; fileName = f.name; try { $('#u-csv').value = await readFileText(f); } catch (e) { $('#err').innerHTML = errorsBox(e); } });
-  $('#u-demo').addEventListener('click', async () => { try { $('#u-csv').value = await api('GET', '/api/demo/meter.csv'); fileName = 'demo_meter.csv (synthetic)'; $('#u-src').value = 'bundled demo (synthetic, not measured)'; } catch (e) { $('#err').innerHTML = errorsBox(e); } });
+  $('#u-demo').addEventListener('click', async () => { try { $('#u-csv').value = await api('GET', '/api/demo/meter.csv'); fileName = 'demo_meter.csv (synthetic)'; $('#u-src').value = 'bundled demo (synthetic, not measured)'; $('#u-prov').value = 'synthetic_demo'; } catch (e) { $('#err').innerHTML = errorsBox(e); } });
   $('#u-prev').addEventListener('click', async () => {
     $('#err').innerHTML = ''; $('#u-res').innerHTML = '';
     try {
       const p = await api('POST', '/api/meter/import/preview', { csv: $('#u-csv').value, file_name: fileName, options: importOptions() });
-      $('#u-res').innerHTML = previewHtml(p);
+      $('#u-res').innerHTML = previewHtml(p, $('#u-prov').value);
       $('#u-import').addEventListener('click', async () => {
         try {
-          const m = await api('POST', '/api/meter/import', { csv: $('#u-csv').value, file_name: fileName, source: $('#u-src').value || 'csv upload', options: importOptions() });
+          const m = await api('POST', '/api/meter/import', { csv: $('#u-csv').value, file_name: fileName, source: $('#u-src').value || 'csv upload', provenance: $('#u-prov').value || null, options: importOptions() });
           toast(`Imported ${m.rows_used} readings`, true); $('#u-res').innerHTML = ''; await lib(); await detail(m.import_id);
         } catch (e) { $('#err').innerHTML = errorsBox(e); window.scrollTo(0, 0); }
       });
@@ -98,7 +105,7 @@ async function viewUsage() {
     const exps = await api('GET', '/api/experiments');
     const c = s.baseline_cost, d = s.daily_energy_kwh;
     const hours = (s.hourly_profile_kw || []).map((v, h) => ({ hour: h, kw: v ?? 0 }));
-    $('#u-detail').innerHTML = `<div class="panel"><h2>${esc(s.import.file_name)} ${provChip('historical_measured')}</h2>${(s.warnings || []).length ? `<ul class="warnlist">${s.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    $('#u-detail').innerHTML = `<div class="panel"><h2>${esc(s.import.file_name)} ${labelBadge(s.source_label)}</h2>${(s.warnings || []).length ? `<ul class="warnlist">${s.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
       <div class="kpis">${kpi(fmt(d.mean, 1) + ' kWh', 'mean daily energy', '', `sd ${fmt(d.std, 1)} · min ${fmt(d.min, 1)} · max ${fmt(d.max, 1)}`)}${kpi(fmt(s.peak_demand.kw, 2) + ' kW', 'peak demand', '', s.peak_demand.note)}
         ${kpi(`${s.coverage.days_complete} / ${s.coverage.days_total}`, 'complete days', '', `${fmt(100 * s.coverage.mean_coverage, 0)}% mean coverage`)}
         ${c ? kpi(money(c.total), `cost under ${c.tariff_name}`, '', 'measured usage × tariff: check against your bill') : ''}</div>

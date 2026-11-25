@@ -103,6 +103,34 @@ def _m010_remove_game_data(conn: Connection) -> None:
     remove_game_data(conn)
 
 
+def _m011_ww_provenance_and_export(conn: Connection) -> None:
+    """Add the meter-file provenance label, import/export totals and per-reading export quantities. Each column is added only
+    if missing (a fresh database already has them, because migration 6 builds the tables from the current models). Existing
+    imports get provenance 'unknown', ``total_import_kwh`` = the sum of their ``energy_kwh`` and ``total_export_kwh`` = 0."""
+    from sqlalchemy import text
+
+    def columns(table: str) -> set[str]:
+        return {r[1] for r in conn.execute(text(f'PRAGMA table_info("{table}")'))}
+
+    imp = columns("ww_meter_import")
+    if "provenance" not in imp:
+        conn.execute(text("ALTER TABLE ww_meter_import ADD COLUMN provenance VARCHAR(20) NOT NULL DEFAULT 'unknown'"))
+    if "total_import_kwh" not in imp:
+        conn.execute(text("ALTER TABLE ww_meter_import ADD COLUMN total_import_kwh REAL"))
+    if "total_export_kwh" not in imp:
+        conn.execute(text("ALTER TABLE ww_meter_import ADD COLUMN total_export_kwh REAL"))
+    rdg = columns("ww_meter_reading")
+    if "export_kwh" not in rdg:
+        conn.execute(text("ALTER TABLE ww_meter_reading ADD COLUMN export_kwh REAL NOT NULL DEFAULT 0"))
+    if "export_kw" not in rdg:
+        conn.execute(text("ALTER TABLE ww_meter_reading ADD COLUMN export_kw REAL NOT NULL DEFAULT 0"))
+    conn.execute(text(
+        "UPDATE ww_meter_import SET total_import_kwh = COALESCE((SELECT SUM(energy_kwh) FROM ww_meter_reading r "
+        "WHERE r.import_id = ww_meter_import.import_id), 0) WHERE total_import_kwh IS NULL"
+    ))
+    conn.execute(text("UPDATE ww_meter_import SET total_export_kwh = 0 WHERE total_export_kwh IS NULL"))
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "experiment owner table", _m001_owner),
     Migration(2, "f1 historical sessions", _m002_f1_historical),
@@ -114,4 +142,5 @@ MIGRATIONS: list[Migration] = [
     Migration(8, "f1 keeps only OpenF1 historical data: remove its experiments and retired tables", _m008_f1_openf1_only),
     Migration(9, "f1 setup lab restored: owner table and six setup-engineering tables", _m009_f1_setup_restored),
     Migration(10, "remove live simulator data: its experiments and the six game tables", _m010_remove_game_data),
+    Migration(11, "wattwise meter provenance and solar export", _m011_ww_provenance_and_export),
 ]

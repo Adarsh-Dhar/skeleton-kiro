@@ -2,13 +2,72 @@
 
 from __future__ import annotations
 
-from typing import Literal
+import math
+from datetime import date
+from decimal import Decimal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from wattwise.adapters.household_model import DEFAULT_APPLIANCES, DEFAULT_EV, FACTORS
+from wattwise.adapters.household_model import (
+    CHARGER_MAX_KW, CHARGER_MIN_KW, DEFAULT_APPLIANCES, DEFAULT_EV, FACTORS, MAX_FLEXIBLE_APPLIANCES,
+    appliance_id, factor_limits,
+)
 
 METHODS = ("full_factorial", "fractional_factorial", "ofat", "central_composite", "box_behnken", "random")
+
+
+def _is_number(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def _decimals_ok(v: float, places: int) -> bool:
+    exp = Decimal(repr(v)).as_tuple().exponent
+    return isinstance(exp, int) and exp >= -places
+
+
+def validate_charger_capacity(value: Any) -> float | None:
+    """Charger capacity in kW: a number from 1.4 to 350 with at most 2 decimal places (None means not set)."""
+    if value is None:
+        return None
+    invalid = f"charger capacity {value} is invalid; accepted range is {CHARGER_MIN_KW} kW to {CHARGER_MAX_KW:g} kW with at most 2 decimal places"
+    if not _is_number(value) or not math.isfinite(value):
+        raise ValueError(invalid)
+    v = float(value)
+    if v < CHARGER_MIN_KW:
+        raise ValueError(f"charger capacity {v} kW is below the minimum supported value of {CHARGER_MIN_KW} kW")
+    if v > CHARGER_MAX_KW or not _decimals_ok(v, 2):
+        raise ValueError(invalid)
+    return v
+
+
+def validate_billing_consumption(value: Any) -> float | None:
+    """Consumption already used in the billing cycle (kWh): finite, 0 to 1,000,000, at most 3 decimal places."""
+    if value is None:
+        return None
+    if not _is_number(value) or not math.isfinite(value) or value < 0 or value > 1_000_000 or not _decimals_ok(float(value), 3):
+        raise ValueError(f"billing cycle consumption must be a number from 0 to 1,000,000 kWh (got {value})")
+    return float(value)
+
+
+def validate_appliances(apps: list[Any]) -> list[Any]:
+    """At most 20 flexible appliances and unique ids (uniqueness is checked on the factor token, '-' read as '_')."""
+    flexible = sum(1 for a in apps if a.flexible)
+    if flexible > MAX_FLEXIBLE_APPLIANCES:
+        raise ValueError(f"at most {MAX_FLEXIBLE_APPLIANCES} flexible appliances are supported (got {flexible})")
+    seen: set[str] = set()
+    for a in apps:
+        aid = appliance_id(a.name, a.id)
+        token = aid.replace("-", "_")
+        if token in seen:
+            raise ValueError(f"duplicate appliance id '{aid}'")
+        seen.add(token)
+    return apps
+
+
+def _require_load(ev: Any, apps: list[Any]) -> None:
+    if ev is None and not any(a.flexible for a in apps):
+        raise ValueError("at least one optimisable load is required: add a flexible appliance or an EV")
 
 
 class Period(BaseModel):
@@ -55,6 +114,7 @@ class EVSettings(BaseModel):
     desired_charge_pct: float = Field(DEFAULT_EV["desired_charge_pct"], ge=1, le=100, description="Minimum charge required at departure (constraint)")
     departure_hour: float = Field(DEFAULT_EV["departure_hour"], ge=0, lt=24, description="Hour of day the car leaves, e.g. 7.5 = 07:30")
     efficiency: float = Field(DEFAULT_EV["efficiency"], gt=0.5, le=1.0)
+    in_baseline: bool = Field(False, description="The baseline meter data already contains this EV's charging")
 
     @model_validator(mode="after")
     def _ok(self):
@@ -64,11 +124,13 @@ class EVSettings(BaseModel):
 
 
 class ApplianceIn(BaseModel):
+    id: str | None = Field(None, pattern=r"^[a-z0-9][a-z0-9_-]{0,38}$", description="Stable id; defaults to a slug of the name")
     name: str = Field(min_length=1, max_length=40)
     power_kw: float = Field(gt=0, le=10)
     duration_h: float = Field(gt=0, le=8)
     flexible: bool = True
     fixed_start: float = Field(19.0, ge=16, lt=40, description="Absolute hour (16-40) used when the appliance is not flexible")
+    in_baseline: bool = Field(False, description="The baseline meter data already contains this appliance's use")
 
 
 class HouseholdSettings(BaseModel):
@@ -76,10 +138,21 @@ class HouseholdSettings(BaseModel):
 
     tariff_id: str = Field("time-of-use", min_length=1, max_length=60)
     base_load_kw: float = Field(0.35, ge=0, le=5)
-    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=6)
-    ev: EVSettings = Field(default_factory=EVSettings)
-    charger_power_kw: float | None = Field(None, gt=0, le=22, description="Maximum power of the home charger (kW); informational")
+    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=20)
+    ev: EVSettings | None = Field(default_factory=EVSettings, description="null means the household has no EV")
+    charger_power_kw: float | None = Field(None, description="Charger capacity (kW), 1.4 to 350 with at most 2 decimals")
     baseline_import_id: str | None = Field(None, max_length=40, description="Historical meter import used as the calibrated baseline")
+
+    @field_validator("charger_power_kw", mode="before")
+    @classmethod
+    def _charger(cls, v):
+        return validate_charger_capacity(v)
+
+    @model_validator(mode="after")
+    def _loads(self):
+        validate_appliances(self.appliances)
+        _require_load(self.ev, self.appliances)
+        return self
 
 
 class HouseholdPut(HouseholdSettings):
@@ -122,11 +195,17 @@ class ExperimentRequest(BaseModel):
     hypothesis: str = Field("", max_length=1000)
     tariff_id: str | None = "time-of-use"
     tariff: TariffIn | None = Field(None, description="Inline tariff (overrides tariff_id)")
-    ev: EVSettings = Field(default_factory=EVSettings)
-    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=6)
+    ev: EVSettings | None = Field(default_factory=EVSettings, description="null means the household has no EV")
+    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=20)
+    appliance_start_mode: Literal["shared", "per_appliance"] = "shared"
     base_load_kw: float = Field(0.35, ge=0, le=5)
+    charger_capacity_kw: float | None = Field(None, description="Charger capacity (kW), 1.4 to 350 with at most 2 decimals")
     baseline_import_id: str | None = Field(None, max_length=40, description="Start from the background load measured in this historical meter import "
                                                                           "(otherwise the synthetic profile is used)")
+    baseline_excludes_modelled_appliances: bool = Field(False, description="Confirms the baseline does not contain the modelled loads (skips the overlap check)")
+    day_type: Literal["weekday", "weekend"] | None = Field(None, description="Baseline profile day type; null uses the all-days profile")
+    window_start_date: date | None = Field(None, description="Local date on which the simulated window starts (ISO)")
+    billing_cycle_consumption_kwh: float | None = Field(None, description="kWh already used in the billing cycle (slab tariffs)")
     factors: dict[str, FactorSetting] = Field(default_factory=default_factors)
     also_minimise_peak: bool = False
     design: DesignSettings = Field(default_factory=DesignSettings)
@@ -139,20 +218,40 @@ class ExperimentRequest(BaseModel):
             raise ValueError("name cannot be blank")
         return v.strip()
 
+    @field_validator("charger_capacity_kw", mode="before")
+    @classmethod
+    def _charger(cls, v):
+        return validate_charger_capacity(v)
+
+    @field_validator("billing_cycle_consumption_kwh", mode="before")
+    @classmethod
+    def _billing(cls, v):
+        return validate_billing_consumption(v)
+
     @model_validator(mode="after")
     def _factors_ok(self):
-        unknown = set(self.factors) - set(FACTORS)
+        validate_appliances(self.appliances)
+        _require_load(self.ev, self.appliances)
+        has_ev = self.ev is not None
+        catalog = factor_limits(self.charger_capacity_kw, [a.model_dump() for a in self.appliances], has_ev)
+        ev_only = set(FACTORS) - set(factor_limits(has_ev=False))
+        if self.charger_capacity_kw is not None and "factors" not in self.model_fields_set and "charge_power_kw" in self.factors:
+            self.factors["charge_power_kw"] = FactorSetting(low=CHARGER_MIN_KW, high=self.charger_capacity_kw)
+        # EV factors in a no-EV request are skipped (the default factor dict contains them), not rejected
+        active = {n: s for n, s in self.factors.items() if has_ev or n not in ev_only}
+        unknown = set(active) - set(catalog)
         if unknown:
-            raise ValueError(f"unknown factor(s): {sorted(unknown)}; allowed: {sorted(FACTORS)}")
-        for name, s in self.factors.items():
-            lim = FACTORS[name]
+            raise ValueError(f"unknown factor(s): {sorted(unknown)}; allowed: {sorted(catalog)}")
+        for name, s in active.items():
+            lim = catalog[name]
             if s.enabled and s.low >= s.high:
                 raise ValueError(f"{name}: low must be smaller than high")
             if s.enabled and (s.low < lim["low"] or s.high > lim["high"]):
                 raise ValueError(f"{name}: range must lie within [{lim['low']}, {lim['high']}]")
-        if not any(s.enabled for s in self.factors.values()):
+        enabled = sum(s.enabled for s in active.values())
+        if not enabled:
             raise ValueError("enable at least one factor")
-        if sum(s.enabled for s in self.factors.values()) < 2 and self.design.method != "ofat":
+        if has_ev and enabled < 2 and self.design.method != "ofat":
             raise ValueError("enable at least two factors (or use the one-factor-at-a-time design)")
         return self
 
@@ -160,11 +259,31 @@ class ExperimentRequest(BaseModel):
 class DayRequest(BaseModel):
     tariff_id: str | None = "time-of-use"
     tariff: TariffIn | None = None
-    ev: EVSettings = Field(default_factory=EVSettings)
-    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=6)
+    ev: EVSettings | None = Field(default_factory=EVSettings, description="null means the household has no EV")
+    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=20)
     base_load_kw: float = Field(0.35, ge=0, le=5)
+    charger_capacity_kw: float | None = Field(None, description="Charger capacity (kW), 1.4 to 350 with at most 2 decimals")
     baseline_import_id: str | None = Field(None, max_length=40, description="Use the profile measured in this meter import as background load")
+    day_type: Literal["weekday", "weekend"] | None = Field(None, description="Baseline profile day type; null uses the all-days profile")
+    window_start_date: date | None = Field(None, description="Local date on which the simulated window starts (ISO)")
+    billing_cycle_consumption_kwh: float | None = Field(None, description="kWh already used in the billing cycle (slab tariffs)")
     setup: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("charger_capacity_kw", mode="before")
+    @classmethod
+    def _charger(cls, v):
+        return validate_charger_capacity(v)
+
+    @field_validator("billing_cycle_consumption_kwh", mode="before")
+    @classmethod
+    def _billing(cls, v):
+        return validate_billing_consumption(v)
+
+    @model_validator(mode="after")
+    def _loads(self):
+        validate_appliances(self.appliances)
+        _require_load(self.ev, self.appliances)
+        return self
 
 
 class MeterRequest(BaseModel):
@@ -184,6 +303,7 @@ class MeterImportRequest(BaseModel):
     csv: str = Field(min_length=1)
     file_name: str = Field("meter.csv", min_length=1, max_length=300)
     source: str = Field("csv upload", max_length=120, description="Where the file came from, e.g. the supplier's portal")
+    provenance: str | None = Field(None, description="real_meter, synthetic_demo or unknown; checked by the meter library (blank means unknown)")
     options: dict = Field(default_factory=dict)
     force: bool = Field(False, description="import again even if the same file was imported with the same options")
 

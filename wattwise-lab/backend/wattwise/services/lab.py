@@ -7,8 +7,11 @@ onto SDK objects.
 from __future__ import annotations
 
 import asyncio
+import math
 import statistics
 import uuid
+from collections import defaultdict, deque
+from datetime import UTC, date
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -33,12 +36,34 @@ from db.config import resolve_db_url
 from db.models.common import APP_WATTWISE
 from db.scoped import ScopedExperimentRepository
 from wattwise import SIMULATED_NOTICE
-from wattwise.adapters.household_model import BASELINE, FACTORS, METRIC_UNITS, clock, simulate, summarise
+from wattwise.adapters.household_model import (
+    METRIC_UNITS,
+    STEP_H,
+    STEPS,
+    WINDOW_START,
+    ChargerCapacityError,
+    FactorConflict,  # noqa: F401  (re-exported: the API layer maps it to a validation error)
+    appliance_key,
+    baseline_setup,
+    check_setup_keys,
+    clock,
+    factor_limits,
+    household_catalog,
+    simulate,
+)
+from wattwise.adapters.tariff_model import MissingStartDate  # noqa: F401  (re-exported: the API layer maps it to a validation error)
 from wattwise.adapters.meter_adapter import MeterSimulatorAdapter
 from wattwise.adapters.meter_csv import ParsedMeter, parse_meter_csv, to_series
-from wattwise.adapters.meter_import import interpret
+from wattwise.adapters import tariff_model as TM
+from wattwise.adapters.meter_import import Reading, interpret
 from wattwise.api.schemas import DayRequest, ExperimentRequest, MeterAttachRequest, MeterRequest
 from wattwise.services import baseline, narrative, report_html
+from wattwise.services.baseline import (  # noqa: F401  (re-exported: the API layer maps these to validation errors)
+    BaselineOverlap,
+    BaselineUnavailable,
+    InvalidDayType,
+    NoCompleteDay,
+)
 from wattwise.services.household import HouseholdStore
 from wattwise.services.meter_library import MeterLibrary, options_from
 from wattwise.services.tariffs import TariffError, TariffStore  # noqa: F401  (TariffError re-exported)
@@ -56,9 +81,12 @@ class Conflict(RuntimeError):
     pass
 
 
-def measurement_definitions() -> list[MeasurementDefinition]:
+EV_ONLY_FACTORS = ("charge_start", "charge_power_kw")
+
+
+def measurement_definitions(has_ev: bool = True) -> list[MeasurementDefinition]:
     defs = [MeasurementDefinition(metric=m, unit=u, required=m in ("energy_cost", "energy_kwh", "peak_power_kw", "departure_charge_pct"))
-            for m, u in METRIC_UNITS.items() if m != "grid_power"]  # fmt: skip
+            for m, u in METRIC_UNITS.items() if m != "grid_power" and (has_ev or m != "departure_charge_pct")]  # fmt: skip
     defs.append(MeasurementDefinition(metric="grid_power", unit="kW", time_series=True, sampling_interval_seconds=900, required=False, outlier_method="none"))
     return defs
 
@@ -108,42 +136,148 @@ class LabService:
             raise NotFound(f"tariff {tariff_id}") from None
 
     def household(self, req: Any) -> dict[str, Any]:
-        hh = {"ev": req.ev.model_dump(), "tariff": self.resolve_tariff(req.tariff_id, req.tariff), "base_load_kw": req.base_load_kw,
-              "appliances": [a.model_dump() for a in req.appliances]}  # fmt: skip
+        hh = {"ev": req.ev.model_dump() if req.ev is not None else None, "tariff": self.resolve_tariff(req.tariff_id, req.tariff),
+              "base_load_kw": req.base_load_kw, "appliances": [a.model_dump() for a in req.appliances]}  # fmt: skip
+        if getattr(req, "charger_capacity_kw", None) is not None:  # only when set, so households without one are stored exactly as before
+            hh["charger_capacity_kw"] = float(req.charger_capacity_kw)
+        start = getattr(req, "window_start_date", None)
+        if start is not None:  # ISO string so the household stays JSON-serialisable; absent = derived reference date (old behaviour)
+            hh["window_start_date"] = start.isoformat() if hasattr(start, "isoformat") else str(start)
+        billing = getattr(req, "billing_cycle_consumption_kwh", None)
+        if billing is not None:
+            hh["billing_cycle_kwh"] = float(billing)
         if getattr(req, "baseline_import_id", None):
-            cal = self.calibration(req.baseline_import_id)
+            cal = self.calibration(req.baseline_import_id, getattr(req, "day_type", None))
             hh["base_profile_kw"] = cal["base_profile_kw"]
             hh["baseline_source"] = {k: v for k, v in cal.items() if k != "base_profile_kw"}
+            if billing is None and start is not None and hh["tariff"].get("tiers"):
+                default = self.billing_cycle_default(req.baseline_import_id, date.fromisoformat(hh["window_start_date"]))
+                hh["billing_cycle_kwh"] = default["kwh"]
+                if default["notice"]:
+                    hh["billing_cycle_notice"] = default["notice"]
         return hh
+
+    def billing_cycle_default(self, import_id: str, day: date) -> dict[str, Any]:
+        """Default billing-cycle consumption from a meter import; read errors give 0 kWh and a notice (Requirements 7.6, 7.7)."""
+        meta = self.meters.get(import_id)  # unknown import: propagates as for the other meter endpoints
+        try:
+            readings = self.meters.readings(import_id)
+        except Exception as exc:
+            return {"kwh": 0.0, "notice": f"no default billing-cycle consumption could be derived: the file could not be read ({exc})"}
+        return baseline.billing_cycle_default(readings, meta["timezone"], day)
+
+    # ------------------------------------------------------------------ baseline overlap check (Requirement 10)
+    @staticmethod
+    def _modelled_loads(hh: dict[str, Any]) -> list[tuple[baseline.ModelledLoad, bool]]:
+        """(load, declared_in_baseline) for every modelled appliance and the EV, at the baseline setup."""
+        setup = baseline_setup(hh)
+        out: list[tuple[baseline.ModelledLoad, bool]] = []
+        for a in hh["appliances"]:
+            start = setup.get(appliance_key(a), setup["appliance_start"]) if a["flexible"] else a["fixed_start"]
+            steps = max(1, math.ceil(a["duration_h"] / STEP_H - 1e-9))
+            out.append((baseline.ModelledLoad(a["name"], float(a["power_kw"]), steps, int(round((start - WINDOW_START) / STEP_H))),
+                        bool(a.get("in_baseline"))))
+        ev = hh.get("ev")
+        if ev is not None:
+            power = float(setup["charge_power_kw"])
+            energy = ev["battery_kwh"] * (ev["desired_charge_pct"] - ev["initial_soc_pct"]) / 100
+            if energy > 0 and power > 0:
+                alone = {**hh, "appliances": [], "base_profile_kw": [0.0] * STEPS}  # EV load only
+                ev_kw = tuple(float(s["ev"]) for s in simulate(setup, alone)["steps"])
+                steps = max(1, math.ceil(energy / (power * ev["efficiency"]) / STEP_H - 1e-9))
+                out.append((baseline.ModelledLoad("EV", power, steps, 0, ev_kw), bool(ev.get("in_baseline"))))
+        return out
+
+    def _baseline_check(self, req: Any, hh: dict[str, Any], readings: list | None, tz: str | None) -> dict[str, Any]:
+        """Study flow of design section 11. Mutates ``hh["base_profile_kw"]`` when declared loads are subtracted."""
+        loads = self._modelled_loads(hh)
+        rec: dict[str, Any] = {"status": "not_applicable", "appliances_checked": [m.name for m, d in loads if not d], "appliances_subtracted": [],
+                               "skipped_by_user_confirmation": False,
+                               "thresholds": {"overlap_min_occurrences": baseline.OVERLAP_MIN_OCCURRENCES, "overlap_rise_fraction": baseline.OVERLAP_RISE_FRACTION},
+                               "clipped": {"count": 0, "times": []}}  # fmt: skip
+        if not getattr(req, "baseline_import_id", None):
+            return rec
+        series = baseline.quarter_hour_series(readings or [], tz or "UTC")
+        if not series or all(v is None for _t, v in series):
+            raise baseline.BaselineUnavailable("baseline is unavailable: the import has no quarter-hour data to check against the modelled appliances")
+        if getattr(req, "baseline_excludes_modelled_appliances", False):
+            return {**rec, "status": "skipped", "skipped_by_user_confirmation": True}
+        declared = [m for m, d in loads if d]
+        hits = baseline.check_overlap(series, [m for m, d in loads if not d])
+        if hits:
+            exc = baseline.BaselineOverlap(hits)
+            exc.baseline_check = {**rec, "status": "blocked", "overlapping": hits}  # type: ignore[attr-defined]
+            raise exc
+        if declared:
+            res = baseline.subtract_declared(hh["base_profile_kw"], declared)
+            hh["base_profile_kw"] = res.profile_kw
+            return {**rec, "status": "subtracted", "appliances_subtracted": res.subtracted, "clipped": res.clipped}
+        return {**rec, "status": "passed"}
 
     # ------------------------------------------------------------------ historical meter library + baseline
     def meter_baseline(self, import_id: str, tariff_id: str | None = None) -> dict:
         meta = self.meters.get(import_id)
         tariff = self.resolve_tariff(tariff_id, None) if tariff_id else None
-        out = baseline.analyse(self.meters.readings(import_id), meta["timezone"], tariff)
+        out = baseline.analyse(self.meters.readings(import_id), meta["timezone"], tariff, source_label=meta.get("source_label"))
         out["import"] = {k: meta[k] for k in ("import_id", "file_name", "timezone", "reading_kind", "interval_minutes", "first_utc", "last_utc")}
         return out
 
-    def calibration(self, import_id: str) -> dict:
+    def calibration(self, import_id: str, day_type: str | None = None) -> dict:
         meta = self.meters.get(import_id)
-        a = baseline.analyse(self.meters.readings(import_id), meta["timezone"])
+        a = baseline.analyse(self.meters.readings(import_id), meta["timezone"], source_label=meta.get("source_label"))
         charger = self.households.get()["settings"].get("charger_power_kw")
         try:
-            cal = baseline.calibration(a, ev_charger_kw=charger)
+            sel = baseline.select_profile(a, day_type)  # InvalidDayType / NoCompleteDay propagate (mapped to 422 by the API)
+        except baseline.NoCompleteDay as exc:
+            raise baseline.NoCompleteDay(f"meter import {import_id} cannot be used as a baseline: {exc}") from exc
+        try:
+            cal = baseline.calibration({**a, "profile_15min_kw": sel["profile_kw"]}, day_type=sel["day_type_used"], ev_charger_kw=charger,
+                                       source_label=meta.get("source_label"))
         except ValueError as exc:
             raise ValueError(f"meter import {import_id} cannot be used as a baseline: {exc}") from exc
+        if sel["fallback"]:
+            cal["notes"] = [*cal["notes"], f"no complete {sel['requested']} day in this file: the all-days profile is used instead"]
+        cal.update(days_used=sel["days_used"], day_type_used=sel["day_type_used"], requested_day_type=sel["requested"], fallback=sel["fallback"])
         return {**cal, "import_id": import_id, "file_name": meta["file_name"]}
 
     # ------------------------------------------------------------------ creation
-    def build_spec(self, req: ExperimentRequest, exp_id: str, household: dict[str, Any]) -> ExperimentSpec:
-        factors = []
+    @staticmethod
+    def _factor(name: str, low: float, high: float, meta: dict[str, Any], base: float) -> Factor:
+        return Factor(name=name, factor_type="continuous", lower=low, upper=high, unit=meta["unit"],
+                      default=base if low <= base <= high else round((low + high) / 2, 6))  # fmt: skip
+
+    def build_spec(self, req: ExperimentRequest, exp_id: str, household: dict[str, Any], baseline_check: dict[str, Any] | None = None) -> ExperimentSpec:
+        has_ev = household.get("ev") is not None
+        catalog = household_catalog(household)
+        base_setup = baseline_setup(household)
+        per_appliance = req.appliance_start_mode == "per_appliance"
+        notes: list[str] = []
+        factors: list[Factor] = []
         for name, s in req.factors.items():
-            if s.enabled:
-                base = BASELINE[name]
-                factors.append(Factor(name=name, factor_type="continuous", lower=s.low, upper=s.high, unit=FACTORS[name]["unit"],
-                                      default=base if s.low <= base <= s.high else round((s.low + s.high) / 2, 6)))  # fmt: skip
+            if not has_ev and name in EV_ONLY_FACTORS:
+                continue  # no EV: nothing to schedule (the default factor dict still lists these)
+            if per_appliance and name == "appliance_start":
+                # the shared entry is a range template: one factor per flexible appliance, unless an explicit per-appliance entry overrides it
+                for app in household["appliances"]:
+                    key = appliance_key(app) if app.get("flexible") else None
+                    if key is None or key in req.factors:
+                        continue
+                    if s.enabled:
+                        factors.append(self._factor(key, s.low, s.high, catalog[key], catalog[key]["default"]))
+                continue
+            if not s.enabled:
+                continue
+            meta = catalog[name]
+            if meta["low"] >= meta["high"]:  # zero-width range (charger capacity at the 1.4 kW minimum): fixed, not designed
+                notes.append(f"{name} fixed at {meta['low']:g} {meta['unit']}: the allowed range has zero width")
+                continue
+            factors.append(self._factor(name, s.low, s.high, meta, base_setup.get(name, meta["default"])))
+        check_setup_keys({f.name: 0.0 for f in factors})  # FactorConflict before anything is stored
         k, d = len(factors), req.design
         method = {"full_factorial": "factorial"}.get(d.method, d.method)
+        if k < 2 and method != "ofat":  # factorial-type designs need two factors; the SDK's one-factor design is ofat
+            method = "ofat"
+            notes.append("design method changed to ofat: only one factor")
         opts: dict[str, Any] = {"replicates": d.replicates}
         if method == "factorial":
             opts.update(continuous_levels=d.levels, center_points=d.center_points)
@@ -163,21 +297,29 @@ class LabService:
         return ExperimentSpec(
             experiment_id=exp_id, name=req.name, hypothesis=req.hypothesis, description="WATTWISE LAB experiment on a SIMULATED household.",
             factors=factors, objectives=objectives,
-            constraints=[Constraint(metric="departure_charge_pct", kind="output", minimum=req.ev.desired_charge_pct)],
-            measurement_definitions=measurement_definitions(), design_method=method, design_options=opts,
+            constraints=[Constraint(metric="departure_charge_pct", kind="output", minimum=req.ev.desired_charge_pct)] if has_ev else [],
+            measurement_definitions=measurement_definitions(has_ev), design_method=method, design_options=opts,
             adapter_name=ADAPTER_PREFIX + exp_id, run_budget=d.run_budget, random_seed=d.seed,
             execution=ExecutionPolicy(max_retries=req.simulator.max_retries, max_concurrency=4, run_timeout_seconds=120),
-            metadata={"app": "wattwise-lab", "simulated": True, "desired_charge_pct": req.ev.desired_charge_pct,
+            metadata={"app": "wattwise-lab", "simulated": True, "desired_charge_pct": req.ev.desired_charge_pct if has_ev else None,
                       "baseline": "calibrated" if household.get("base_profile_kw") else "synthetic",
-                      "lab": {"household": household, **req.simulator.model_dump()}},
+                      "lab": {"household": household, **req.simulator.model_dump(), **({"notes": notes} if notes else {}),
+                                **({"baseline_check": baseline_check} if baseline_check is not None else {})}},
         )  # fmt: skip
 
     def create(self, req: ExperimentRequest) -> dict:
         exp_id = req.experiment_id or "ww-" + uuid.uuid4().hex[:8]
         if self.repo.has_experiment(exp_id) or self.repo.exists_anywhere(exp_id):
             raise Conflict(f"an experiment with id '{exp_id}' already exists")
+        readings = tz = None
+        if req.baseline_import_id:
+            tz = self.meters.get(req.baseline_import_id)["timezone"]
+            readings = self.meters.readings(req.baseline_import_id)
+            if not readings:
+                raise baseline.BaselineUnavailable("baseline is unavailable: the meter import has no readings")
         household = self.household(req)
-        spec = self.build_spec(req, exp_id, household)
+        check = self._baseline_check(req, household, readings, tz)  # BaselineOverlap / BaselineUnavailable before anything is stored
+        spec = self.build_spec(req, exp_id, household, check)
         self._register_adapter(spec)
         try:
             self.svc.design(spec)
@@ -216,13 +358,15 @@ class LabService:
         feas = [r for r in rows if r["status"] == "completed" and r["feasible"] and "energy_cost" in r["outcomes"]]
         best = min(feas, key=lambda r: r["outcomes"]["energy_cost"]) if feas else None
         spec, hh = res.spec, self._hh(res)
-        base = simulate(BASELINE, hh)["metrics"]
+        base = simulate(baseline_setup(hh), hh)["metrics"]
+        catalog = household_catalog(hh)
         kwh = sum(r["outcomes"].get("energy_kwh", 0.0) for r in rows if r["status"] == "completed")
         return {
             "id": spec.experiment_id, "name": spec.name, "hypothesis": spec.hypothesis, "status": res.status.value, "created_at": spec.created_at.isoformat(),
             "design_method": res.plan.method, "run_budget": spec.run_budget, "runs_total": len(res.runs), "counts": counts,
             "desired_charge_pct": spec.metadata.get("desired_charge_pct"), "tariff": hh["tariff"]["name"], "simulated_kwh": round(kwh, 1),
-            "factors": [{"name": f.name, "low": f.lower, "high": f.upper, "unit": f.unit, "label": FACTORS[f.name]["label"], "clock": FACTORS[f.name]["clock"]} for f in spec.factors],
+            "factors": [{"name": f.name, "low": f.lower, "high": f.upper, "unit": f.unit, "label": catalog[f.name]["label"], "clock": catalog[f.name]["clock"]}
+                        for f in spec.factors],
             "baseline_cost": round(base["energy_cost"], 3),
             "best": {"run_id": best["run_id"], "cost": best["outcomes"]["energy_cost"], "kwh": best["outcomes"].get("energy_kwh"), "peak": best["outcomes"].get("peak_power_kw"),
                      "charge": best["outcomes"].get("departure_charge_pct"), "schedule": best["schedule"], "configuration": best["configuration"],
@@ -248,7 +392,10 @@ class LabService:
         d["design"] = {"method": res.plan.method, "seed": res.plan.random_seed, "runs_planned": len(res.plan.runs), "randomization": res.plan.randomization.get("scheme"),
                        "control": res.plan.control_configuration, **{k: info[k] for k in keep if k in info}}  # fmt: skip
         d["household"] = self._hh(res)
-        d["simulator"] = {k: v for k, v in res.spec.metadata["lab"].items() if k != "household"}
+        d["simulator"] = {k: v for k, v in res.spec.metadata["lab"].items() if k not in ("household", "notes", "baseline_check")}
+        if res.spec.metadata["lab"].get("notes"):
+            d["notes"] = list(res.spec.metadata["lab"]["notes"])
+        d["baseline_check"] = res.spec.metadata["lab"].get("baseline_check")  # None for studies created before the overlap check existed
         d["simulated_notice"] = SIMULATED_NOTICE
         return d
 
@@ -266,10 +413,22 @@ class LabService:
 
     def day(self, req: DayRequest) -> dict:
         hh = self.household(req)
+        check_setup_keys(req.setup)  # FactorConflict: shared and per-appliance start times in one setup
+        # EV-only keys stay valid for a no-EV household (the model ignores them), so a client can send a full setup
+        catalog = factor_limits(hh.get("charger_capacity_kw"), hh["appliances"], True)
+        cap = hh.get("charger_capacity_kw")
         for k, v in req.setup.items():
-            if k not in FACTORS or not (FACTORS[k]["low"] <= v <= FACTORS[k]["high"]):
+            if k not in catalog or not (catalog[k]["low"] <= v <= catalog[k]["high"]):
+                if k == "charge_power_kw" and cap is not None and v > cap and hh["ev"] is not None and v >= catalog[k]["low"]:
+                    raise ChargerCapacityError(f"charging power {v:g} kW exceeds the charger capacity {cap:g} kW")
                 raise ValueError(f"setup.{k} is not a valid schedule parameter value")
-        return {**self._profile(simulate(req.setup, hh)), "tariff": hh["tariff"], "setup": {**BASELINE, **req.setup}, "simulated": True}
+        return {**self._profile(simulate(req.setup, hh)), "tariff": hh["tariff"], "setup": self._setup_view({**baseline_setup(hh), **req.setup}, hh),
+                "simulated": True}
+
+    @staticmethod
+    def _setup_view(setup: dict[str, float], hh: dict[str, Any]) -> dict[str, float]:
+        """The setup as shown to the user: without EV-only values when the household has no EV."""
+        return setup if hh.get("ev") is not None else {k: v for k, v in setup.items() if k not in EV_ONLY_FACTORS}
 
     def run_profile(self, exp_id: str, run_id: str) -> dict:
         res = self._result(exp_id)
@@ -277,7 +436,8 @@ class LabService:
         if run is None:
             raise NotFound(run_id)
         hh = self._hh(res)
-        return {**self._profile(simulate(run.configuration, hh)), "tariff": hh["tariff"], "setup": {**BASELINE, **run.configuration}, "run_id": run_id, "model_profile": True}
+        return {**self._profile(simulate(run.configuration, hh)), "tariff": hh["tariff"], "setup": self._setup_view({**baseline_setup(hh), **run.configuration}, hh),
+                "run_id": run_id, "model_profile": True}
 
     def overview(self) -> dict:
         exps = self.list()
@@ -289,7 +449,7 @@ class LabService:
                                                           {"name": "Tumble dryer", "power_kw": 2.0, "duration_h": 1.5, "flexible": False, "fixed_start": 18.0}]}  # fmt: skip
         return {"experiments": exps, "kpis": {"experiments": len(exps), "runs": sum(e["counts"]["completed"] for e in exps), "best_saving_pct": max(best) if best else None,
                                               "simulated_kwh": round(sum(e["simulated_kwh"] for e in exps), 1)},
-                "baseline_day": {**self._profile(simulate(BASELINE, default_hh)), "tariff": default_hh["tariff"], "setup": dict(BASELINE)}, "notice": SIMULATED_NOTICE}  # fmt: skip
+                "baseline_day": {**self._profile(simulate(baseline_setup(default_hh), default_hh)), "tariff": default_hh["tariff"], "setup": baseline_setup(default_hh)}, "notice": SIMULATED_NOTICE}  # fmt: skip
 
     # ------------------------------------------------------------------ execution
     def execute(self, exp_id: str) -> dict:
@@ -316,19 +476,22 @@ class LabService:
         return {"retried": len(failed)}
 
     # ------------------------------------------------------------------ smart-meter CSV
-    def _meter_read(self, csv_text: str, unit: str, options: dict | None = None) -> tuple[Any, list[Measurement], list[str], dict[str, int]]:
+    def _meter_read(self, csv_text: str, unit: str, options: dict | None = None) -> tuple[Any, list[Measurement], list[str], dict[str, Any]]:
         """Simple ``timestamp,power_kw|power_w`` parsing, or (when ``options`` is given) the configurable interpreter used by
         the historical meter library: column mapping, time zones/DST, interval energy, cumulative registers. With options,
         timestamps are converted to the chosen local time zone so readings are priced in the right tariff period."""
         interpretation: dict[str, Any] = {}
+        own_minutes: dict[Any, deque[float]] = defaultdict(deque)  # start (UTC) -> the reading's own interval, in file order
         if options is not None:
             opt = options_from(options)
             res = interpret(csv_text, opt)
             tz = ZoneInfo(opt.timezone)
+            for r in res.readings:
+                own_minutes[r.start_utc.astimezone(UTC)].append(r.interval_minutes)
             parsed = ParsedMeter(readings=[(r.start_utc.astimezone(tz), r.kw) for r in res.readings], unit="kW")
             uneven = sum(1 for r in res.readings if abs(r.interval_minutes - (res.interval_minutes or r.interval_minutes)) > 1e-6)
             parsed.errors = [*res.warnings] + ([f"{uneven} reading(s) span an irregular interval (e.g. a gap in a cumulative register); "
-                                                "they are priced as one normal interval"] if uneven else [])
+                                                "each is priced for its own interval"] if uneven else [])
             interpretation = {"interpretation": res.options["resolved"], "summary": res.summary(), "row_log": res.row_log, "gaps": res.gaps,
                               "timezone": opt.timezone}
         else:
@@ -345,26 +508,52 @@ class LabService:
         valid, assessed, warnings = eng.assess(ms, "preview")
         quality = {"duplicates": sum("duplicate" in m.quality_flags for m in assessed), "out_of_order": sum("out_of_order" in m.quality_flags for m in assessed),
                    "unit_converted": sum("unit_converted" in m.quality_flags for m in assessed), "invalid": len(assessed) - len(valid)}  # fmt: skip
-        return parsed, sorted(valid, key=lambda m: m.timestamp), warnings + parsed.errors, quality | {"interval_s": interval, **interpretation}
+        valid = sorted(valid, key=lambda m: m.timestamp)
+        # One Reading per valid measurement, each with its own interval (the file's typical interval for simple CSVs).
+        priced: list[Reading] = []
+        for i, m in enumerate(valid):
+            q = own_minutes.get(m.timestamp.astimezone(UTC))
+            minutes = q.popleft() if q else interval / 60
+            kw = float(m.value)  # kW (SDK converted W)
+            priced.append(Reading(start_utc=m.timestamp.astimezone(UTC), interval_minutes=minutes, kwh=kw * minutes / 60, kw=kw, original_ts=m.timestamp.isoformat(), source_row=i))
+        return parsed, valid, warnings + parsed.errors, quality | {"interval_s": interval, "_readings": priced, **interpretation}
 
-    def _meter_summary(self, valid: list[Measurement], interval_s: float, tariff: dict[str, Any]) -> dict[str, Any]:
-        readings = [(m.timestamp.hour + m.timestamp.minute / 60 + m.timestamp.second / 3600, float(m.value)) for m in valid]  # kW (SDK converted W)
-        s = summarise(readings, tariff, step_h=interval_s / 3600)
+    def _meter_summary(self, valid: list[Measurement], interval_s: float, tariff: dict[str, Any], readings: list[Reading] | None = None) -> dict[str, Any]:
+        """Price each reading for ``[start, start + its own interval)`` through ``price_reading`` (gaps cost nothing). ``interval_s`` (the
+        typical interval) is reported only; it prices nothing."""
+        if readings is None:  # fixed-interval fallback for callers without Reading objects
+            readings = [Reading(m.timestamp, interval_s / 60, float(m.value) * interval_s / 3600, float(m.value), "", i) for i, m in enumerate(valid)]
+        starts = [m.timestamp for m in valid]
+        charge = credit = energy = peak = 0.0
+        cum = 0.0  # import carried across readings, as the previous summarise() loop did
+        by_period: dict[str, dict[str, float]] = {}
         hourly: dict[int, list[float]] = {}
-        for t, kw in readings:
-            hourly.setdefault(int(t) % 24, []).append(kw)
-        return {"energy_kwh": s["energy_kwh"], "energy_cost": s["energy_cost"], "energy_charge": s["energy_charge"], "demand_charge": s["demand_charge"],
-                "peak_power_kw": s["peak_power_kw"], "average_kw": sum(k for _, k in readings) / len(readings), "readings": len(readings),
-                "hours_covered": len(readings) * interval_s / 3600, "interval_minutes": interval_s / 60,
-                "cost_by_period": {k: {a: round(b, 4) for a, b in v.items()} for k, v in s["cost_by_period"].items()},
+        for start, r in zip(starts, readings, strict=True):
+            energy += r.kwh
+            peak = max(peak, r.kw)
+            hourly.setdefault(start.hour, []).append(r.kw)
+            for sl in TM.price_reading(tariff, start, r.interval_minutes * 60, r.kwh, cum):
+                cum += max(sl.kwh, 0.0)
+                charge += sl.charge
+                credit += sl.credit
+                d = by_period.setdefault(sl.label, {"kwh": 0.0, "cost": 0.0})
+                d["kwh"] += sl.kwh
+                d["cost"] += sl.charge - sl.credit
+        parts = TM.finish(tariff, charge, credit, peak, 1.0, single_day=True)
+        hours = sum(r.interval_minutes for r in readings) / 60
+        return {"energy_kwh": energy, "energy_cost": parts["total"], "energy_charge": charge, "demand_charge": parts["demand_charge"],
+                "peak_power_kw": peak, "average_kw": sum(r.kw for r in readings) / len(readings), "readings": len(readings),
+                "hours_covered": hours, "interval_minutes": interval_s / 60,
+                "cost_by_period": {k: {a: round(b, 4) for a, b in v.items()} for k, v in by_period.items()},
                 "hourly_profile": [{"hour": h, "kw": round(sum(v) / len(v), 3)} for h, v in sorted(hourly.items())]}  # fmt: skip
 
     def meter_preview(self, req: MeterRequest) -> dict:
         parsed, valid, warnings, quality = self._meter_read(req.csv, req.unit, req.options)
         tariff = self.resolve_tariff(req.tariff_id, req.tariff)
         step = max(1, len(valid) // 480)
-        return {"summary": self._meter_summary(valid, quality["interval_s"], tariff), "quality": quality, "warnings": warnings, "errors": parsed.errors, "tariff": tariff,
-                "unit": parsed.unit, "series": [{"t": m.timestamp.isoformat(), "kw": round(float(m.value), 4)} for m in valid[::step]], "reading_kind": "imported"}  # fmt: skip
+        return {"summary": self._meter_summary(valid, quality["interval_s"], tariff, quality.pop("_readings")), "quality": quality, "warnings": warnings, "errors": parsed.errors, "tariff": tariff,
+                "unit": parsed.unit, "series": [{"t": m.timestamp.isoformat(), "kw": round(float(m.value), 4)} for m in valid[::step]], "reading_kind": "imported",
+                "provenance": "historical_measured", "source_label": "unknown"}  # fmt: skip  (ad-hoc CSV: no library record, so unlabelled)
 
     async def attach_meter(self, exp_id: str, run_id: str, req: MeterAttachRequest) -> dict:
         res = self._result(exp_id)
@@ -372,14 +561,14 @@ class LabService:
             raise NotFound(run_id)
         parsed, valid, warnings, quality = self._meter_read(req.csv, req.unit, req.options)
         tariff = self._hh(res)["tariff"]  # the experiment's own tariff, so imported and simulated runs are priced identically
-        s = self._meter_summary(valid, quality["interval_s"], tariff)
+        s = self._meter_summary(valid, quality["interval_s"], tariff, quality.pop("_readings"))
         meta = {"synthetic": False, "reading_kind": "imported", "imported": True}
         src = f"csv:{req.filename}"
         ms = [Measurement(run_id=run_id, metric=m, value=v, unit=METRIC_UNITS[m], source=src, metadata=dict(meta))
               for m, v in (("energy_kwh", s["energy_kwh"]), ("energy_cost", s["energy_cost"]), ("peak_power_kw", s["peak_power_kw"]), ("departure_charge_pct", req.departure_charge_pct))]  # fmt: skip
         ms += to_series(run_id, parsed, src)
         updated = await self.svc.ingest_measurements(exp_id, run_id, ms)
-        return {"run": self._run_row(updated), "warnings": warnings, "summary": s}
+        return {"run": self._run_row(updated), "warnings": warnings, "summary": s, "provenance": "historical_measured", "source_label": "unknown"}
 
     # ------------------------------------------------------------------ analysis & optimisation
     def _completed(self, exp_id: str) -> ExperimentResult:

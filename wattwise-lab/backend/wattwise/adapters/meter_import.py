@@ -55,6 +55,8 @@ class ImportOptions:
     interval_minutes: float | None = None  # auto: median spacing
     resample_minutes: float | None = None
     rollover_kwh: float | None = None  # cumulative meters only
+    export_column: str | None = None  # separate export column (same unit/kind as value_column); strict mode
+    signed: bool = False  # one signed column: positive = import, negative = export; strict mode
 
 
 @dataclass
@@ -66,6 +68,8 @@ class Reading:
     original_ts: str
     source_row: int
     flags: list[str] = field(default_factory=list)
+    export_kwh: float = 0.0
+    export_kw: float = 0.0
 
 
 @dataclass
@@ -197,6 +201,10 @@ def _number(raw: str, decimal: str) -> float:
     return float(s)
 
 
+CANONICAL_OPTIONS = ImportOptions(timestamp_column="timestamp", value_column="import_kwh", reading_kind="interval_energy", unit="kWh",
+                                  timezone="UTC", export_column="export_kwh")
+
+
 def interpret(text: str, opt: ImportOptions | None = None) -> ImportResult:
     opt = opt or ImportOptions()
     if len(text.encode()) > MAX_BYTES:
@@ -209,6 +217,19 @@ def interpret(text: str, opt: ImportOptions | None = None) -> ImportResult:
         raise MeterImportError("empty file")
     headers = [h for h in reader.fieldnames if h is not None]
     ts_col, val_col, kind, unit, notes = resolve_columns(headers, opt)
+    strict = bool(opt.export_column) or opt.signed
+    exp_col: str | None = None
+    if strict:
+        if kind == "cumulative":
+            raise MeterImportError("export is not supported for cumulative registers")
+        if opt.export_column:
+            by_lower = {h.strip().lower(): h for h in headers}
+            exp_col = opt.export_column if opt.export_column in headers else by_lower.get(opt.export_column.strip().lower())
+            if exp_col is None:
+                raise MeterImportError(f"export column '{opt.export_column}' is not in the file (columns: {', '.join(headers)})")
+            if exp_col in (ts_col, val_col):
+                raise MeterImportError(f"export column '{exp_col}' must differ from the timestamp and value columns")
+    export_by_line: dict[int, float] = {}
     log = _Log()
     warnings = list(notes)
     factor = 0.001 if unit in ("W", "Wh") else 1.0
@@ -238,6 +259,11 @@ def interpret(text: str, opt: ImportOptions | None = None) -> ImportResult:
                 log.add(line, "transformed", flag)
         else:
             utc = ts.astimezone(UTC)
+        if strict:
+            v, e = _strict_pair(row, line, val_col, exp_col, opt)
+            raw_rows.append((utc, v * factor, ts_raw, line))
+            export_by_line[line] = e * factor
+            continue
         try:
             v = _number(v_raw, opt.decimal)
         except ValueError:
@@ -296,7 +322,10 @@ def interpret(text: str, opt: ImportOptions | None = None) -> ImportResult:
             start = t - shift
             kwh = v * interval / 60 if kind == "power" else v
             kw = v if kind == "power" else v / (interval / 60)
-            readings.append(Reading(start, interval, kwh, kw, raw, line))
+            e = export_by_line.get(line, 0.0)
+            ekwh = e * interval / 60 if kind == "power" else e
+            ekw = e if kind == "power" else e / (interval / 60)
+            readings.append(Reading(start, interval, kwh, kw, raw, line, export_kwh=ekwh, export_kw=ekw))
             if i:
                 gap = (t - dedup[i - 1][0]).total_seconds() / 60
                 if gap > interval * 1.5:
@@ -328,12 +357,53 @@ def interpret(text: str, opt: ImportOptions | None = None) -> ImportResult:
     if opt.resample_minutes:
         readings, extra = resample(readings, opt.resample_minutes, interval)
         warnings += extra
+    readings = _drop_bad_intervals(readings, log)
     if log.dropped:
         warnings.append(f"row log truncated: {log.dropped} more entries not shown")
     return ImportResult(options=asdict(opt) | {"resolved": {"timestamp_column": ts_col, "value_column": val_col, "reading_kind": kind, "unit": unit,
                                                             "delimiter": delim}},
                         columns=headers, readings=readings, rows_total=total, rows_skipped=log.skipped, row_log=log.rows, warnings=warnings,
                         gaps=gaps, interval_minutes=interval)  # fmt: skip
+
+
+def _strict_pair(row: dict, line: int, val_col: str, exp_col: str | None, opt: ImportOptions) -> tuple[float, float]:
+    """(import, export) in the file's unit for separate-column or signed mode; raises naming row and column (9.4, 9.5)."""
+    def get(col: str, allow_negative: bool) -> float:
+        raw = (row.get(col) or "").strip()
+        try:
+            x = _number(raw, opt.decimal)
+        except ValueError:
+            raise MeterImportError(f"row {line}, column '{col}': value is not a number ({raw!r})") from None
+        if not math.isfinite(x):
+            raise MeterImportError(f"row {line}, column '{col}': value is not finite ({raw!r})")
+        if x < 0 and not allow_negative:
+            raise MeterImportError(f"row {line}, column '{col}': negative value ({raw!r})")
+        return x
+    if opt.signed:
+        x = get(val_col, True)
+        return (x, 0.0) if x >= 0 else (0.0, -x)
+    imp = get(val_col, False)
+    return imp, get(exp_col, False)  # type: ignore[arg-type]
+
+
+def _drop_bad_intervals(readings: list[Reading], log: _Log) -> list[Reading]:
+    """Drop readings whose interval is non-positive or non-finite (8.4); log each timestamp, keep the rest unchanged."""
+    out = []
+    for r in readings:
+        if math.isfinite(r.interval_minutes) and r.interval_minutes > 0:
+            out.append(r)
+        else:
+            log.add(r.source_row, "skipped", f"invalid interval ({r.interval_minutes!r} min) for reading at {r.start_utc.isoformat()}; excluded")
+    return out
+
+
+def format_canonical(readings: list[Reading]) -> str:
+    """Canonical CSV: timestamp,interval_minutes,import_kwh,export_kwh (6 decimals, UTC 'Z')."""
+    lines = ["timestamp,interval_minutes,import_kwh,export_kwh"]
+    for r in readings:
+        ts = r.start_utc.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        lines.append(f"{ts},{r.interval_minutes:.6f},{r.kwh:.6f},{r.export_kwh:.6f}")
+    return "\n".join(lines) + "\n"
 
 
 def _typical_interval(diffs: list[float]) -> float | None:
@@ -364,8 +434,9 @@ def resample(readings: list[Reading], minutes: float, native: float) -> tuple[li
     buckets: dict[datetime, dict[str, Any]] = {}
     for r in readings:
         k = epoch + width * int((r.start_utc - epoch) / width)
-        b = buckets.setdefault(k, {"kwh": 0.0, "covered": 0.0, "first": r})
+        b = buckets.setdefault(k, {"kwh": 0.0, "ekwh": 0.0, "covered": 0.0, "first": r})
         b["kwh"] += r.kwh
+        b["ekwh"] += r.export_kwh
         b["covered"] += r.interval_minutes
     out = []
     partial = 0
@@ -375,7 +446,8 @@ def resample(readings: list[Reading], minutes: float, native: float) -> tuple[li
         if b["covered"] < minutes - 1e-6:
             flags.append(f"partial:{round(100 * b['covered'] / minutes)}%")
             partial += 1
-        out.append(Reading(k, minutes, b["kwh"], b["kwh"] / (minutes / 60), b["first"].original_ts, b["first"].source_row, flags))
+        out.append(Reading(k, minutes, b["kwh"], b["kwh"] / (minutes / 60), b["first"].original_ts, b["first"].source_row, flags,
+                           b["ekwh"], b["ekwh"] / (minutes / 60)))
     notes = [f"resampled to {minutes:g}-minute buckets"]
     if partial:
         notes.append(f"{partial} resampled buckets are only partly covered by data (flagged 'partial')")

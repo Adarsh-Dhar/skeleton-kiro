@@ -206,3 +206,41 @@ def test_tariff_editor_keeps_and_edits_advanced_fields(page):
     assert saved["tax_pct"] == 7.5 and saved["fixed_daily_charge"] == 0.25 and saved["fixed_monthly_charge"] == 9.0
     assert saved["tiers"] == body["tiers"] and saved["billing_days"] == 30
     assert page.errors == [], page.errors
+def _import_with_label(page, value):
+    """Fill the demo CSV, pick a provenance in the select, preview, import; return (preview chips, detail chips)."""
+    fresh(page, "#/usage")
+    page.wait_for_selector("#u-demo")
+    page.click("#u-demo")
+    page.wait_for_function("document.querySelector('#u-csv').value.length > 100")
+    page.select_option("#u-prov", value)  # overrides what the demo button set
+    page.click("#u-prev")
+    page.wait_for_selector("#u-res h2 .chip")
+    preview = page.eval_on_selector_all("#u-res h2 .chip", "els => els.map(e => [e.textContent, e.className])")
+    page.click("#u-import")
+    page.wait_for_selector("#u-detail h2 .chip")
+    detail = page.eval_on_selector_all("#u-detail h2 .chip", "els => els.map(e => [e.textContent, e.className])")
+    return preview, detail
+@pytest.mark.parametrize("value,text,css", [("real_meter", "MEASURED", "prov-m"), ("synthetic_demo", "SYNTHETIC DEMO", "prov-s"), ("unknown", "UNVERIFIED SOURCE", "prov-u"),
+                                            ("", "UNVERIFIED SOURCE", "prov-u")])
+def test_provenance_badge_matches_label_on_preview_and_detail(page, value, text, css):
+    """Exactly one badge per screen, with the label's text and class; only a real_meter file reads MEASURED (3.4 to 3.6)."""
+    preview, detail = _import_with_label(page, value)
+    for chips in (preview, detail):
+        assert len(chips) == 1, chips
+        assert chips[0][0] == text and css in chips[0][1].split(), chips
+    if text != "MEASURED":
+        assert "MEASURED" not in page.inner_text("#u-detail h2")
+    assert page.errors == [], page.errors
+def test_demo_button_selects_synthetic_demo_and_imports_with_that_label(page):
+    fresh(page, "#/usage")
+    page.wait_for_selector("#u-demo")
+    page.click("#u-demo")
+    page.wait_for_function("document.querySelector('#u-csv').value.length > 100")
+    assert page.input_value("#u-prov") == "synthetic_demo"
+    page.click("#u-prev")
+    page.wait_for_selector("#u-res h2 .chip.prov-s")
+    page.click("#u-import")
+    page.wait_for_selector("#u-detail h2 .chip.prov-s")
+    labels = page.evaluate("fetch('/api/meter/imports').then(r => r.json()).then(l => Promise.all(l.map(m => fetch('/api/meter/imports/' + m.import_id + '/summary').then(r => r.json()))))")
+    assert labels and labels[0]["source_label"] == "synthetic_demo", [x["source_label"] for x in labels]
+    assert page.errors == [], page.errors

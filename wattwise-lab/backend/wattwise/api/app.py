@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -43,7 +44,19 @@ from wattwise.api.schemas import (
 )
 from wattwise.services.comparison import build as comparison_build
 from wattwise.services.comparison_report import render as comparison_html
-from wattwise.services.lab import Conflict, LabService, NotFound
+from wattwise.services.lab import (
+    BaselineOverlap,
+    BaselineUnavailable,
+    ChargerCapacityError,
+    Conflict,
+    FactorConflict,
+    InvalidDayType,
+    LabService,
+    MissingStartDate,
+    NoCompleteDay,
+    NotFound,
+)
+from wattwise.services.meter_library import PROVENANCE_LABELS, ProvenanceError, provenance_badge
 from wattwise.services.meter_library import preview as meter_preview_fn
 from wattwise.services.tariffs import TariffError
 
@@ -97,6 +110,24 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
     async def _design(_: Request, exc: Exception):
         return JSONResponse({"detail": [_issue("design", str(exc))]}, status_code=422)
 
+    @app.exception_handler(BaselineOverlap)
+    async def _overlap(_: Request, exc: BaselineOverlap):
+        body: dict = {"detail": [_issue("baseline", str(exc))]}
+        if getattr(exc, "baseline_check", None) is not None:
+            body["baseline_check"] = exc.baseline_check
+        return JSONResponse(body, status_code=422)
+
+    def _field_error(field: str):
+        async def handler(_: Request, exc: Exception):
+            return JSONResponse({"detail": [_issue(field, str(exc))]}, status_code=422)
+
+        return handler
+
+    for _exc, _field in ((BaselineUnavailable, "baseline"), (ProvenanceError, "provenance"), (FactorConflict, "appliance_start"),
+                         (ChargerCapacityError, "charger_capacity_kw"), (MissingStartDate, "window_start_date"),
+                         (NoCompleteDay, "baseline"), (InvalidDayType, "day_type")):
+        app.add_exception_handler(_exc, _field_error(_field))
+
     @app.exception_handler(ValueError)
     async def _val(_: Request, exc: ValueError):
         return JSONResponse({"detail": [_issue("request", str(exc))]}, status_code=422)
@@ -134,6 +165,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
             "optimisers": [{"id": "bayesian", "description": "Gaussian-process surrogate + Expected Improvement, constraint-aware"},
                            {"id": "optuna", "description": "Optuna sampler seeded with your results"},
                            {"id": "random", "description": "Random unseen feasible schedules"}, {"id": "grid", "description": "Next unseen grid point"}],
+            "provenance_badges": {k: provenance_badge(k) for k in PROVENANCE_LABELS},
             "meter_columns": ["timestamp", "power_kw | power_w | power"],
         }  # fmt: skip
 
@@ -224,7 +256,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
 
     @app.post("/api/meter/import", status_code=201)
     def meter_import(req: MeterImportRequest):
-        return lab.meters.import_csv(req.csv, req.file_name, req.options, req.source, req.force)
+        return lab.meters.import_csv(req.csv, req.file_name, req.options, req.source, req.force, req.provenance)
 
     @app.get("/api/meter/imports")
     def meter_imports():
@@ -243,8 +275,12 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
         return lab.meter_baseline(import_id, tariff_id)
 
     @app.get("/api/meter/imports/{import_id}/calibration")
-    def meter_import_calibration(import_id: str):
-        return lab.calibration(import_id)
+    def meter_import_calibration(import_id: str, day_type: str | None = None):
+        return lab.calibration(import_id, day_type)
+
+    @app.get("/api/meter/imports/{import_id}/billing-cycle-default")
+    def meter_import_billing_cycle_default(import_id: str, day: date):
+        return lab.billing_cycle_default(import_id, day)
 
     @app.delete("/api/meter/imports/{import_id}")
     def meter_import_delete(import_id: str):

@@ -7,18 +7,29 @@ from typing import Any
 from trialforge import AnalysisResult, ExperimentResult, RunStatus
 
 from wattwise import SIMULATED_NOTICE
-from wattwise.adapters.household_model import BASELINE, FACTORS, clock, simulate
+from wattwise.adapters.household_model import APPLIANCE_KEY_PREFIX, BASELINE, FACTORS, baseline_setup, clock, household_catalog, simulate
 
 LABEL = {k: v["label"] for k, v in FACTORS.items()}
 
 
-def fmt_value(name: str, v: float) -> str:
-    f = FACTORS[name]
+def _meta(name: str, catalog: dict[str, dict[str, Any]] | None) -> dict[str, Any] | None:
+    if catalog is not None and name in catalog:
+        return catalog[name]
+    if name in FACTORS:
+        return FACTORS[name]
+    return FACTORS["appliance_start"] if name.startswith(APPLIANCE_KEY_PREFIX) else None  # per-appliance start: same unit and clock format
+
+
+def fmt_value(name: str, v: float, catalog: dict[str, dict[str, Any]] | None = None) -> str:
+    f = _meta(name, catalog)
+    if f is None:
+        return f"{v:g}"
     return clock(v) if f.get("clock") else f"{v:.1f} {f['unit']}"
 
 
-def schedule_text(cfg: dict[str, float]) -> dict[str, str]:
-    return {k: fmt_value(k, v) for k, v in cfg.items()}
+def schedule_text(cfg: dict[str, float], catalog: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
+    """Readable values for a setup. ``catalog`` is the household's factor catalog (per-appliance start factors are formatted like ``appliance_start``)."""
+    return {k: fmt_value(k, v, catalog) for k, v in cfg.items()}
 
 
 def run_outcomes(run) -> dict[str, float]:
@@ -59,6 +70,9 @@ def factor_effects(analysis: AnalysisResult, alpha: float, metric: str = "energy
 def recommendation(result: ExperimentResult, analysis: AnalysisResult, household: dict[str, Any], alpha: float = 0.05) -> dict[str, Any]:
     """Cheapest *feasible* measured schedule with the evidence behind it."""
     spec = result.spec
+    has_ev = household.get("ev") is not None
+    catalog = household_catalog(household)
+    label = {**LABEL, **{k: v["label"] for k, v in catalog.items()}}
     desired = next((c.minimum for c in spec.constraints if c.metric == "departure_charge_pct"), None)
     done = [r for r in result.runs if r.status == RunStatus.COMPLETED]
     caveats = [SIMULATED_NOTICE]
@@ -66,22 +80,26 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, household
     if not done:
         return {"status": "no_data", "headline": "No completed runs yet.", "reasons": [], "caveats": caveats, "effects": fx}
     if not analysis.best_run_id:
-        return {"status": "no_feasible", "headline": f"No schedule reached the required departure charge of {desired:g}%.",
+        need = f" the required departure charge of {desired:g}%" if desired is not None else " the constraints"
+        return {"status": "no_feasible", "headline": f"No schedule reached{need}.",
                 "reasons": ["Every completed schedule left the car below the required charge.", "Try earlier charging, higher charger power, or a lower requirement."],
                 "caveats": caveats, "effects": fx}  # fmt: skip
     best = next(r for r in result.runs if r.run_id == analysis.best_run_id)
     o = run_outcomes(best)
-    base = simulate(BASELINE, household)["metrics"]
+    bs = baseline_setup(household)
+    base = simulate(bs, household)["metrics"]
     saving = base["energy_cost"] - o["energy_cost"]
     reasons = [
         f"Cheapest feasible schedule: {o['energy_cost']:.2f} per day, {o['energy_kwh']:.1f} kWh, peak {o['peak_power_kw']:.1f} kW, "
-        f"{o['departure_charge_pct']:.0f}% charge at departure" + (f" (required {desired:g}%)." if desired is not None else "."),
-        f"Baseline schedule (plug in at {clock(BASELINE['charge_start'])}, {BASELINE['charge_power_kw']:.1f} kW, appliances at {clock(BASELINE['appliance_start'])}) costs "
+        f"{o['departure_charge_pct']:.0f}% charge at departure" + (f" (required {desired:g}%)." if desired is not None else ".")
+        if has_ev and "departure_charge_pct" in o else ".",
+        f"Baseline schedule ({f'plug in at {clock(bs['charge_start'])}, {bs['charge_power_kw']:.1f} kW, ' if has_ev else ''}appliances at {clock(bs['appliance_start'])}) costs "
         f"{base['energy_cost']:.2f}: saving {saving:.2f} per day ({100 * saving / base['energy_cost']:.0f}%) at "
         f"{base['peak_power_kw']:.1f} kW baseline peak vs {o['peak_power_kw']:.1f} kW.",
-        f"{len(analysis.feasible_run_ids)} of {len(analysis.feasible_run_ids) + len(analysis.infeasible_runs)} analysed schedules met the departure-charge requirement; "
-        "schedules that violate it are never recommended, even when cheaper.",
     ]  # fmt: skip
+    if has_ev:
+        reasons.append(f"{len(analysis.feasible_run_ids)} of {len(analysis.feasible_run_ids) + len(analysis.infeasible_runs)} analysed schedules met the departure-charge requirement; "
+                       "schedules that violate it are never recommended, even when cheaper.")
     cheaper_bad = [i for i in analysis.infeasible_runs if i["objectives"].get("energy_cost", 1e9) < o["energy_cost"]]
     if cheaper_bad:
         c = min(cheaper_bad, key=lambda i: i["objectives"]["energy_cost"])
@@ -90,7 +108,7 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, household
                        f"{v:.0f}% at departure, so the requirement costs {o['energy_cost'] - c['objectives']['energy_cost']:.2f} per day."
                        if v is not None else f"Cheaper schedules existed (down to {c['objectives']['energy_cost']:.2f}) but violated the requirement.")  # fmt: skip
     for e in [x for x in fx["effects"] if x["significant"]][:3]:
-        reasons.append(f"{LABEL.get(e['term'], e['term'])}: moving from the low to the high end of the tested range changes daily cost by "
+        reasons.append(f"{label.get(e['term'], e['term'])}: moving from the low to the high end of the tested range changes daily cost by "
                        f"{e['low_to_high']:+.2f} (p={e['p_value']:.3g}).")  # fmt: skip
     for e in [x for x in fx["interactions"] if x["significant"]][:2]:
         reasons.append(f"Interaction {e['term'].replace(':', ' x ')} is significant (p={e['p_value']:.3g}): set those together.")
@@ -105,7 +123,8 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, household
     return {
         "status": "recommended",
         "headline": f"Cheapest feasible schedule: {o['energy_cost']:.2f} per day ({100 * saving / base['energy_cost']:.0f}% below baseline)",
-        "run_id": best.run_id, "setup": {k: round(v, 3) for k, v in best.configuration.items()}, "setup_text": schedule_text(best.configuration),
-        "expected": {k: round(v, 3) for k, v in o.items()}, "baseline": {k: round(float(base[k]), 3) for k in ("energy_cost", "energy_kwh", "peak_power_kw", "departure_charge_pct")},
+        "run_id": best.run_id, "setup": {k: round(v, 3) for k, v in best.configuration.items()}, "setup_text": schedule_text(best.configuration, catalog),
+        "expected": {k: round(v, 3) for k, v in o.items()},
+        "baseline": {k: round(float(base[k]), 3) for k in ("energy_cost", "energy_kwh", "peak_power_kw", "departure_charge_pct") if k in base},
         "reasons": reasons, "caveats": caveats, "effects": fx,
     }  # fmt: skip

@@ -55,6 +55,9 @@ class MeterImport(Base):
     warnings_json: Mapped[str] = mapped_column(Text, default="[]")
     row_log_json: Mapped[str] = mapped_column(Text, default="[]")  # every skipped/transformed source row (capped)
     gaps_json: Mapped[str] = mapped_column(Text, default="[]")
+    provenance: Mapped[str] = mapped_column(String(20), default="unknown", server_default="unknown")  # real_meter | synthetic_demo | unknown
+    total_import_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+    total_export_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class MeterReading(Base):
@@ -71,3 +74,5 @@ class MeterReading(Base):
     power_kw: Mapped[float] = mapped_column(Float)
     energy_kwh: Mapped[float] = mapped_column(Float)
     flags: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    export_kwh: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    export_kw: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")

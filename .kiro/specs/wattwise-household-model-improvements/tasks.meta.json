@@ -1,0 +1,1024 @@
+{
+  "pbtResults": {
+    "2.2 Write property test for post-midnight pricing": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455525586
+    },
+    "2.3 Write property test for slab start value": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455535673
+    },
+    "2.5 Write property test for reading splits": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455649552
+    },
+    "4.7 Write property test for canonical round trip": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455655601
+    },
+    "4.3 Write property test for invalid-interval readings": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455682116
+    },
+    "4.4 Write property test for signed column split": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455692110
+    },
+    "5.5 Write property test for day-type selection": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455802966
+    },
+    "5.3 Write property test for day-type profiles": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455807615
+    },
+    "4.11 Write property test that baseline ignores export": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455812572
+    },
+    "5.6 Write property test for billing-cycle default": {
+      "status": "passed",
+      "lastRunTimestamp": 1795455815483
+    },
+    "5.4 Write property test for profile recombination": {
+      "status": "passed",
+      "lastRunTimestamp": 1795456548006
+    },
+    "4.6 Write property test for whole-file rejection": {
+      "status": "passed",
+      "lastRunTimestamp": 1795456654159
+    },
+    "4.5 Write property test for separate columns and totals": {
+      "status": "passed",
+      "lastRunTimestamp": 1795456654599
+    },
+    "5.7 Write property test for overlap detection": {
+      "status": "passed",
+      "lastRunTimestamp": 1795456838472
+    },
+    "4.8 Write property test for provenance normalisation": {
+      "status": "passed",
+      "lastRunTimestamp": 1795457038765
+    },
+    "5.8 Write property test for subtraction": {
+      "status": "passed",
+      "lastRunTimestamp": 1795457040481
+    },
+    "4.10 Write property test for badges": {
+      "status": "passed",
+      "lastRunTimestamp": 1795457070184
+    },
+    "7.3 Write property test for charging range": {
+      "status": "passed",
+      "lastRunTimestamp": 1795457245102
+    },
+    "7.7 Write property test for appliance independence": {
+      "status": "passed",
+      "lastRunTimestamp": 1795457358624
+    },
+    "8.2 Write property test for charger capacity validation": {
+      "status": "passed",
+      "lastRunTimestamp": 1795457499699
+    },
+    "8.3 Write property test for billing-cycle validation": {
+      "status": "passed",
+      "lastRunTimestamp": 1795457562017
+    },
+    "10.5 Write property test for appliance start factor generation": {
+      "status": "passed",
+      "lastRunTimestamp": 1795477347423
+    }
+  },
+  "executionHistory": {
+    "1.1 Add Hypothesis and freeze the legacy implementation": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455127785
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455143462
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455343056
+      }
+    ],
+    "1.2 Add migration 11 and ORM columns": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455127862
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455143544
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455343317
+      }
+    ],
+    "2.1 Implement tariff context and pricing changes in `adapters/tariff_model.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455127909
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455143736
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455343757
+      }
+    ],
+    "2.2 Write property test for post-midnight pricing": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455127966
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455351116
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455577343
+      }
+    ],
+    "2.3 Write property test for slab start value": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128114
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455351670
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455577610
+      }
+    ],
+    "2.4 Write property test for slab monotonicity": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128200
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455584119
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455706852
+      }
+    ],
+    "2.5 Write property test for reading splits": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128395
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455584260
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455707045
+      }
+    ],
+    "3. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128517
+      },
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481645253
+      },
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481751747
+      }
+    ],
+    "4.1 Extend the importer in `adapters/meter_import.py` (and `meter_csv.py` / `meter_adapter.py` where needed)": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128615
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455143948
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455343955
+      }
+    ],
+    "4.2 Update `services/meter_library.py` for provenance and export": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128677
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455350265
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455576275
+      }
+    ],
+    "4.3 Write property test for invalid-interval readings": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128741
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455584507
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455709000
+      }
+    ],
+    "4.4 Write property test for signed column split": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128798
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455585055
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455709188
+      }
+    ],
+    "4.5 Write property test for separate columns and totals": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128850
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456565228
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456978633
+      }
+    ],
+    "4.6 Write property test for whole-file rejection": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128912
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456565978
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456979671
+      }
+    ],
+    "4.7 Write property test for canonical round trip": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455128968
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455585720
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455709750
+      }
+    ],
+    "4.8 Write property test for provenance normalisation": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129029
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456983934
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457281574
+      }
+    ],
+    "4.9 Write property test for provenance round trip": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129081
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456984703
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457281948
+      }
+    ],
+    "4.10 Write property test for badges": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129149
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456985494
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457280529
+      }
+    ],
+    "4.11 Write property test that baseline ignores export": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129211
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455716883
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456420187
+      }
+    ],
+    "5.1 Add day-type profiles and billing-cycle default to `services/baseline.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129266
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455144773
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455344405
+      }
+    ],
+    "5.2 Add overlap detection and subtraction to `services/baseline.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129330
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455350507
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455576345
+      }
+    ],
+    "5.3 Write property test for day-type profiles": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129398
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455719714
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456418250
+      }
+    ],
+    "5.4 Write property test for profile recombination": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129465
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455719939
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456558379
+      }
+    ],
+    "5.5 Write property test for day-type selection": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129533
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455720002
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456418061
+      }
+    ],
+    "5.6 Write property test for billing-cycle default": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129614
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455721597
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456418990
+      }
+    ],
+    "5.7 Write property test for overlap detection": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129731
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456566460
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456978039
+      }
+    ],
+    "5.8 Write property test for subtraction": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129844
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456986303
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457279960
+      }
+    ],
+    "6. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129931
+      },
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481759189
+      },
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481824037
+      }
+    ],
+    "7.1 Add the factor catalog helpers to `adapters/household_model.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455129995
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455350637
+      },
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455577123
+      }
+    ],
+    "7.2 Update `simulate()` in `adapters/household_model.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130063
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456564814
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456978544
+      }
+    ],
+    "7.3 Write property test for charging range": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130131
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456986918
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457279849
+      }
+    ],
+    "7.4 Write property test for over-capacity rejection": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130183
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457289599
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457511137
+      }
+    ],
+    "7.5 Write property test for no-EV simulation": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130248
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457289781
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457511920
+      }
+    ],
+    "7.6 Write property test for backward compatibility": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130300
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795479123287
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480154821
+      }
+    ],
+    "7.7 Write property test for appliance independence": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130361
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457290131
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457512698
+      }
+    ],
+    "7.8 Write property test for legacy start expansion and conflict": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130415
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457290786
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457513631
+      }
+    ],
+    "8.1 Update `api/schemas.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130481
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456564964
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795456978906
+      }
+    ],
+    "8.2 Write property test for charger capacity validation": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130549
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457291579
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457514336
+      }
+    ],
+    "8.3 Write property test for billing-cycle validation": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130615
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457519944
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795477023546
+      }
+    ],
+    "9. Checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455130832
+      },
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481832935
+      },
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481923770
+      }
+    ],
+    "10.1 Wire the household catalog and factors in `services/lab.py` and its readers": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131015
+      },
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457520143
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795477027785
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795477241099
+      }
+    ],
+    "10.2 Wire baseline, day type, window date, billing cycle and overlap check in `services/lab.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131095
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795477261309
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795478441947
+      }
+    ],
+    "10.3 Make meter pricing interval-aware in `services/lab.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131149
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795478447743
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795479115816
+      }
+    ],
+    "10.4 Update `api/app.py`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131227
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795478447991
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795478963714
+      }
+    ],
+    "10.5 Write property test for appliance start factor generation": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131331
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795477261397
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795478338192
+      }
+    ],
+    "10.6 Write example and integration tests": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131397
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795479124580
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480154501
+      }
+    ],
+    "11.1 Update `frontend/usage.js` and `frontend/style.css`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131461
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795479126220
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480154151
+      }
+    ],
+    "11.2 Update the study form in `frontend/app.js`": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131528
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795479126550
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480154346
+      }
+    ],
+    "11.3 Write Playwright test for provenance badges": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131625
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480160642
+      },
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481616768
+      }
+    ],
+    "12.1 Write layer-separation smoke test": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131696
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480160884
+      },
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480841861
+      }
+    ],
+    "13. Final checkpoint - Ensure all tests pass": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455131749
+      },
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481930693
+      }
+    ],
+    "1. Test foundations and database migration": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455343640
+      }
+    ],
+    "2. Tariff model: window context, billing cycle and interval splitting": [
+      {
+        "executionId": "2b414e91-38c6-4511-87c6-5e4f0672e9d2",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795455707122
+      }
+    ],
+    "5. Baseline profiles, overlap check and subtraction": [
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457280090
+      }
+    ],
+    "4. Meter import and meter library": [
+      {
+        "executionId": "79aa249a-ccc4-45fc-be8b-769f116bcd58",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795457282015
+      }
+    ],
+    "8. API schemas and validators": [
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795477023706
+      }
+    ],
+    "10. LabService and API wiring": [
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480154684
+      }
+    ],
+    "7. Household model": [
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480154922
+      }
+    ],
+    "12. Preservation and layer separation": [
+      {
+        "executionId": "fc366da1-3fa1-47de-af36-d95ac3032b6b",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795480842073
+      }
+    ],
+    "11. Frontend": [
+      {
+        "executionId": "1f187bfb-db5b-43c5-8b76-00300430358c",
+        "chatSessionId": "sess_491c80c6-d37a-45a3-b537-71953542d6e5",
+        "timestamp": 1795481616906
+      }
+    ]
+  }
+}

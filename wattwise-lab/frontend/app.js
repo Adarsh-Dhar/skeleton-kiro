@@ -5,21 +5,31 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const view = () => $('#view');
 let META = null, pollTimer = null, HH = null;
 
-class ApiError extends Error { constructor(status, issues) { super(issues.map((i) => i.message).join('; ')); this.status = status; this.issues = issues; } }
+class ApiError extends Error { constructor(status, issues, baselineCheck = null) { super(issues.map((i) => i.message).join('; ')); this.status = status; this.issues = issues; this.baselineCheck = baselineCheck; } }
 async function api(method, path, body) {
   const res = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
   if (res.status === 204) return null;
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('json') ? await res.json() : await res.text();
-  if (!res.ok) throw new ApiError(res.status, Array.isArray(data.detail) ? data.detail : [{ field: 'request', message: String(data.detail || res.statusText) }]);
+  if (!res.ok) throw new ApiError(res.status, Array.isArray(data.detail) ? data.detail : [{ field: 'request', message: String(data.detail || res.statusText) }], data.baseline_check || null);
   return data;
 }
 function toast(msg, ok = false) {
   const t = $('#toast'); t.textContent = msg; t.className = 'toast' + (ok ? ' ok' : ''); t.hidden = false;
   clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 4500);
 }
+// the baseline overlap check record (also stored with the study): status, the appliances involved and what was clipped
+const baselineCheckBox = (c) => {
+  if (!c) return '';
+  const list = (a) => (a && a.length ? a.map(esc).join(', ') : 'none');
+  const clipped = c.clipped?.count ? `; ${c.clipped.count} step(s) clipped to 0 kW at ${(c.clipped.times || []).map(esc).join(', ')}` : '';
+  return `<div class="note info"><b>Baseline check: ${esc(String(c.status || '').replaceAll('_', ' '))}</b><ul>
+    ${c.overlapping?.length ? `<li>Appliances found in the baseline data: ${list(c.overlapping)}</li>` : ''}
+    <li>Checked: ${list(c.appliances_checked)}</li><li>Subtracted: ${list(c.appliances_subtracted)}${clipped}</li>
+    ${c.skipped_by_user_confirmation ? '<li>Check skipped because you confirmed the baseline excludes the modelled appliances</li>' : ''}</ul></div>`;
+};
 const errorsBox = (e) => e instanceof ApiError
-  ? `<div class="errors" role="alert"><b>That was not accepted</b><ul>${e.issues.map((i) => `<li><code>${esc(i.field)}</code> ${esc(i.message)}</li>`).join('')}</ul></div>`
+  ? `<div class="errors" role="alert"><b>That was not accepted</b><ul>${e.issues.map((i) => `<li><code>${esc(i.field)}</code> ${esc(i.message)}</li>`).join('')}</ul></div>${baselineCheckBox(e.baselineCheck)}`
   : `<div class="errors" role="alert">${esc(e.message || e)}</div>`;
 const poll = (fn, ms = 1000) => { clearInterval(pollTimer); pollTimer = setInterval(fn, ms); };
 const statusChip = (s) => `<span class="chip ${esc(s)}">${esc(s.replaceAll('_', ' '))}</span>`;
@@ -357,10 +367,24 @@ async function viewNew() {
       ${Object.entries(META.factors).map(([k, v]) => `<tr><td><input type="checkbox" data-en="${k}" checked aria-label="Vary ${esc(v.label)}"></td><td>${esc(v.label)}<div class="dim mono">${k}</div></td>
       <td><input type="number" step="${v.clock ? 0.25 : 0.1}" data-lo="${k}" value="${fdef[k].low}" aria-label="${esc(v.label)} lowest"><div class="hint" data-lc="${k}"></div></td>
       <td><input type="number" step="${v.clock ? 0.25 : 0.1}" data-hi="${k}" value="${fdef[k].high}" aria-label="${esc(v.label)} highest"><div class="hint" data-hc="${k}"></div></td>
-      <td class="dim">${esc(fmtFactor(k, v.low))} &ndash; ${esc(fmtFactor(k, v.high))}</td></tr>`).join('')}</tbody></table></div>
+      <td class="dim" data-rng="${k}">${esc(fmtFactor(k, v.low))} &ndash; ${esc(fmtFactor(k, v.high))}</td></tr>`).join('')}</tbody></table></div>
       <p class="hint">Charging and appliance start times are hours on a 24 h clock that begins at 16:00, so 31.5 means 07:30 the next morning. Variables you switch off stay at today's schedule.</p></div>
+    <div class="panel"><h2>Household for this experiment</h2><div class="grid g2">
+      <div class="field"><label for="cap">Charger capacity, kW (optional)</label><input id="cap" type="number" step="0.01" min="1.4" max="350" placeholder="default up to 11 kW"><div class="hint">1.4 to 350 kW. Limits the charging power the experiment can try.</div></div>
+      <div class="field"><label class="inline"><input type="checkbox" id="noev" ${HH.ev ? '' : 'checked'}> I have no EV</label><div class="hint">Then only appliance start times are varied; at least one appliance must be movable.</div></div>
+      <div class="field"><label for="asm">Appliance start times</label><select id="asm"><option value="shared">one shared start time</option><option value="per_appliance">a separate start time per movable appliance</option></select></div>
+      <div class="field"><label for="dtype">Baseline day type</label><select id="dtype"><option value="">all days</option><option value="weekday">weekday</option><option value="weekend">weekend</option></select><div class="hint">Which meter-data profile is the background load.</div></div>
+      <div class="field"><label for="wdate">Start date of the simulated window</label><input id="wdate" type="date"><div class="hint">Optional. The window runs 16:00 to 16:00; steps after midnight are priced on the next date.</div></div>
+      <div class="field"><label for="bill">Billing cycle consumption so far, kWh</label><input id="bill" type="number" step="0.001" min="0" max="1000000"><div class="hint" id="billnote">For tiered tariffs. Leave empty to start at 0.</div></div></div>
+      <div class="scroll"><table><thead><tr><th>Appliance</th><th>Id</th><th>Already in baseline</th></tr></thead><tbody id="appids">
+      ${HH.appliances.map((a, i) => `<tr data-ai="${i}"><td>${esc(a.name)}</td><td><input data-f="id" value="${esc(a.id || '')}" maxlength="39" placeholder="from name" aria-label="Id of ${esc(a.name)}"></td>
+        <td><input data-f="in_baseline" type="checkbox" ${a.in_baseline ? 'checked' : ''} aria-label="${esc(a.name)} is already in the baseline"></td></tr>`).join('')}
+      ${HH.ev ? `<tr id="evrow"><td>Car charging</td><td class="dim">&ndash;</td><td><input id="ev-inb" type="checkbox" ${HH.ev.in_baseline ? 'checked' : ''} aria-label="Car charging is already in the baseline"></td></tr>` : ''}</tbody></table></div>
+      <p class="hint">Tick "already in baseline" for loads your meter data already contains; they are subtracted from it instead of counted twice. Ids must be lowercase letters, digits, "_" or "-".</p>
+      ${HH.baseline_import_id ? `<label class="inline"><input type="checkbox" id="bexcl"> my baseline data does not contain the modelled appliances (skips the overlap check)</label>
+        <p class="hint">Without this, the meter data is checked for the modelled appliances and the experiment is blocked if they are found.</p>` : ''}</div>
     <div class="panel"><h2>Goal and constraint</h2><p style="margin:0 0 8px">Minimise the cost of one day on <b>${esc(t?.name || HH.tariff_id)}</b>.</p>
-      <p style="margin:0 0 8px">Constraint: the car must reach at least <b>${fmt(HH.ev.desired_charge_pct, 0)}%</b> by ${esc(toTime(HH.ev.departure_hour))}. Schedules below that are marked infeasible and never recommended. <a href="#/household">Change household settings</a></p>
+      <p style="margin:0 0 8px" id="constraint">${HH.ev ? `Constraint: the car must reach at least <b>${fmt(HH.ev.desired_charge_pct, 0)}%</b> by ${esc(toTime(HH.ev.departure_hour))}. Schedules below that are marked infeasible and never recommended.` : 'No EV, so there is no charge constraint.'} <a href="#/household">Change household settings</a></p>
       <label class="inline"><input type="checkbox" id="peak"> also reduce peak demand (adds a second objective)</label></div>
   </div><div>
     <div class="panel"><h2>Design</h2><div class="field"><label for="method">Method</label><select id="method">${META.methods.map((m) => `<option value="${m.id}">${esc(methodName(m.id))}</option>`).join('')}</select><div class="hint" id="mdesc"></div></div>
@@ -373,11 +397,66 @@ async function viewNew() {
   const md = () => { $('#mdesc').textContent = META.methods.find((m) => m.id === $('#method').value).description; };
   const hints = () => Object.entries(META.factors).forEach(([k, v]) => { if (v.clock) { $(`[data-lc="${k}"]`).textContent = clock(num(`[data-lo="${k}"]`) || 0); $(`[data-hc="${k}"]`).textContent = clock(num(`[data-hi="${k}"]`) || 0); } });
   $('#method').addEventListener('change', md); $('#f').addEventListener('input', hints); md(); hints();
+  const EV_FACTORS = ['charge_start', 'charge_power_kw'];
+  const showNoEv = () => {
+    const off = $('#noev').checked;
+    EV_FACTORS.filter((k) => META.factors[k]).forEach((k) => { $(`[data-en="${k}"]`).disabled = off; $(`[data-lo="${k}"]`).disabled = off; $(`[data-hi="${k}"]`).disabled = off; $(`[data-en="${k}"]`).closest('tr').style.opacity = off ? 0.5 : ''; });
+    if ($('#evrow')) $('#evrow').hidden = off;
+  };
+  const showMode = () => {
+    const per = $('#asm').value === 'per_appliance';
+    $('[data-en="appliance_start"]')?.closest('tr')?.querySelector('.dim.mono')?.replaceChildren(per ? 'appliance_start (range used for every movable appliance)' : 'appliance_start');
+  };
+  const capRange = () => { // keep the charging power range inside the charger capacity
+    const cap = num('#cap'), lo = $('[data-lo="charge_power_kw"]'), hi = $('[data-hi="charge_power_kw"]'), cell = $('[data-rng="charge_power_kw"]');
+    if (!lo || !hi) return;
+    if (Number.isFinite(cap)) {
+      if (num('[data-hi="charge_power_kw"]') > cap) hi.value = cap;
+      if (num('[data-lo="charge_power_kw"]') >= num('[data-hi="charge_power_kw"]')) lo.value = Math.min(1.4, num('[data-hi="charge_power_kw"]') / 2);
+      cell.textContent = `${fmt(1.4, 1)} \u2013 ${fmt(cap, 1)} kW`;
+    } else cell.textContent = `${fmtFactor('charge_power_kw', META.factors.charge_power_kw.low)} \u2013 ${fmtFactor('charge_power_kw', META.factors.charge_power_kw.high)}`;
+  };
+  // default billing-cycle consumption from the chosen meter baseline (editable; never overwrites what the user typed)
+  let billTouched = false;
+  const loadBilling = async () => {
+    if (!HH.baseline_import_id || billTouched) return;
+    const day = $('#wdate').value || new Date().toISOString().slice(0, 10);
+    try {
+      const r = await api('GET', `/api/meter/imports/${encodeURIComponent(HH.baseline_import_id)}/billing-cycle-default?day=${encodeURIComponent(day)}`);
+      if (!billTouched) $('#bill').value = r.kwh;
+      $('#billnote').textContent = r.notice || `Default from your meter data for the month before ${day}; you can change it.`;
+    } catch (e) { $('#billnote').textContent = e.message; }
+  };
+  $('#noev').addEventListener('change', showNoEv); $('#asm').addEventListener('change', showMode); $('#cap').addEventListener('change', capRange);
+  $('#bill').addEventListener('input', () => { billTouched = true; }); $('#wdate').addEventListener('change', loadBilling);
+  showNoEv(); showMode(); loadBilling();
   $('#f').addEventListener('submit', async (ev) => {
     ev.preventDefault(); $('#err').innerHTML = '';
+    const noEv = $('#noev').checked;
     const factors = {};
-    Object.keys(META.factors).forEach((k) => { factors[k] = { enabled: $(`[data-en="${k}"]`).checked, low: num(`[data-lo="${k}"]`), high: num(`[data-hi="${k}"]`) }; });
-    const body = { ...hhBody(), name: $('#name').value, hypothesis: $('#hyp').value, factors, also_minimise_peak: $('#peak').checked,
+    Object.keys(META.factors).forEach((k) => {
+      if (noEv && EV_FACTORS.includes(k)) return; // the server skips EV factors for a household without a car
+      factors[k] = { enabled: $(`[data-en="${k}"]`).checked, low: num(`[data-lo="${k}"]`), high: num(`[data-hi="${k}"]`) };
+    });
+    // ids and in_baseline start from the saved household and change only when the form was edited
+    const appliances = HH.appliances.map((a, i) => {
+      const tr = $(`#appids tr[data-ai="${i}"]`), out = { ...a };
+      const id = $('[data-f=id]', tr).value.trim(), inb = $('[data-f=in_baseline]', tr).checked;
+      if (id !== (a.id || '')) out.id = id || null;
+      if (inb !== !!a.in_baseline) out.in_baseline = inb;
+      return out;
+    });
+    const extra = { appliances };
+    if (noEv) extra.ev = null;
+    else if (!HH.ev) extra.ev = undefined; // the saved household has no car but this study has one: use the server default
+    else if ($('#ev-inb').checked !== !!HH.ev.in_baseline) extra.ev = { ...HH.ev, in_baseline: $('#ev-inb').checked };
+    const cap = num('#cap'); if (Number.isFinite(cap)) extra.charger_capacity_kw = cap;
+    if ($('#asm').value !== 'shared') extra.appliance_start_mode = $('#asm').value;
+    if ($('#dtype').value) extra.day_type = $('#dtype').value;
+    if ($('#wdate').value) extra.window_start_date = $('#wdate').value;
+    const bill = num('#bill'); if (Number.isFinite(bill)) extra.billing_cycle_consumption_kwh = bill;
+    if ($('#bexcl')?.checked) extra.baseline_excludes_modelled_appliances = true;
+    const body = { ...hhBody(extra), name: $('#name').value, hypothesis: $('#hyp').value, factors, also_minimise_peak: $('#peak').checked,
       design: { method: $('#method').value, levels: +$('#levels').value, replicates: +$('#reps').value, center_points: +$('#cp').value, n_runs: +$('#nruns').value, run_budget: +$('#budget').value, seed: +$('#seed').value },
       simulator: { latency_seconds: num('#lat'), max_retries: +$('#retries').value, fault_rate: num('#fault') } };
     try { const d = await api('POST', '/api/experiments', body); toast('Design generated', true); location.hash = `#/e/${d.id}/design`; }
@@ -407,7 +486,7 @@ async function viewDesign(id) {
   <div><div class="panel"><h2>Design</h2><p style="margin:0">${esc(methodName(d.design.method))} &middot; ${d.design.runs_planned} schedules &middot; seed ${esc(d.design.seed)}</p>${d.design.resolution ? `<p class="hint">Resolution ${esc(d.design.resolution)}</p>` : ''}
     ${d.design.generators ? `<p class="hint">Generators: ${esc([].concat(d.design.generators).join(', '))}</p>` : ''}${keep.length ? `<ul class="warnlist">${keep.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
     <p class="hint">Run order is randomised by the SDK, so the order above is the order they will be measured.</p></div>
-  <div class="panel"><h2>Household</h2><p style="margin:0">Tariff: <b>${esc(d.tariff)}</b></p><p style="margin:4px 0 0">Car needs <b>${fmt(d.desired_charge_pct, 0)}%</b> by ${esc(toTime(d.household.ev.departure_hour))}</p><p class="hint">Baseline today: ${money(d.baseline_cost)} per day.</p></div>
+  <div class="panel"><h2>Household</h2><p style="margin:0">Tariff: <b>${esc(d.tariff)}</b></p>${d.household.ev ? `<p style="margin:4px 0 0">Car needs <b>${fmt(d.desired_charge_pct, 0)}%</b> by ${esc(toTime(d.household.ev.departure_hour))}</p>` : '<p style="margin:4px 0 0">No EV in this household</p>'}<p class="hint">Baseline today: ${money(d.baseline_cost)} per day.</p>${baselineCheckBox(d.baseline_check)}${(d.notes || []).length ? `<ul class="warnlist">${d.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>
   <button class="btn primary" id="go" style="width:100%;padding:12px" ${queued ? '' : 'disabled'}>${queued ? `Run ${queued} schedules` : 'All schedules measured'}</button></div></div>`;
   $('#go').addEventListener('click', async () => { try { await api('POST', `/api/experiments/${encodeURIComponent(id)}/execute`); location.hash = `#/e/${id}/runs`; } catch (e) { $('#err').innerHTML = errorsBox(e); } });
 }

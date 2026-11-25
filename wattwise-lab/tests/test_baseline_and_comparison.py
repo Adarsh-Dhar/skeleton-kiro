@@ -92,7 +92,7 @@ def test_summary_endpoint(client, imported):
 
 
 def test_experiment_from_calibrated_baseline_and_comparison(client, imported):
-    body = {"name": "calibrated", "experiment_id": "cal-exp", "baseline_import_id": imported, "simulator": {"latency_seconds": 0.0},
+    body = {"name": "calibrated", "experiment_id": "cal-exp", "baseline_import_id": imported, "baseline_excludes_modelled_appliances": True, "simulator": {"latency_seconds": 0.0},
             "design": {"method": "full_factorial", "levels": 2}}
     r = client.post("/api/experiments", json=body)
     assert r.status_code == 201, r.text
@@ -121,7 +121,7 @@ def test_synthetic_experiment_never_claims_savings_against_real_usage(client, im
 
 
 def test_measured_schedule_is_labelled_measured(client, imported):
-    body = {"name": "measured", "experiment_id": "meas-exp", "baseline_import_id": imported, "simulator": {"latency_seconds": 0.0},
+    body = {"name": "measured", "experiment_id": "meas-exp", "baseline_import_id": imported, "baseline_excludes_modelled_appliances": True, "simulator": {"latency_seconds": 0.0},
             "design": {"method": "full_factorial", "levels": 2}}
     d = client.post("/api/experiments", json=body).json()
     run = d["runs"][0]

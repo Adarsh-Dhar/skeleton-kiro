@@ -96,8 +96,8 @@ def test_duplicate_table_name_raises_at_import_and_names_the_table():
 
 
 def test_migration_list_ends_with_10_and_docstrings_are_updated():
-    assert [m.version for m in MIGRATIONS] == list(range(1, 11))
-    assert MIGRATIONS[-1].version == 10
+    assert [m.version for m in MIGRATIONS] == list(range(1, 12))
+    assert MIGRATIONS[-1].version == 11
     assert "one-time cleanup" in inspect.getdoc(versions._m008_f1_openf1_only)
     assert "migration 9" in inspect.getdoc(versions._m004_f1_retired).lower()
 
