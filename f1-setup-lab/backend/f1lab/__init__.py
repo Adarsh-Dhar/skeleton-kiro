@@ -21,6 +21,12 @@ HISTORICAL_NOTICE = (
     "Used for analysis only; some values are estimated from it, and the import coverage on each session says which."
 )
 NOTICES = {"synthetic": SYNTHETIC_NOTICE, "historical": HISTORICAL_NOTICE}
+# Shown for Setup Engineering experiments whose runs carry measurements imported from a CSV. Deliberately not in NOTICES, which is
+# the set of data *modes* (synthetic, historical); an imported run is still a Setup Engineering run.
+IMPORTED_NOTICE = "Imported measurements: lap data from a user-supplied CSV; not produced by this app's model"
+LABEL_SYNTHETIC = "SYNTHETIC"
+LABEL_IMPORTED = "IMPORTED TELEMETRY"
+LABEL_MIXED = "MIXED (SYNTHETIC + IMPORTED)"
 
 
 def notice_for(mode: str) -> str:
@@ -29,3 +35,13 @@ def notice_for(mode: str) -> str:
         return NOTICES[mode]
     except KeyError:
         raise ValueError(f"unknown data mode {mode!r}; supported: {', '.join(NOTICES)}") from None
+
+def provenance_notice(label: str) -> str:
+    """The notice(s) for an experiment's provenance label; a mixed experiment shows both."""
+    if label == LABEL_SYNTHETIC:
+        return SYNTHETIC_NOTICE
+    if label == LABEL_IMPORTED:
+        return IMPORTED_NOTICE
+    if label == LABEL_MIXED:
+        return f"{SYNTHETIC_NOTICE} {IMPORTED_NOTICE}"
+    raise ValueError(f"unknown provenance label {label!r}")

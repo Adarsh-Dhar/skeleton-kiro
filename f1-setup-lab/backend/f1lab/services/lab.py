@@ -7,6 +7,8 @@ this class only maps the application's concepts (setup factors, stability limit,
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import uuid
 from pathlib import Path
 from typing import Any
@@ -31,7 +33,7 @@ from trialforge import (
 from db.config import resolve_db_url, sqlite_file_path
 from db.models.common import APP_F1
 from db.scoped import ScopedExperimentRepository
-from f1lab import notice_for
+from f1lab import LABEL_IMPORTED, LABEL_MIXED, LABEL_SYNTHETIC, notice_for, provenance_notice
 from f1lab.adapters.sim_adapter import F1SimulatorAdapter
 from f1lab.adapters.telemetry import parse_telemetry_csv, to_measurements
 from f1lab.adapters.vehicle_model import BASELINE, FACTORS, METRIC_UNITS
@@ -45,6 +47,11 @@ NOTABLE = {"unit_converted": "unit converted", "statistical_outlier": "outlier",
 
 def mode_of(spec: ExperimentSpec) -> str:
     return spec.metadata.get("mode", "synthetic")
+
+
+def _run_imported(r) -> bool:
+    """True if any measurement of the run came from an imported CSV."""
+    return any(m.metadata.get("imported") for m in r.measurements)
 
 
 
@@ -184,7 +191,7 @@ class LabService:
     @staticmethod
     def _run_row(r) -> dict:
         out = narrative.run_outcomes(r) if r.status == RunStatus.COMPLETED else {}
-        imported = any(m.metadata.get("imported") for m in r.measurements)
+        imported = _run_imported(r)
         return {
             "run_id": r.run_id, "order": r.order, "status": r.status.value, "configuration": r.configuration,
             "coded": r.coded, "replicate": r.replicate, "attempts": r.attempts, "error": r.error,
@@ -192,6 +199,7 @@ class LabService:
             "feasible": r.metadata.get("feasible") if r.status == RunStatus.COMPLETED else None,
             "point_kind": r.metadata.get("point_kind") or ("center" if r.metadata.get("center_point") else None),
             "iteration": r.metadata.get("sequential_iteration"), "imported": imported,
+            "source_label": LABEL_IMPORTED if imported else LABEL_SYNTHETIC,
             "quality_warnings": r.metadata.get("quality_warnings", [])[:5],
         }  # fmt: skip
 
@@ -225,6 +233,25 @@ class LabService:
                 continue
         return sorted(out, key=lambda s: s["created_at"], reverse=True)
 
+    @staticmethod
+    def _source_counts(res: ExperimentResult) -> dict[str, int]:
+        done = [r for r in res.runs if r.status == RunStatus.COMPLETED]
+        imported = sum(1 for r in done if _run_imported(r))
+        return {"synthetic": len(done) - imported, "imported": imported}
+
+    @classmethod
+    def _provenance(cls, res: ExperimentResult) -> str:
+        """Where the results of the COMPLETED runs came from. Runs that are queued, failed or cancelled are not considered."""
+        c = cls._source_counts(res)
+        if c["imported"] and c["synthetic"]:
+            return LABEL_MIXED
+        if c["imported"]:
+            return LABEL_IMPORTED
+        if c["synthetic"]:
+            return LABEL_SYNTHETIC
+        notice_for(mode_of(res.spec))  # no completed runs: the mode decides, and an unknown mode is an error
+        return LABEL_SYNTHETIC
+
     def detail(self, exp_id: str) -> dict:
         res = self._result(exp_id)
         d = self._summary(res)
@@ -232,8 +259,10 @@ class LabService:
         d["design"] = self.design_view(res)
         d["simulator"] = res.spec.metadata.get("lab", {})
         d["synthetic_notice"] = notice_for(mode_of(res.spec))
-        d["notice"] = d["synthetic_notice"]
-        d["source_label"] = "SYNTHETIC"
+        label = self._provenance(res)
+        d["notice"] = provenance_notice(label)
+        d["source_label"] = label
+        d["source_counts"] = self._source_counts(res)
         return d
 
     def design_view(self, res: ExperimentResult) -> dict:
@@ -248,7 +277,7 @@ class LabService:
         summary = f"{res.plan.method.replace('_', ' ')} design: {len(res.plan.runs)} runs. Uses " + (", ".join(labels[k] for k in uses) or "no extra settings") + "."
         if not_used:
             summary += " Does not use " + ", ".join(labels[k] for k in not_used) + (
-                "; the values you entered for them were ignored." if any(ignored.get(k) for k in not_used) else ".")
+                "; any values entered for them are not used." if any(ignored.get(k) for k in not_used) else ".")
         if res.plan.method == "random":
             summary += " A random design has no replicated runs and no centre points, so pure error cannot be estimated from it."
         return {
@@ -419,6 +448,8 @@ class LabService:
             "recommendation": rec,
             "effects": rec["effects"],
             "synthetic_notice": notice_for(mode_of(res.spec)),
+            "notice": provenance_notice(self._provenance(res)),
+            "source_label": self._provenance(res),
         }
 
     async def report_html(self, exp_id: str) -> str:
@@ -426,17 +457,36 @@ class LabService:
         res = self._result(exp_id)
         runs = self.runs(exp_id)
         design = self.design_view(res)
-        return report_html.render(res.spec.name, res.spec.hypothesis, data["recommendation"], design, runs, data["effects"], data["report"], mode_of(res.spec))
+        return report_html.render(res.spec.name, res.spec.hypothesis, data["recommendation"], design, runs, data["effects"], data["report"], mode_of(res.spec),
+                                  provenance=self._provenance(res))
 
     def csv_export(self, exp_id: str, kind: str) -> str:
         res = self._result(exp_id)
         if kind == "runs":
-            return ReportEngine.to_csv(res)
+            by_run = {r.run_id: (LABEL_IMPORTED if _run_imported(r) else LABEL_SYNTHETIC) for r in res.runs}
+            return self._with_source(ReportEngine.to_csv(res), lambda row: by_run.get(row.get("run_id"), LABEL_SYNTHETIC))
         if kind == "measurements":
-            return ReportEngine.measurements_csv(res)
+            return ReportEngine.measurements_csv(res)  # already has a per-measurement ``source`` column
         if kind == "effects":
-            return ReportEngine.effects_csv(self.svc.analysis_engine.analyse(self._completed(exp_id)))
+            label = self._provenance(self._completed(exp_id))
+            return self._with_source(ReportEngine.effects_csv(self.svc.analysis_engine.analyse(self._completed(exp_id))), lambda row: label)
         raise NotFound(kind)
+
+    @staticmethod
+    def _with_source(text: str, label_of) -> str:
+        """Append a ``source`` column (the provenance label of the row) to a CSV produced by the SDK."""
+        rows = list(csv.DictReader(io.StringIO(text)))
+        header = list(rows[0].keys()) if rows else next(csv.reader(io.StringIO(text)), [])
+        out = io.StringIO()
+        w = csv.DictWriter(out, fieldnames=[*header, "source"], lineterminator="\r\n")
+        w.writeheader()
+        for row in rows:
+            w.writerow({**row, "source": label_of(row)})
+        return out.getvalue()
+
+    def csv_notice(self, exp_id: str) -> str:
+        """The data-source notice for a CSV download (sent as a response header, so the CSV itself stays machine-readable)."""
+        return provenance_notice(self._provenance(self._result(exp_id)))
 
     def delete_supported(self) -> bool:
         return False

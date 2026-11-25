@@ -376,8 +376,10 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
 
     @app.get("/api/experiments/{exp_id}/export/{kind}.csv")
     def export(exp_id: str, kind: str):
-        return PlainTextResponse(lab.csv_export(exp_id, kind), media_type="text/csv",
-                                 headers={"Content-Disposition": f'attachment; filename="{exp_id}-{kind}.csv"'})  # fmt: skip
+        text = lab.csv_export(exp_id, kind)
+        return PlainTextResponse(text, media_type="text/csv", headers={
+            "Content-Disposition": f'attachment; filename="{exp_id}-{kind}.csv"',
+            "X-Data-Notice": lab.csv_notice(exp_id).encode("ascii", "replace").decode()})  # fmt: skip
 
     DATA = Path(os.environ.get("F1LAB_DATA_DIR", Path(__file__).resolve().parents[3] / "data"))
 

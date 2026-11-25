@@ -217,7 +217,7 @@ def test_pyproject_ruff_has_no_e702_exemptions_left():
 # ----------------------------------------------------------------------------- restored routes with a stub lab (5.1, 5.2)
 ASYNC_METHODS = {"startup", "shutdown", "cancel", "attach_telemetry", "analyse", "recommendation",
                  "optimise_suggest", "optimise_apply", "report", "report_html"}
-TEXT_METHODS = {"csv_export", "report_html"}
+TEXT_METHODS = {"csv_export", "csv_notice", "report_html"}
 
 
 class StubLab:

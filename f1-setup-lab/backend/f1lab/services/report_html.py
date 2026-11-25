@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from html import escape as e
 
-from f1lab import notice_for
+from f1lab import notice_for, provenance_notice
 
 
 def _table(headers: list[str], rows: list[list]) -> str:
@@ -13,8 +13,17 @@ def _table(headers: list[str], rows: list[list]) -> str:
     return f"<table><thead><tr>{th}</tr></thead><tbody>{tr}</tbody></table>"
 
 
-def render(name: str, hypothesis: str, rec: dict, design: dict, runs: list[dict], fx: dict, report: dict, mode: str = "synthetic") -> str:
+def render(name: str, hypothesis: str, rec: dict, design: dict, runs: list[dict], fx: dict, report: dict, mode: str = "synthetic",
+           provenance: str | None = None) -> str:
     second, second_head, second_fmt = "stability", "stability", ".1f"
+    # one warning box per notice: a mixed experiment shows the synthetic and the imported notice
+    if provenance is None:
+        notices = [notice_for(mode)]
+    elif provenance.startswith("MIXED"):
+        notices = [provenance_notice("SYNTHETIC"), provenance_notice("IMPORTED TELEMETRY")]
+    else:
+        notices = [provenance_notice(provenance)]
+    notice_html = "".join(f'<p class="warn"><strong>{e(n)}</strong></p>' for n in notices)
     setup = rec.get("setup") or {}
     best_rows = [[k, v] for k, v in setup.items()]
     eff_rows = [[x["term"], f"{x['low_to_high']:+.3f}" if x["low_to_high"] is not None else "", f"{x['p_value']:.3g}" if x["p_value"] is not None else "n/a",
@@ -33,7 +42,7 @@ def render(name: str, hypothesis: str, rec: dict, design: dict, runs: list[dict]
 th,td{{border:1px solid #ccc;padding:.25rem .5rem;text-align:left;font-variant-numeric:tabular-nums}}th{{background:#f0f0f0}}
 .best{{background:#e8f6ea;border:1px solid #2e8b3d;padding:.6rem 1rem;border-radius:6px}}</style></head><body>
 <h1>{e(name)}</h1><p><em>F1 SETUP LAB - experiment report (TRIALFORGE report v{e(str(report.get("report_version", "")))})</em></p>
-<p class="warn"><strong>{e(notice_for(mode))}</strong></p>
+{notice_html}
 <h2>Hypothesis</h2><p>{e(hypothesis or "(none stated)")}</p>
 <h2>Recommendation</h2><div class="best"><strong>{e(rec.get("headline", ""))}</strong>{_table(["parameter", "value"], best_rows) if best_rows else ""}
 <ul>{"".join(f"<li>{e(x)}</li>" for x in rec.get("reasons", []))}</ul></div>
