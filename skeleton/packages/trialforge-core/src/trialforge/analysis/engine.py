@@ -47,7 +47,7 @@ from trialforge.models.core import (
     RunStatus,
 )
 
-ALGORITHM_VERSION = "2.0"
+ALGORITHM_VERSION = "2.1"
 
 
 def _key(config: dict[str, Any]) -> tuple:
@@ -378,6 +378,8 @@ class AnalysisEngine:
         out: list[EffectEstimate] = []
         control = result.plan.control_configuration
         for f in spec.factors:
+            if f.factor_type == "continuous":
+                continue  # a numerical setting is not a category; continuous effects come from the regression and ANOVA
             by_level: dict[str, list[tuple[Run, float]]] = defaultdict(list)
             for r, v in obs:
                 by_level[repr(r.configuration[f.name])].append((r, v))
@@ -447,8 +449,17 @@ class AnalysisEngine:
             b[f.name] = run.configuration[f.name]
         return b
 
-    def _term_blocks(self, spec, obs, *, categorical: bool, interactions: bool, quadratic: bool):
-        """Return (names_by_term, blocks_by_term, notes). A 'term' is a tuple of factor names."""
+    def _term_blocks(self, spec, obs, *, dummy_discrete: bool, interactions: bool, quadratic: bool):
+        """Return (blocks_by_term, names_by_term, notes). A 'term' is a tuple of factor names.
+
+        Encoding depends on each factor's declared type, never on one global switch:
+        * continuous: one numeric column coded to [-1, +1] (low -> -1, high -> +1); a squared column when ``quadratic``;
+        * categorical (non-numeric values): one dummy column per level after the first;
+        * discrete (declared numeric levels): coded to [-1, +1] like a continuous factor (a linear trend over the levels) in
+          regression, and one dummy column per declared level after the first when ``dummy_discrete`` (ANOVA, which tests the
+          factor as a whole). The two are identical for a 2-level factor;
+        * blocks: dummy columns after the first block.
+        Interaction columns are products of the main-effect columns, so mixed terms have the right number of columns."""
         terms: dict[tuple, np.ndarray] = {}
         colnames: dict[tuple, list[str]] = {}
         notes: list[str] = []
@@ -458,11 +469,9 @@ class AnalysisEngine:
             levels = sorted(set(vals), key=lambda x: (str(type(x)), x))
             if len(levels) < 2:
                 continue
-            if categorical or not f.is_numeric:
+            if not f.is_numeric or (dummy_discrete and f.factor_type == "discrete"):
                 cols = [np.array([1.0 if v == lv else 0.0 for v in vals]) for lv in levels[1:]]
                 names = [f"{f.name}[{lv}]" for lv in levels[1:]]
-                if not f.is_numeric or categorical:
-                    pass
             else:
                 lo, hi = f.low_high()
                 if hi == lo:
@@ -494,7 +503,7 @@ class AnalysisEngine:
                         names.append(f"{na[i]}:{nb[j]}")
                 terms[(a, b)] = np.column_stack(cols)
                 colnames[(a, b)] = names
-        if quadratic and not categorical:
+        if quadratic:
             for f in spec.treatment_factors:
                 if f.factor_type == "continuous" and (f.name,) in terms:
                     x = terms[(f.name,)][:, 0]
@@ -503,13 +512,13 @@ class AnalysisEngine:
                         colnames[(f.name, f.name)] = [f"{f.name}^2"]
         return terms, colnames, notes
 
-    def _fit_plan(self, spec, obs, *, categorical, quadratic):
+    def _fit_plan(self, spec, obs, *, dummy_discrete, quadratic):
         """Choose the richest term set (with 2-way interactions) that leaves residual df >= 1."""
         n = len(obs)
         y = np.array([v for _, v in obs], float)
         for interactions in (True, False):
             terms, colnames, notes = self._term_blocks(
-                spec, obs, categorical=categorical, interactions=interactions, quadratic=quadratic
+                spec, obs, dummy_discrete=dummy_discrete, interactions=interactions, quadratic=quadratic
             )
             if not terms:
                 return None
@@ -573,13 +582,15 @@ class AnalysisEngine:
             )
         if len(spec.treatment_factors) < 2:
             return out
-        plan = self._fit_plan(spec, obs, categorical=True, quadratic=False)
+        rsm = result.plan.method in ("central_composite", "box_behnken")
+        plan = self._fit_plan(spec, obs, dummy_discrete=True, quadratic=rsm)
         if plan is None:
             return out
         terms, colnames, X, y, with_int = plan
         names = list(terms)
         full_rss, full_rank = st.rss_rank(X, y)
         resid_df = n - full_rank
+        info = self._model_info(spec, obs, terms, X, full_rank, with_int, rsm)
         warn: list[str] = []
         if resid_df < 1:
             out.append(
@@ -590,10 +601,13 @@ class AnalysisEngine:
                     n_observations=n,
                     rows=[],
                     residual_df=float(resid_df),
+                    model_info=info,
                     warnings=[
-                        "model is saturated (no residual degrees of freedom): replicate runs or centre points are needed for "
-                        "F tests; ANOVA table withheld"
-                    ],
+                        f"model is saturated: {n} observations and a model of rank {full_rank} leave no residual degrees of "
+                        "freedom, so no F tests can be made. Replicate runs or centre points (or fewer terms) are needed; "
+                        "ANOVA table withheld"
+                    ]
+                    + self._curvature_note(spec, rsm),
                 )
             )
             return out
@@ -606,17 +620,25 @@ class AnalysisEngine:
             warn.append(
                 "fractional design: some terms are aliased; dependent columns are dropped in the order main effects first"
             )
+        if resid_df < 10:
+            warn.append(
+                f"only {resid_df} residual degrees of freedom: the F tests have little power and the p-values are rough "
+                "guides, not firm evidence"
+            )
+        warn.extend(self._curvature_note(spec, rsm))
         mse = full_rss / resid_df
         rows: list[AnovaRow] = []
         for t in names:
-            others = [u for u in names if not set(t) < set(u) and u != t]
+            # Type II: adjust for every term except those that contain t (a main effect is tested without its interactions
+            # and squared term)
+            others = [u for u in names if u != t and not self._contains(u, t)]
             Xo = np.column_stack([np.ones(n)] + [terms[u] for u in others]) if others else np.ones((n, 1))
             Xw = np.column_stack([Xo, terms[t]])
             rss0, r0 = st.rss_rank(Xo, y)
             rss1, r1 = st.rss_rank(Xw, y)
             df = r1 - r0
             ss = max(rss0 - rss1, 0.0)
-            label = ":".join(t)
+            label = f"{t[0]}^2" if len(t) == 2 and t[0] == t[1] else ":".join(t)
             if df <= 0:
                 warn.append(f"term '{label}' is aliased with other terms and has no degrees of freedom")
                 continue
@@ -641,9 +663,54 @@ class AnalysisEngine:
                 rows=rows,
                 residual_df=float(resid_df),
                 warnings=warn,
+                model_info=info,
             )
         )
         return out
+
+    @staticmethod
+    def _contains(u: tuple, t: tuple) -> bool:
+        """True if term ``u`` contains term ``t`` (every factor of t appears in u at least as often) and u is larger."""
+        from collections import Counter
+
+        cu, ct = Counter(u), Counter(t)
+        return len(u) > len(t) and all(cu[k] >= v for k, v in ct.items())
+
+    @staticmethod
+    def _curvature_note(spec, rsm: bool) -> list[str]:
+        if rsm or not any(f.factor_type == "continuous" for f in spec.treatment_factors):
+            return []
+        return [
+            "the model has no squared terms: curvature in a continuous factor cannot be separated from its linear effect or "
+            "from interactions. A response-surface design (central composite or Box-Behnken) estimates curvature"
+        ]
+
+    def _model_info(self, spec, obs, terms, X, rank, with_int, rsm) -> dict[str, Any]:
+        """What the fitted model can and cannot support: parameters, rank, residual df, unique values, replication."""
+        n = len(obs)
+        by_config: dict[tuple, int] = defaultdict(int)
+        for r, _ in obs:
+            by_config[_key({f.name: r.configuration[f.name] for f in spec.treatment_factors})] += 1
+        replicated = sum(1 for c in by_config.values() if c > 1)
+        pure_error_df = sum(c - 1 for c in by_config.values())
+        return {
+            "n_observations": n,
+            "n_parameters": int(X.shape[1]),
+            "rank": int(rank),
+            "residual_df": int(n - rank),
+            "saturated": bool(n - rank < 1),
+            "interactions_included": bool(with_int),
+            "quadratic_terms_included": bool(any(len(t) == 2 and t[0] == t[1] for t in terms)),
+            "response_surface_design": bool(rsm),
+            "terms": [":".join(t) if not (len(t) == 2 and t[0] == t[1]) else f"{t[0]}^2" for t in terms],
+            "unique_values_per_factor": {
+                f.name: len({repr(r.configuration[f.name]) for r, _ in obs}) for f in spec.treatment_factors
+            },
+            "distinct_configurations": len(by_config),
+            "replicated_configurations": replicated,
+            "pure_error_df": int(pure_error_df),
+            "pure_error_estimable": pure_error_df > 0,
+        }
 
     # ---------------------------------------------------------- regression
     def _regression(self, spec, result, metric, obs, alpha) -> RegressionModel | None:
@@ -651,10 +718,12 @@ class AnalysisEngine:
         if n < 3:
             return None
         rsm = result.plan.method in ("central_composite", "box_behnken")
-        plan = self._fit_plan(spec, obs, categorical=False, quadratic=rsm)
+        plan = self._fit_plan(spec, obs, dummy_discrete=False, quadratic=rsm)
         if plan is None:
             return None
         terms, colnames, X, y, with_int = plan
+        x_rank = np.linalg.matrix_rank(X, tol=1e-9 * max(1.0, np.abs(X).max()))
+        model_info = self._model_info(spec, obs, terms, X, x_rank, with_int, rsm)
         names = ["Intercept"] + [c for t in terms for c in colnames[t]]
         keep = st.independent_columns(X)
         warnings: list[str] = []
@@ -684,7 +753,8 @@ class AnalysisEngine:
                 )
             else:
                 coefs.append(Coefficient(term=nm, estimate=float(fit["beta"][j])))
-        diag: dict[str, Any] = {"n": n, "p": X.shape[1], "residual_df": df}
+        warnings.extend(self._curvature_note(spec, rsm))
+        diag: dict[str, Any] = {"n": n, "p": X.shape[1], "residual_df": df, "model_info": model_info}
         resid = fit["resid"]
         diag["condition_number"] = float(np.linalg.cond(X)) if X.shape[1] else None
         if df >= 1:
@@ -719,6 +789,9 @@ class AnalysisEngine:
             )
         coding = {
             "numeric factors": "coded to [-1, +1] (low -> -1, high -> +1)",
+            "discrete factors": (
+                "regression: coded to [-1, +1] (linear trend over the declared levels); ANOVA: one dummy per later level"
+            ),
             "categorical factors": "dummy coding vs the first level",
             "blocks": "dummy coding vs the first block",
         }

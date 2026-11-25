@@ -30,9 +30,14 @@ def factor_effects(analysis: AnalysisResult, alpha: float, metric: str = "lap_ti
     reg = next((r for r in analysis.regression if r.metric == metric), None)
     effects: list[dict[str, Any]] = []
     inter: list[dict[str, Any]] = []
+    quad: list[dict[str, Any]] = []
     if reg:
         for c in reg.coefficients:
             if c.term == "Intercept":
+                continue
+            if "^" in c.term:  # squared term (response-surface designs): curvature, not a low-to-high effect
+                quad.append({"term": c.term[:-2], "coefficient": c.estimate, "ci_95": list(c.ci_95) if c.ci_95 else None,
+                             "p_value": c.p_value, "significant": c.p_value is not None and c.p_value < alpha})  # fmt: skip
                 continue
             row = {
                 "term": c.term,
@@ -48,6 +53,8 @@ def factor_effects(analysis: AnalysisResult, alpha: float, metric: str = "lap_ti
     return {
         "effects": effects,
         "interactions": inter,
+        "quadratic": quad,
+        "model_info": (reg.diagnostics.get("model_info") if reg else None) or (anova.model_info if anova else None),
         "anova": anova.model_dump(mode="json") if anova else None,
         "r_squared": reg.r_squared if reg else None,
         "adjusted_r_squared": reg.adjusted_r_squared if reg else None,

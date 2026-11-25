@@ -24,6 +24,9 @@ F1 SETUP LAB depends on the **TRIALFORGE SDK** (`trialforge-core>=0.2.0,<0.3`, i
 SDK provides the experiment machinery for Setup Engineering: design generation, run execution, measurement ingestion,
 analysis, optimisation and reports. F1 knowledge (the vehicle model, the OpenF1 import and analysis) lives in this app, not in the SDK.
 
+## Statistical analysis in Setup Engineering
+Front wing, rear wing, suspension and tyre pressure are continuous, so the regression and the Type II ANOVA code them as numbers from -1 to +1 (not as one category per distinct value), and the Level comparisons table is shown only for discrete and categorical factors. The analysis screen has a model summary (parameters, rank, residual degrees of freedom, distinct settings per factor, replication, pure error, squared terms). A random design uses only its run count, so replicates and centre points are greyed out for it; it has no replicated runs, so pure error cannot be estimated. A random or factorial model has no squared terms and cannot separate curvature from the linear effects: use a central composite design (four factors: 16 + 8 + centre points) for curvature.
+
 ## Data sources and FastF1
 
 * **FastF1 is not supported.** It is not a dependency and no code imports it. Historical data comes from OpenF1 only.

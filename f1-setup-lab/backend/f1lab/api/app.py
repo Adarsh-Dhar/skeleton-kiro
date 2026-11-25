@@ -44,7 +44,7 @@ from f1lab.integrations.historical.openf1_client import MIN_YEAR, OpenF1Error
 from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest, SeasonCompareRequest
 from f1lab.integrations.historical.service import HistoricalService
 from f1lab.services import lab as lab_module
-from f1lab.services.lab import LabService
+from f1lab.services.lab import DESIGN_CONTROLS, LabService
 
 log = logging.getLogger("f1lab.api")
 
@@ -170,7 +170,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
             "version": __version__, "trialforge_version": trialforge.__version__,
             "factors": {k: {**v} for k, v in FACTORS.items()},
             "default_factors": {k: s.model_dump() for k, s in default_factors().items()},
-            "methods": [{"id": m, "description": METHOD_INFO[m]} for m in METHODS],
+            "methods": [{"id": m, "description": METHOD_INFO[m], "uses": list(DESIGN_CONTROLS.get({"full_factorial": "factorial"}.get(m, m), ()))} for m in METHODS],
             "optimisers": [{"id": "bayesian", "description": "Gaussian-process surrogate + Expected Improvement, constraint-aware"},
                            {"id": "optuna", "description": "Optuna sampler seeded with your results"},
                            {"id": "random", "description": "Random unseen feasible setups"}, {"id": "grid", "description": "Next unseen grid point"}],

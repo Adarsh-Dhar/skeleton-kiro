@@ -638,6 +638,7 @@ class AnovaTable(TFModel):
     run_ids: list[str] = Field(default_factory=list)
     sum_squares_type: str = "II"
     warnings: list[str] = Field(default_factory=list)
+    model_info: dict[str, Any] = Field(default_factory=dict)  # parameters, rank, replication and what the model can support
 
 
 class Coefficient(TFModel):

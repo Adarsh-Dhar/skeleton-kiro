@@ -47,6 +47,13 @@ def mode_of(spec: ExperimentSpec) -> str:
     return spec.metadata.get("mode", "synthetic")
 
 
+
+# Which design settings each method uses. Anything else the user typed is ignored by the SDK designer and is reported as such.
+DESIGN_CONTROLS: dict[str, tuple[str, ...]] = {
+    "factorial": ("replicates",), "ofat": ("replicates",), "fractional_factorial": ("replicates", "center_points"),
+    "central_composite": ("center_points",), "box_behnken": ("center_points",), "random": ("n_runs",),
+}  # fmt: skip
+
 class NotFound(KeyError):
     pass
 
@@ -101,6 +108,16 @@ class LabService:
         return self._build_synthetic_spec(req, exp_id)
 
     @staticmethod
+    def design_settings_applied(req: ExperimentRequest) -> dict[str, Any]:
+        """Which of the replicate, centre-point and run-count settings this design method actually uses, and the values applied."""
+        d = req.design
+        method = {"full_factorial": "factorial"}.get(d.method, d.method)
+        uses = DESIGN_CONTROLS.get(method, ())
+        values = {"replicates": d.replicates, "center_points": max(d.center_points, 1) if method in ("central_composite", "box_behnken") else d.center_points,
+                  "n_runs": min(d.n_runs, d.run_budget)}  # fmt: skip
+        return {"applied": {k: values[k] for k in uses}, "ignored": {k: values[k] for k in ("replicates", "center_points", "n_runs") if k not in uses}}
+
+    @staticmethod
     def _design_options(req: ExperimentRequest, k: int) -> tuple[str, dict[str, Any]]:
         d = req.design
         method = {"full_factorial": "factorial"}.get(d.method, d.method)
@@ -138,7 +155,8 @@ class LabService:
             measurement_definitions=measurement_definitions(), design_method=method, design_options=options,
             adapter_name=ADAPTER_PREFIX + exp_id, run_budget=d.run_budget, random_seed=d.seed,
             execution=ExecutionPolicy(max_retries=req.simulator.max_retries, max_concurrency=4, run_timeout_seconds=120),
-            metadata={"app": "f1-setup-lab", "synthetic": True, "lab": req.simulator.model_dump(), "min_stability": req.min_stability},
+            metadata={"app": "f1-setup-lab", "synthetic": True, "lab": req.simulator.model_dump(), "min_stability": req.min_stability,
+                      "design_settings": self.design_settings_applied(req)},
         )  # fmt: skip
 
     def create(self, req: ExperimentRequest) -> dict:
@@ -222,7 +240,19 @@ class LabService:
         info = res.plan.design_info
         keep = ("type", "k", "p", "runs", "generators", "defining_relation", "resolution", "alias_structure", "factor_letters",
                 "replicates", "center_points", "complete", "limitations", "alpha", "inscribed", "full_grid_size", "base_factors")  # fmt: skip
+        uses = DESIGN_CONTROLS.get(res.plan.method, ())
+        labels = {"replicates": "replicates", "center_points": "centre points", "n_runs": "run count"}
+        saved = res.spec.metadata.get("design_settings") or {}
+        ignored = saved.get("ignored") or {}
+        not_used = [k for k in labels if k not in uses]
+        summary = f"{res.plan.method.replace('_', ' ')} design: {len(res.plan.runs)} runs. Uses " + (", ".join(labels[k] for k in uses) or "no extra settings") + "."
+        if not_used:
+            summary += " Does not use " + ", ".join(labels[k] for k in not_used) + (
+                "; the values you entered for them were ignored." if any(ignored.get(k) for k in not_used) else ".")
+        if res.plan.method == "random":
+            summary += " A random design has no replicated runs and no centre points, so pure error cannot be estimated from it."
         return {
+            "settings_used": list(uses), "settings_not_used": not_used, "settings_ignored": ignored, "settings_summary": summary,
             "method": res.plan.method, "seed": res.plan.random_seed, "runs_planned": len(res.plan.runs),
             "randomization": res.plan.randomization.get("scheme"),
             **{k: info[k] for k in keep if k in info},

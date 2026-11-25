@@ -1,7 +1,7 @@
 {
   "name": "statistics-owner",
   "description": "Owner of the statistical engine, outcome evaluation, reporting and their independent verification",
-  "prompt": "You are statistics-owner for the TRIALFORGE SDK. Run every command from the repository root (this workspace is the SDK).\nYou may edit ONLY these paths (relative to the workspace root): packages/trialforge-core/src/trialforge/analysis/**, packages/trialforge-core/src/trialforge/evaluation/**, packages/trialforge-core/src/trialforge/reporting/**, packages/trialforge-core/tests/unit/test_statistics.py, packages/trialforge-core/tests/regression/test_analysis.py, packages/trialforge-core/tests/regression/test_audit_defects.py, packages/trialforge-core/tests/regression/test_constraints.py.\nFollow .kiro/steering/statistical-correctness.md. Every new statistic needs a test against an independent reference (scipy, statsmodels, closed form or simulation). Never pool treatments; never report inference the data cannot support.\nRules:\n- The SDK is frozen for the current release: change code only when the user explicitly asks; report a suspected defect instead of fixing it unasked.\n- Never edit a file you do not own. If your task needs a change elsewhere, stop and send a handoff request to the owner listed in .kiro/agents/README.md: the file, the exact change, why it is needed, and what you will do once it lands. Shared types are changed only by contracts-owner; never redefine one locally.\n- The steering files in your resources apply to all of your work.\n- Before reporting done, run `python -m pytest packages/trialforge-core/tests/unit/test_statistics.py packages/trialforge-core/tests/regression -q`; `./scripts/lint.sh`; `python -m pytest`; `python scripts/check_imports.py`, and report the real pass/fail/skip counts.",
+  "prompt": "You are statistics-owner for the TRIALFORGE SDK. Run every command from the repository root (this workspace is the SDK).\nYou may edit ONLY these paths (relative to the workspace root): packages/trialforge-core/src/trialforge/analysis/**, packages/trialforge-core/src/trialforge/evaluation/**, packages/trialforge-core/src/trialforge/reporting/**, packages/trialforge-core/tests/unit/test_statistics.py, packages/trialforge-core/tests/unit/test_continuous_factor_anova.py, packages/trialforge-core/tests/regression/test_analysis.py, packages/trialforge-core/tests/regression/test_audit_defects.py, packages/trialforge-core/tests/regression/test_constraints.py.\nFollow .kiro/steering/statistical-correctness.md. Every new statistic needs a test against an independent reference (scipy, statsmodels, closed form or simulation). Never pool treatments; never report inference the data cannot support.\nRules:\n- The SDK is frozen for the current release: change code only when the user explicitly asks; report a suspected defect instead of fixing it unasked.\n- Never edit a file you do not own. If your task needs a change elsewhere, stop and send a handoff request to the owner listed in .kiro/agents/README.md: the file, the exact change, why it is needed, and what you will do once it lands. Shared types are changed only by contracts-owner; never redefine one locally.\n- The steering files in your resources apply to all of your work.\n- Before reporting done, run `python -m pytest packages/trialforge-core/tests/unit/test_statistics.py packages/trialforge-core/tests/regression -q`; `./scripts/lint.sh`; `python -m pytest`; `python scripts/check_imports.py`, and report the real pass/fail/skip counts.",
   "tools": [
     "read",
     "write",
@@ -20,6 +20,7 @@
           "packages/trialforge-core/src/trialforge/evaluation/**",
           "packages/trialforge-core/src/trialforge/reporting/**",
           "packages/trialforge-core/tests/unit/test_statistics.py",
+          "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
           "packages/trialforge-core/tests/regression/test_analysis.py",
           "packages/trialforge-core/tests/regression/test_audit_defects.py",
           "packages/trialforge-core/tests/regression/test_constraints.py"
@@ -36,6 +37,7 @@
           "packages/trialforge-core/src/trialforge/evaluation/**",
           "packages/trialforge-core/src/trialforge/reporting/**",
           "packages/trialforge-core/tests/unit/test_statistics.py",
+          "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
           "packages/trialforge-core/tests/regression/test_analysis.py",
           "packages/trialforge-core/tests/regression/test_audit_defects.py",
           "packages/trialforge-core/tests/regression/test_constraints.py"
@@ -49,6 +51,7 @@
           "packages/trialforge-core/src/trialforge/evaluation/**",
           "packages/trialforge-core/src/trialforge/reporting/**",
           "packages/trialforge-core/tests/unit/test_statistics.py",
+          "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
           "packages/trialforge-core/tests/regression/test_analysis.py",
           "packages/trialforge-core/tests/regression/test_audit_defects.py",
           "packages/trialforge-core/tests/regression/test_constraints.py"
@@ -65,6 +68,7 @@
           "packages/trialforge-core/src/trialforge/evaluation/**",
           "packages/trialforge-core/src/trialforge/reporting/**",
           "packages/trialforge-core/tests/unit/test_statistics.py",
+          "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
           "packages/trialforge-core/tests/regression/test_analysis.py",
           "packages/trialforge-core/tests/regression/test_audit_defects.py",
           "packages/trialforge-core/tests/regression/test_constraints.py"
@@ -78,6 +82,7 @@
           "packages/trialforge-core/src/trialforge/evaluation/**",
           "packages/trialforge-core/src/trialforge/reporting/**",
           "packages/trialforge-core/tests/unit/test_statistics.py",
+          "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
           "packages/trialforge-core/tests/regression/test_analysis.py",
           "packages/trialforge-core/tests/regression/test_audit_defects.py",
           "packages/trialforge-core/tests/regression/test_constraints.py"
@@ -94,6 +99,7 @@
           "packages/trialforge-core/src/trialforge/evaluation/**",
           "packages/trialforge-core/src/trialforge/reporting/**",
           "packages/trialforge-core/tests/unit/test_statistics.py",
+          "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
           "packages/trialforge-core/tests/regression/test_analysis.py",
           "packages/trialforge-core/tests/regression/test_audit_defects.py",
           "packages/trialforge-core/tests/regression/test_constraints.py"
@@ -107,6 +113,7 @@
           "packages/trialforge-core/src/trialforge/evaluation/**",
           "packages/trialforge-core/src/trialforge/reporting/**",
           "packages/trialforge-core/tests/unit/test_statistics.py",
+          "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
           "packages/trialforge-core/tests/regression/test_analysis.py",
           "packages/trialforge-core/tests/regression/test_audit_defects.py",
           "packages/trialforge-core/tests/regression/test_constraints.py"
@@ -123,6 +130,7 @@
           "packages/trialforge-core/src/trialforge/evaluation/**",
           "packages/trialforge-core/src/trialforge/reporting/**",
           "packages/trialforge-core/tests/unit/test_statistics.py",
+          "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
           "packages/trialforge-core/tests/regression/test_analysis.py",
           "packages/trialforge-core/tests/regression/test_audit_defects.py",
           "packages/trialforge-core/tests/regression/test_constraints.py"

@@ -101,14 +101,23 @@ async function viewNew() {
   </div><div>
     <div class="panel"><h2>4 &middot; Design</h2><div class="field"><label for="method">Method</label><select id="method">${META.methods.map((m) => `<option value="${m.id}">${esc(m.id.replaceAll('_', ' '))}</option>`).join('')}</select><div class="hint" id="mdesc"></div></div>
       <div class="grid g2"><div class="field"><label for="reps">Replicates</label><input id="reps" type="number" min="1" max="10" value="2"></div><div class="field"><label for="cp">Centre points</label><input id="cp" type="number" min="0" max="10" value="2"></div>
-      <div class="field"><label for="nruns">Runs (random only)</label><input id="nruns" type="number" min="3" max="200" value="16"></div><div class="field"><label for="budget">Run budget</label><input id="budget" type="number" min="4" max="200" value="40"></div>
-      <div class="field"><label for="seed">Random seed</label><input id="seed" type="number" min="0" value="1"></div></div></div>
+      <div class="field"><label for="nruns">Runs (random design only)</label><input id="nruns" type="number" min="3" max="200" value="16"></div><div class="field"><label for="budget">Run budget</label><input id="budget" type="number" min="4" max="200" value="40"></div>
+      <div class="field"><label for="seed">Random seed</label><input id="seed" type="number" min="0" value="1"></div></div><p class="hint" id="duse"></p></div>
     <div class="panel"><h2>5 &middot; Simulator</h2><div class="grid g2"><div class="field"><label for="lat">Seconds per run</label><input id="lat" type="number" step="any" min="0" max="5" value="0.4"></div>
       <div class="field"><label for="laps">Laps per stint</label><input id="laps" type="number" min="3" max="20" value="5"></div><div class="field"><label for="retries">Retries on failure</label><input id="retries" type="number" min="0" max="5" value="1"></div>
       <div class="field"><label for="fault">Demo fault rate (0-1)</label><input id="fault" type="number" step="any" min="0" max="1" value="0"></div></div><p class="hint">Fault injection makes the first attempt of some runs fail, to demonstrate retries and failure handling.</p></div>
     <button class="btn primary" type="submit" style="width:100%;padding:12px">Generate design</button></div></form>`;
   const md = () => { $('#mdesc').textContent = META.methods.find((m) => m.id === $('#method').value).description; };
-  $('#method').addEventListener('change', md); md();
+  const applyControls = () => {
+    const uses = META.methods.find((m) => m.id === $('#method').value).uses || [];
+    [['reps', 'replicates'], ['cp', 'center_points'], ['nruns', 'n_runs']].forEach(([el, key]) => {
+      $(`#${el}`).disabled = !uses.includes(key);
+      $(`#${el}`).closest('.field').classList.toggle('dim', !uses.includes(key));
+    });
+    const names = { replicates: 'replicates', center_points: 'centre points', n_runs: 'run count' };
+    $('#duse').textContent = `This method uses: ${uses.map((k) => names[k]).join(', ') || 'no extra settings'}. Greyed-out settings are not used and are ignored.${$('#method').value === 'random' ? ' A random design has no replicated runs and no centre points, so pure error cannot be estimated from it.' : ''}`;
+  };
+  $('#method').addEventListener('change', () => { md(); applyControls(); }); md(); applyControls();
   $('#f').addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const factors = {};
@@ -133,6 +142,7 @@ async function viewDesign(id) {
     <div class="kpi"><b>${g.k !== undefined && g.p !== undefined ? `2<sup>${g.k}${g.p ? '-' + g.p : ''}</sup>` : g.runs_planned}</b><span>${g.p ? 'fractional design' : 'design size'}</span></div>
     <div class="kpi"><b>${g.runs_planned}</b><span>planned runs</span></div><div class="kpi"><b>${g.resolution ? 'Res ' + ['', '', '', 'III', 'IV', 'V', 'VI'][g.resolution] : 'full'}</b><span>resolution</span></div>
     <div class="kpi"><b>${esc(g.seed)}</b><span>seed (reproducible)</span></div></div>
+    ${g.settings_summary ? `<div class="note info" id="design-settings">${esc(g.settings_summary)}</div>` : ''}
     ${g.defining_relation?.length ? `<div class="note info">Defining relation <code>${esc(g.defining_relation.join(', '))}</code> &mdash; main effects are aliased with higher-order interactions; two-factor interactions are aliased in pairs (see below).</div>` : ''}
     ${(g.limitations || []).map((l) => `<div class="note">${esc(l.replace('see alias_structure', 'see the alias table'))}</div>`).join('')}
     <div class="grid g21"><div class="panel"><h2>Generated setups (run order is randomised)</h2><div style="overflow:auto;max-height:520px"><table><thead><tr><th>#</th>${names.map((n) => `<th>${esc(flabel(d, n))}</th>`).join('')}<th>Replicate</th><th>Point</th></tr></thead><tbody>
@@ -276,6 +286,25 @@ function interactionPlot(d, a, b) {
   const series = [-1, 1].map((lb, i) => ({ name: `${label(b)} ${lb < 0 ? 'low' : 'high'}`, color: i ? '#e10600' : '#4aa8ff', pts: [-1, 1].map((la) => { const c = rows.filter((r) => Math.sign(r.coded[a]) === la && Math.sign(r.coded[b]) === lb); return c.length ? { x: la, y: mean(c.map((r) => r.outcomes.lap_time)) } : null; }).filter(Boolean) }));
   return Charts.lines({ series, xLabel: `${label(a)} (-1 low, +1 high)`, yLabel: 'mean lap (s)', xmin: -1.3, xmax: 1.3 });
 }
+/* What the fitted model can support: parameters, rank, residual df, unique settings, replication, curvature. */
+function modelSummary(fx) {
+  const mi = fx.model_info;
+  if (!mi) return '';
+  const uniq = Object.entries(mi.unique_values_per_factor || {}).map(([k, v]) => `${esc(label(k))}: ${v}`).join(' &middot; ');
+  const quad = (fx.quadratic || []).map((q) => `<tr><td>${esc(label(q.term))}&sup2;</td><td class="num">${fmt(q.coefficient, 4)}</td><td class="num ${q.significant ? 'good' : ''}">${q.p_value == null ? '' : pfmt(q.p_value)}</td></tr>`).join('');
+  return `<h3>Model summary</h3><table id="model-summary"><tbody>
+    <tr><td>Observations</td><td class="num">${mi.n_observations}</td></tr><tr><td>Model parameters (incl. intercept)</td><td class="num">${mi.n_parameters}</td></tr>
+    <tr><td>Model rank</td><td class="num">${mi.rank}</td></tr><tr><td>Residual degrees of freedom</td><td class="num">${mi.residual_df}</td></tr>
+    <tr><td>Interaction terms</td><td class="num">${mi.interactions_included ? 'included' : 'omitted'}</td></tr>
+    <tr><td>Squared (curvature) terms</td><td class="num">${mi.quadratic_terms_included ? 'included' : 'not in model'}</td></tr>
+    <tr><td>Distinct settings per factor</td><td class="num">${uniq}</td></tr>
+    <tr><td>Replicated configurations</td><td class="num">${mi.replicated_configurations}</td></tr>
+    <tr><td>Pure error</td><td class="num">${mi.pure_error_estimable ? `estimable (${mi.pure_error_df} df)` : 'not estimable (no repeated configuration)'}</td></tr></tbody></table>
+    ${mi.residual_df > 0 && mi.residual_df < 10 ? `<div class="note">Only ${mi.residual_df} residual degrees of freedom: treat p-values and intervals as rough guides.</div>` : ''}
+    ${mi.saturated ? '<div class="note">The model is saturated: no F-tests or intervals are possible.</div>' : ''}
+    ${quad ? `<h3>Squared terms</h3><table><thead><tr><th>Term</th><th class="num">Coef.</th><th class="num">p</th></tr></thead><tbody>${quad}</tbody></table>` : ''}`;
+}
+
 async function viewAnalysis(id) {
   const d = await api('GET', `/api/experiments/${id}`);
   view().innerHTML = expHeader(d, 'analysis') + `<div class="panel"><div class="row"><div><label for="alpha">Significance level</label><select id="alpha" style="width:auto"><option>0.01</option><option selected>0.05</option><option>0.10</option></select></div>
@@ -290,15 +319,16 @@ async function viewAnalysis(id) {
       const sc = Object.values(a.runs).filter((r) => r.status === 'completed' && r.outcomes['stability'] !== undefined).map((r) => ({ x: r.outcomes.lap_time, y: r.outcomes['stability'], cls: r.run_id === a.best_run_id ? 'pt-best' : r.feasible ? 'pt-ok' : 'pt-bad', r: r.run_id === a.best_run_id ? 7 : 4.5, title: `Run ${r.order + 1}` }));
       const pair = names.length >= 2 ? [names[0], names[1]] : null;
       $('#res').innerHTML = recoCard(a.recommendation) + `<div class="grid g2"><div class="panel"><h2>Factor effects on lap time (low &rarr; high of tested range)</h2>${Charts.bars({ items: eff, goodNegative: true, xLabel: 'seconds (negative = faster); whiskers = 95% CI; * significant' })}
-      <p class="hint">R&sup2; ${fmt(fx.r_squared, 3)} &middot; adj. ${fmt(fx.adjusted_r_squared, 3)} &middot; residual df ${fx.residual_df ?? 'n/a'}. Bars show the <em>linear</em> effect of moving a factor from the low to the high end (regression on coded factors). The ANOVA below treats levels as categories, so it can also flag <em>curvature</em> (centre vs ends) that a straight line misses &mdash; a factor can be non-significant here and significant there.</p></div>
+      <p class="hint">R&sup2; ${fmt(fx.r_squared, 3)} &middot; adj. ${fmt(fx.adjusted_r_squared, 3)} &middot; residual df ${fx.residual_df ?? 'n/a'}. Bars show the <em>linear</em> effect of moving a factor from the low to the high end (regression on coded factors, each continuous factor as a number, not as categories).${fx.quadratic && fx.quadratic.length ? ' Squared terms (curvature) are listed under the model summary.' : ' This model has no squared terms, so curvature is not modelled.'}</p>${modelSummary(fx)}</div>
       <div class="panel"><h2>Feasibility: stability vs lap time</h2>${Charts.scatter({ points: sc, lines: d.min_stability != null ? [{ h: d.min_stability, label: `min ${d.min_stability}` }] : [], shade: d.min_stability != null ? { y0: 0, y1: d.min_stability } : null, ymin: sc.length ? Math.min(...sc.map((p) => p.y), d.min_stability - 3) : undefined, xLabel: 'mean lap (s)', yLabel: 'stability' })}
       <div class="legend"><span>${a.feasible_run_ids.length} feasible &middot; ${a.infeasible.length} infeasible</span><span>Pareto-optimal runs: ${a.pareto_run_ids.length}</span></div></div></div>
-      <div class="grid g2"><div class="panel"><h2>ANOVA (Type II) &mdash; lap time</h2>${fx.anova && fx.anova.rows.length ? `<table><thead><tr><th>Term</th><th class="num">SS</th><th class="num">df</th><th class="num">F</th><th class="num">p</th></tr></thead><tbody>${fx.anova.rows.map((r) => `<tr><td>${esc(label(r.term))}</td><td class="num">${fmt(r.sum_squares, 4)}</td><td class="num">${r.df}</td><td class="num">${r.f_statistic == null ? '' : fmt(r.f_statistic, 2)}</td><td class="num ${r.p_value != null && r.p_value < a.alpha ? 'good' : ''}">${r.p_value == null ? '' : pfmt(r.p_value)}</td></tr>`).join('')}</tbody></table>${warnBlock(fx.anova.warnings || [])}` : '<div class="note">ANOVA not available (not enough residual degrees of freedom).</div>'}</div>
+      <div class="grid g2"><div class="panel"><h2>ANOVA (Type II) &mdash; lap time</h2>${fx.anova && fx.anova.rows.length ? `<table><thead><tr><th>Term</th><th class="num">SS</th><th class="num">df</th><th class="num">F</th><th class="num">p</th></tr></thead><tbody>${fx.anova.rows.map((r) => `<tr><td>${esc(label(r.term))}</td><td class="num">${fmt(r.sum_squares, 4)}</td><td class="num">${r.df}</td><td class="num">${r.f_statistic == null ? '' : fmt(r.f_statistic, 2)}</td><td class="num ${r.p_value != null && r.p_value < a.alpha ? 'good' : ''}">${r.p_value == null ? '' : pfmt(r.p_value)}</td></tr>`).join('')}</tbody></table>${warnBlock(fx.anova.warnings || [])}` : `<div class="note">ANOVA not available: ${esc(((fx.anova && fx.anova.warnings) || []).find((w) => /saturated/.test(w)) || 'the model could not be fitted with the runs available.')}</div>`}</div>
       <div class="panel"><h2>Interactions</h2>${fx.interactions.length ? `<table><thead><tr><th>Term</th><th class="num">Coef.</th><th class="num">p</th></tr></thead><tbody>${fx.interactions.map((i) => `<tr><td>${esc(i.term.split(':').map(label).join(' × '))}</td><td class="num">${fmt(i.coefficient, 3)}</td><td class="num ${i.significant ? 'good' : ''}">${pfmt(i.p_value)}</td></tr>`).join('')}</tbody></table>` : '<div class="dim">No interaction terms estimable.</div>'}
       ${pair ? `<h3>Interaction plot: ${esc(label(pair[0]))} &times; ${esc(label(pair[1]))}</h3>${interactionPlot(a, pair[0], pair[1])}` : ''}</div></div>
-      <div class="panel"><h2>Level comparisons (95% CI)</h2><table><thead><tr><th>Factor</th><th>Level vs reference</th><th class="num">Diff (s)</th><th class="num">95% CI</th><th class="num">p</th><th>Evidence</th></tr></thead><tbody>
-      ${a.main_effects.map((e) => `<tr><td>${esc(label(e.factor))}</td><td class="mono">${fmt(e.level, 2)} vs ${fmt(e.control_level, 2)}</td><td class="num">${fmt(e.mean_difference, 3)}</td><td class="num">${e.confidence_interval_95 ? `${fmt(e.confidence_interval_95[0], 3)} .. ${fmt(e.confidence_interval_95[1], 3)}` : 'withheld'}</td><td class="num">${pfmt(e.p_value)}</td><td><span class="chip ${e.evidence === 'sufficient' ? 'completed' : 'cancelled'}">${esc(e.evidence)}</span></td></tr>`).join('') || '<tr><td colspan="6" class="dim">No comparisons</td></tr>'}</tbody></table>
-      <p class="hint">Marginal comparisons pool the other factors; the regression/ANOVA above are the adjusted results. Intervals are withheld when replication is insufficient.</p></div>
+      <div class="panel"><h2>Level comparisons (95% CI)</h2>${a.main_effects.length ? `<table><thead><tr><th>Factor</th><th>Level vs reference</th><th class="num">Diff (s)</th><th class="num">95% CI</th><th class="num">p</th><th>Evidence</th></tr></thead><tbody>
+      ${a.main_effects.map((e) => `<tr><td>${esc(label(e.factor))}</td><td class="mono">${fmt(e.level, 2)} vs ${fmt(e.control_level, 2)}</td><td class="num">${fmt(e.mean_difference, 3)}</td><td class="num">${e.confidence_interval_95 ? `${fmt(e.confidence_interval_95[0], 3)} .. ${fmt(e.confidence_interval_95[1], 3)}` : 'withheld'}</td><td class="num">${pfmt(e.p_value)}</td><td><span class="chip ${e.evidence === 'sufficient' ? 'completed' : 'cancelled'}">${esc(e.evidence)}</span></td></tr>`).join('')}</tbody></table>
+      <p class="hint">Marginal comparisons pool the other factors; the regression/ANOVA above are the adjusted results. Intervals are withheld when replication is insufficient.</p>` : ''}
+      <p class="hint" id="level-note">Continuous factors are reported using regression-based low-to-high effects. Individual level comparisons are displayed only for discrete and categorical factors.</p></div>
       ${a.warnings.length || fx.regression_warnings.length ? `<div class="panel"><h2>Warnings</h2><ul class="warnlist">${[...a.warnings, ...fx.regression_warnings].map((w) => `<li>${esc(w.replace(/^aliased\/dependent terms dropped \(earlier terms win\): (.*)$/, (_, t) => 'Terms that could not be estimated separately (aliased in the fractional design): ' + t))}</li>`).join('')}</ul></div>` : ''}
       <div class="panel"><h2>Assumptions &amp; limitations</h2><ul class="warnlist">${[...a.assumptions, ...a.limitations].map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>`;
     } catch (e) { $('#busy').textContent = ''; $('#res').innerHTML = errorsBox(e); }

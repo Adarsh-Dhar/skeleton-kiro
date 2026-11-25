@@ -33,6 +33,7 @@
         "packages/trialforge-core/src/trialforge/evaluation/**",
         "packages/trialforge-core/src/trialforge/reporting/**",
         "packages/trialforge-core/tests/unit/test_statistics.py",
+        "packages/trialforge-core/tests/unit/test_continuous_factor_anova.py",
         "packages/trialforge-core/tests/regression/test_analysis.py",
         "packages/trialforge-core/tests/regression/test_audit_defects.py",
         "packages/trialforge-core/tests/regression/test_constraints.py"
