@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "WATTWISE LAB: household electricity experiments (EV charging and appliance schedules) built on trialforge-core"
 requires-python = ">=3.11"
 dependencies = [
-  "trialforge-core>=0.2.1,<0.3",   # install the wheel from ../skeleton/dist first (see README)
+  "trialforge-core[optuna]>=0.2.1,<0.3",   # [optuna] enables the "optuna" optimiser; install the wheel from ../skeleton/dist first (see README)
   "trialforge-db>=0.1.0",          # root database package (install from the repo root: pip install -e ..)
   "fastapi>=0.110",
   "uvicorn>=0.29",

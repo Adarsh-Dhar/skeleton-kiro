@@ -180,6 +180,7 @@ async function viewHousehold() {
     <td><input data-f="start" type="number" step="0.25" min="0" max="24" value="${p.start}" aria-label="Start hour" style="width:58px"></td><td><input data-f="end" type="number" step="0.25" min="0" max="24" value="${p.end}" aria-label="End hour" style="width:58px"></td>
     <td><input data-f="price" type="number" step="0.001" min="0" max="10" value="${p.price}" aria-label="Price per kWh" style="width:70px"></td>
     <td><select data-f="days" aria-label="Days" style="width:92px">${['all', 'weekday', 'weekend'].map((d) => `<option value="${d}" ${(p.days || 'all') === d ? 'selected' : ''}>${d}</option>`).join('')}</select></td>
+    <td><span class="wdays" role="group" aria-label="Weekdays this price applies to (none ticked = every day)">${['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((l, d) => `<label style="margin-right:3px" title="${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][d]}"><input type="checkbox" data-wd="${d}" ${(p.weekdays || []).includes(d) ? 'checked' : ''} aria-label="${['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][d]}">${l}</label>`).join('')}</span></td>
     <td><input data-f="months" value="${esc((p.months || []).join(','))}" placeholder="all" aria-label="Months (1-12, comma separated)" style="width:60px"></td>
     <td><button type="button" class="btn small danger" data-del="${i}" aria-label="Remove period" title="Remove period">&times;</button></td></tr>`).join('');
   const optNum = (id) => { const v = $(id).value.trim(); return v === '' ? null : parseFloat(v); };
@@ -193,6 +194,8 @@ async function viewHousehold() {
         const p = { label: $('[data-f=label]', tr).value, start: parseFloat($('[data-f=start]', tr).value), end: parseFloat($('[data-f=end]', tr).value), price: parseFloat($('[data-f=price]', tr).value) };
         const days = $('[data-f=days]', tr).value, months = $('[data-f=months]', tr).value.split(',').map((m) => parseInt(m, 10)).filter((m) => Number.isInteger(m));
         if (days !== 'all') p.days = days;
+        const wds = $$('[data-wd]', tr).filter((c) => c.checked).map((c) => parseInt(c.dataset.wd, 10));
+        if (wds.length) p.weekdays = wds;
         if (months.length) p.months = months;
         return p;
       }) };
@@ -202,7 +205,7 @@ async function viewHousehold() {
     const bd = optNum('#tbilld'); if (bd !== null) t.billing_days = Math.round(bd);
     if ($('#tdbasis').value !== 'daily') t.demand_basis = $('#tdbasis').value;
     const tiers = readTiers(); if (tiers.length) { t.tiers = tiers; t.tier_basis = $('#ttbasis').value; }
-    if (t.periods.some((p) => p.days || p.months)) t.simulation_day = { month: parseInt($('#tsimm').value, 10) || 1, day_type: $('#tsimd').value };
+    if (t.periods.some((p) => p.days || p.months || p.weekdays)) t.simulation_day = { month: parseInt($('#tsimm').value, 10) || 1, day_type: $('#tsimd').value };
     return t;
   };
   const validate = async () => {
@@ -221,10 +224,10 @@ async function viewHousehold() {
     <div class="panel"><h2>Electricity tariff</h2><div class="field"><label for="tsel">Tariff</label>${tariffSelect('tsel', HH.tariff_id)}</div>
       <div class="field"><label for="tname">Name</label><input id="tname" value="${esc(editing.name)}" maxlength="60"></div>
       <div id="tband">${bandBar(editing)}</div>
-      <div class="scroll" style="overflow-x:auto"><table><thead><tr><th>Period</th><th>From (h)</th><th>To (h)</th><th>Price / kWh</th><th>Days</th><th>Months</th><th></th></tr></thead><tbody id="periods"></tbody></table></div>
+      <div class="scroll" style="overflow-x:auto"><table><thead><tr><th>Period</th><th>From (h)</th><th>To (h)</th><th>Price / kWh</th><th>Days</th><th>Weekdays</th><th>Months</th><th></th></tr></thead><tbody id="periods"></tbody></table></div>
       <div class="row" style="margin:8px 0"><button type="button" class="btn small" id="addp">Add period</button><span class="hint">Hours run 0&ndash;24; a period such as 23 to 7 wraps past midnight.</span></div>
       <div class="field"><label for="tdemand">Demand charge per kW of peak</label><input id="tdemand" type="number" step="0.01" min="0" max="100" value="${editing.demand_charge_per_kw || 0}"></div>
-      <details id="tadv" ${['fixed_daily_charge', 'fixed_monthly_charge', 'surcharge_per_kwh', 'tax_pct', 'export_credit_per_kwh', 'tiers', 'demand_basis'].some((k) => editing[k]) || editing.periods.some((p) => p.days || p.months) ? 'open' : ''}>
+      <details id="tadv" ${['fixed_daily_charge', 'fixed_monthly_charge', 'surcharge_per_kwh', 'tax_pct', 'export_credit_per_kwh', 'tiers', 'demand_basis'].some((k) => editing[k]) || editing.periods.some((p) => p.days || p.months || (p.weekdays || []).length) ? 'open' : ''}>
         <summary>Advanced charges (copy them from your bill; leave empty if your bill has none)</summary>
         <div class="grid g2">
           <div class="field"><label for="tfixd">Fixed charge per day</label><input id="tfixd" type="number" step="0.01" min="0" max="1000" value="${editing.fixed_daily_charge ?? ''}"></div>
@@ -238,9 +241,9 @@ async function viewHousehold() {
         <h3>Tiered pricing (slabs)</h3><p class="hint">Each tier adds to the period price for the kWh up to its limit; the last tier has no limit. Leave empty for no tiers.</p>
         <table><thead><tr><th>Up to kWh</th><th>Extra price / kWh</th><th></th></tr></thead><tbody id="tiers"></tbody></table>
         <button type="button" class="btn small" id="addtier">Add tier</button>
-        <h3>Day used by the one-day simulator</h3><p class="hint">Only matters when periods are limited to weekdays/weekends or months. Historical meter data is priced on each reading's real date.</p>
+        <h3>Day used by the one-day simulator</h3><p class="hint">Only matters when periods are limited to days, weekdays or months. Historical meter data is priced on each reading's real date.</p>
         <div class="grid g2"><div class="field"><label for="tsimm">Month</label><input id="tsimm" type="number" min="1" max="12" value="${editing.simulation_day?.month ?? 1}"></div>
-          <div class="field"><label for="tsimd">Day type</label><select id="tsimd"><option value="weekday" ${(editing.simulation_day?.day_type || 'weekday') === 'weekday' ? 'selected' : ''}>weekday</option><option value="weekend" ${editing.simulation_day?.day_type === 'weekend' ? 'selected' : ''}>weekend</option></select></div></div>
+          <div class="field"><label for="tsimd">Day type</label><select id="tsimd">${[['weekday', 'weekday'], ['weekend', 'weekend'], ['mon', 'Monday'], ['tue', 'Tuesday'], ['wed', 'Wednesday'], ['thu', 'Thursday'], ['fri', 'Friday'], ['sat', 'Saturday'], ['sun', 'Sunday']].map(([v, l]) => `<option value="${v}" ${(editing.simulation_day?.day_type || 'weekday') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
       </details>
       <div id="tvalid"></div>
       <div class="row"><button type="button" class="btn primary" id="tsave">Save changes</button><button type="button" class="btn" id="tnew">Save as new tariff</button><button type="button" class="btn danger" id="tdel">Delete</button></div></div>

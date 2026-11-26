@@ -83,8 +83,7 @@ class Period(BaseModel):
     price: float = Field(ge=0, le=10)
     days: Literal["all", "weekday", "weekend"] = "all"
     months: list[int] | None = Field(None, description="Months (1-12) this price applies to; default all (seasonal rates)")
-
-
+    weekdays: list[int] | None = Field(None, description="Weekdays this price applies to: 0 = Monday ... 6 = Sunday; default every day")
 class Tier(BaseModel):
     up_to_kwh: float | None = Field(None, gt=0, description="Upper bound of this tier; null for the last tier")
     adder_per_kwh: float = Field(0.0, ge=-10, le=10, description="Added to the time-of-use price inside this tier")
@@ -92,9 +91,7 @@ class Tier(BaseModel):
 
 class SimulationDay(BaseModel):
     month: int = Field(1, ge=1, le=12)
-    day_type: Literal["weekday", "weekend"] = "weekday"
-
-
+    day_type: Literal["weekday", "weekend", "mon", "tue", "wed", "thu", "fri", "sat", "sun"] = "weekday"
 class TariffIn(BaseModel):
     """Original fields plus optional generic extensions (see wattwise.adapters.tariff_model). Leave them empty unless
     your own tariff/bill has them; nothing here is a real utility's tariff."""

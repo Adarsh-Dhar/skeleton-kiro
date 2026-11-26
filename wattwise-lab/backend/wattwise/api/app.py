@@ -5,6 +5,7 @@ Every capability of the lab is reachable over HTTP; the browser frontend (``fron
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from contextlib import asynccontextmanager
@@ -75,6 +76,15 @@ def _issue(field: str, message: str) -> dict:
     return {"field": field, "message": message}
 
 
+def optuna_available() -> bool:
+    """True when Optuna can be imported (the 'optuna' optimiser needs it)."""
+    return importlib.util.find_spec("optuna") is not None
+def available_optimisers() -> list[dict[str, str]]:
+    opts = [{"id": "bayesian", "description": "Gaussian-process surrogate + Expected Improvement, constraint-aware"}]
+    if optuna_available():
+        opts.append({"id": "optuna", "description": "Optuna sampler seeded with your results"})
+    opts += [{"id": "random", "description": "Random unseen feasible schedules"}, {"id": "grid", "description": "Next unseen grid point"}]
+    return opts
 def create_app(db_path: str | None = None, frontend_dir: str | None = None, data_dir: str | None = None) -> FastAPI:
     lab = LabService(db_path)  # db_path is for tests; production uses the root database (TRIALFORGE_DB)
 
@@ -162,9 +172,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
             "default_ev": dict(DEFAULT_EV), "default_appliances": [dict(a) for a in DEFAULT_APPLIANCES],
             "metrics": dict(METRIC_UNITS), "tariffs": lab.tariffs.list(),
             "methods": [{"id": m, "description": METHOD_INFO[m]} for m in METHODS],
-            "optimisers": [{"id": "bayesian", "description": "Gaussian-process surrogate + Expected Improvement, constraint-aware"},
-                           {"id": "optuna", "description": "Optuna sampler seeded with your results"},
-                           {"id": "random", "description": "Random unseen feasible schedules"}, {"id": "grid", "description": "Next unseen grid point"}],
+            "optimisers": available_optimisers(),
             "provenance_badges": {k: provenance_badge(k) for k in PROVENANCE_LABELS},
             "meter_columns": ["timestamp", "power_kw | power_w | power"],
         }  # fmt: skip

@@ -6,6 +6,7 @@ priced by exactly the original code path, so existing tariffs and experiments pr
 
 Extensions (generic structure only; real values must come from the user's own tariff/bill):
   periods[i].days                "all" | "weekday" | "weekend"   (default "all")
+  periods[i].weekdays            [0..6]  (0 = Monday ... 6 = Sunday; default every day; combined with ``days`` by AND)
   periods[i].months              [1..12]                          (default all months; seasonal rates)
   fixed_daily_charge             per day
   fixed_monthly_charge           per billing month (prorated per day as monthly / billing_days)
@@ -27,22 +28,21 @@ from typing import Any
 EXTENSION_KEYS = ("fixed_daily_charge", "fixed_monthly_charge", "tiers", "tier_basis", "surcharge_per_kwh", "tax_pct",
                   "export_credit_per_kwh", "demand_basis", "billing_days", "simulation_day")  # fmt: skip
 DAY_TYPES = ("weekday", "weekend")
-
-
+WEEKDAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")  # index = datetime.weekday()
+DAY_CHOICES = (*DAY_TYPES, *WEEKDAY_NAMES)  # what a pricing context day may be: a day type or one named weekday
+def _limits_dates(p: dict) -> bool:
+    return (p.get("days", "all") or "all") != "all" or bool(p.get("months")) or bool(p.get("weekdays"))
 def is_extended(t: dict[str, Any]) -> bool:
     if any(t.get(k) not in (None, 0, 0.0, [], {}, "", "daily") for k in EXTENSION_KEYS):
         return True
-    return any(p.get("days", "all") != "all" or p.get("months") for p in t.get("periods") or [])
-
-
+    return any(_limits_dates(p) for p in t.get("periods") or [])
 def date_dependent(t: dict[str, Any]) -> bool:
-    return any(p.get("days", "all") != "all" or p.get("months") for p in t.get("periods") or [])
-
-
+    return any(_limits_dates(p) for p in t.get("periods") or [])
 def day_type_of(d: datetime) -> str:
-    return "weekend" if d.weekday() >= 5 else "weekday"
-
-
+    """The pricing day of a date: the weekday name (mon..sun). ``applies`` matches it against both ``days`` and ``weekdays``."""
+    return WEEKDAY_NAMES[d.weekday()]
+def _type_of_day(day: str) -> str:
+    return "weekend" if day in ("sat", "sun", "weekend") else "weekday"
 def _in_period(p: dict, hod: float) -> bool:
     s, e = float(p["start"]), float(p["end"])
     return (s <= hod < e) if s < e else (hod >= s or hod < e)
@@ -50,8 +50,15 @@ def _in_period(p: dict, hod: float) -> bool:
 
 def applies(p: dict, month: int | None, day_type: str | None) -> bool:
     days = p.get("days", "all") or "all"
-    if days != "all" and day_type is not None and days != day_type:
+    if days != "all" and day_type is not None and days != _type_of_day(day_type):
         return False
+    wds = p.get("weekdays")
+    if wds and day_type is not None:
+        if day_type in WEEKDAY_NAMES:
+            if WEEKDAY_NAMES.index(day_type) not in wds:
+                return False
+        elif not any(_type_of_day(WEEKDAY_NAMES[w]) == day_type for w in wds):  # coarse day type: any listed weekday of that type
+            return False
     months = p.get("months")
     return not (months and month is not None and month not in months)
 
@@ -61,8 +68,9 @@ def contexts(t: dict[str, Any]) -> list[tuple[int | None, str | None]]:
     periods = t.get("periods") or []
     months = sorted({m for p in periods for m in (p.get("months") or [])})
     use_days = any((p.get("days", "all") or "all") != "all" for p in periods)
+    use_weekdays = any(p.get("weekdays") for p in periods)
     ms: list[int | None] = list(range(1, 13)) if months else [None]
-    ds: list[str | None] = list(DAY_TYPES) if use_days else [None]
+    ds: list[str | None] = list(WEEKDAY_NAMES) if use_weekdays else list(DAY_TYPES) if use_days else [None]
     return [(m, d) for m in ms for d in ds]
 
 
@@ -86,6 +94,9 @@ def validate_extensions(t: dict[str, Any]) -> list[str]:
     for i, p in enumerate(t.get("periods") or [], 1):
         if (p.get("days", "all") or "all") not in ("all", *DAY_TYPES):
             issues.append(f"period {i}: days must be 'all', 'weekday' or 'weekend'")
+        wds = p.get("weekdays")
+        if wds is not None and (not isinstance(wds, list) or not wds or not all(isinstance(w, int) and not isinstance(w, bool) and 0 <= w <= 6 for w in wds)):
+            issues.append(f"period {i}: weekdays must be a non-empty list of numbers 0 (Monday) to 6 (Sunday)")
         ms = p.get("months")
         if ms is not None and (not isinstance(ms, list) or not all(isinstance(m, int) and 1 <= m <= 12 for m in ms)):
             issues.append(f"period {i}: months must be a list of month numbers 1-12")
@@ -120,8 +131,8 @@ def validate_extensions(t: dict[str, Any]) -> list[str]:
         issues.append("billing_days must be an integer between 1 and 366")
     sd = t.get("simulation_day")
     if sd is not None:
-        if not isinstance(sd, dict) or not (1 <= int(sd.get("month", 1)) <= 12) or sd.get("day_type", "weekday") not in DAY_TYPES:
-            issues.append("simulation_day must be {month: 1-12, day_type: weekday|weekend}")
+        if not isinstance(sd, dict) or not (1 <= int(sd.get("month", 1)) <= 12) or sd.get("day_type", "weekday") not in DAY_CHOICES:
+            issues.append("simulation_day must be {month: 1-12, day_type: weekday|weekend|mon|tue|wed|thu|fri|sat|sun}")
     return issues
 
 
@@ -260,7 +271,7 @@ def reference_date(month: int, day_type: str) -> date:
 
     The next calendar day (Wednesday or Sunday) is then in the same month with the same day type.
     """
-    target = 5 if day_type == "weekend" else 1
+    target = WEEKDAY_NAMES.index(day_type) if day_type in WEEKDAY_NAMES else 5 if day_type == "weekend" else 1
     d = date(2025, int(month), 1)
     return d + timedelta(days=(target - d.weekday()) % 7)
 

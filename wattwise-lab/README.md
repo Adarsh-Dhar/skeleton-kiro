@@ -3,7 +3,7 @@
 A browser-based **experiment workstation for household electricity**, built entirely on the **TRIALFORGE** SDK
 (`trialforge-core`, in [`../skeleton`](../skeleton)). Describe your tariff, your electric car and the appliances you can schedule; choose which
 parts of the evening schedule to vary; measure every combination on a simulated household; see which choices move the bill; let a Bayesian
-optimiser look for the cheapest schedule that **still leaves the car charged by the time it leaves**. No Python or command line is needed to *use* it.
+optimiser look for the cheapest schedule that **still leaves the car charged by the time it leaves**. Starting it takes one command (`scripts/start-wattwise.sh`); after that everything is done in the browser and no Python or command-line knowledge is needed to *use* it.
 
 > **SIMULATED DATA BY DEFAULT.** Household load, EV charging and meter readings come from a simple model unless you import your own meter
 > export, and no tariff API, meter or vehicle is contacted. Every number is labelled with where it came from (see *Data provenance* below). Every screen carries a banner saying so, and every report repeats it.
@@ -75,11 +75,11 @@ experiments start from the measured 15-minute profile as background load instead
 simulated on top, so import a period without them or remove them from the appliance list; the app warns when the profile looks like it
 includes EV charging).
 
-**Tariffs.** Every field below can be edited in *Household setup → Electricity tariff*: each period's days (all / weekday / weekend)
+**Tariffs.** Every field below can be edited in *Household setup → Electricity tariff*: each period's days (all / weekday / weekend), individual weekdays (Mon-Sun tick boxes; none ticked = every day)
 and months, and an *Advanced charges* section for fixed daily and monthly charges, billing-period length, demand-charge basis, surcharge,
 tax, export credit, tiered (slab) prices and the day the one-day simulator uses. Saving from the editor keeps every field; earlier versions
 dropped the advanced ones. The original fields are unchanged and existing tariffs give identical costs (regression-tested). Optional, generic extensions:
-weekday/weekend and seasonal periods, fixed daily and monthly charges, tiered energy pricing (daily or billing-period basis), per-kWh surcharges,
+weekday/weekend, individual-weekday and seasonal periods, fixed daily and monthly charges, tiered energy pricing (daily or billing-period basis), per-kWh surcharges,
 tax percentage, export credits, and a billing-period demand charge. The bundled tariffs are examples, not any utility's prices: enter your own
 tariff from your bill and check the computed cost of a billed period against the bill (manual gate).
 
@@ -96,7 +96,9 @@ departure), measured schedules, estimated savings and the assumptions behind the
 | `synthetic` | the built-in example household profile |
 | `projected` | a model estimate for a schedule |
 | `measured_schedule` | readings imported to a run after the household actually used that schedule |
-
+Where the labels appear: the *My usage* library marks each imported **file** with one of three source badges (MEASURED, SYNTHETIC DEMO,
+UNVERIFIED SOURCE). The data labels above are applied to figures in the baseline, comparison, experiment and report views:
+`historical_measured_priced` on readings priced with your tariff, `projected` on model estimates and `measured_schedule` on readings attached to a run.
 ## Time convention
 
 Schedule times are hours on a 24 h window that **starts at 16:00**: 19 is 19:00 the same evening, 31.5 is 07:30 the next morning. The screens
@@ -139,3 +141,11 @@ The browser test walks the whole workflow with the mouse only and writes screens
 * Costs are for one simulated day on the tariff you entered; real savings depend on real usage and your supplier's billing rules.
 * A **projected** saving is a model estimate. Only a **measured schedule** (readings imported after the household actually ran it) is evidence
   of a real saving. An experiment on the synthetic household never produces a saving against your real usage.
+
+## Limits and optional pieces
+- **Appliances.** The household screen allows up to 6 appliances in total; the API accepts up to 20 flexible appliances
+  (`MAX_FLEXIBLE_APPLIANCES`). The screen limit is the one to quote for everyday use.
+- **Optuna.** `pip install wattwise-lab` pulls in `trialforge-core[optuna]`, so the *Optuna* optimiser works after the normal install.
+  If Optuna is missing from a hand-built environment, the option is hidden from the optimiser list instead of failing.
+- **Tariff periods.** Periods must tile the 24 h day exactly for every month and weekday they apply to; gaps and overlaps (including across
+  midnight) are reported and the tariff is not saved.

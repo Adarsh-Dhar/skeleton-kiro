@@ -207,6 +207,26 @@ def test_tariff_editor_keeps_and_edits_advanced_fields(page):
     assert saved["tax_pct"] == 7.5 and saved["fixed_daily_charge"] == 0.25 and saved["fixed_monthly_charge"] == 9.0
     assert saved["tiers"] == body["tiers"] and saved["billing_days"] == 30
     assert page.errors == [], page.errors
+def test_tariff_editor_sets_individual_weekdays(page):
+    """Ticking weekday boxes in the period table saves ``weekdays`` and reloads them ticked."""
+    wk = [{"label": "weekdays", "start": 0, "end": 24, "price": 0.3, "weekdays": [0, 1, 2, 3, 4]}, {"label": "weekend", "start": 0, "end": 24, "price": 0.1, "weekdays": [5, 6]}]
+    body = {"name": "Weekday boxes example", "demand_charge_per_kw": 0.0, "periods": wk, "simulation_day": {"month": 6, "day_type": "wed"}}
+    fresh(page, "#/")
+    page.wait_for_selector("#kpis")
+    t = page.evaluate("b => fetch('/api/tariffs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}).then(r => r.json())", body)
+    page.evaluate("id => fetch('/api/household').then(r => r.json()).then(s => fetch('/api/household', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...s.settings, tariff_id: id})}))", t["id"])
+    fresh(page, "#/household")
+    page.wait_for_selector("#tadv[open]")
+    assert len(page.query_selector_all("#periods tr:first-child [data-wd]:checked")) == 5
+    assert page.input_value("#tsimd") == "wed"
+    page.uncheck("#periods tr:first-child [data-wd='4']")  # Friday moves to ... nowhere: now a gap on Friday
+    page.wait_for_selector("#tvalid:has-text('gaps')")
+    page.check("#periods tr:first-child [data-wd='4']")
+    page.click("#tsave")
+    page.wait_for_selector("#toast:not([hidden])")
+    saved = page.evaluate("id => fetch('/api/tariffs').then(r => r.json()).then(ts => ts.find(x => x.id === id))", t["id"])
+    assert saved["periods"][0]["weekdays"] == [0, 1, 2, 3, 4] and saved["periods"][1]["weekdays"] == [5, 6]
+    assert page.errors == [], page.errors
 def _clear_meter_library(page):
     """The library rejects a file that was already imported with the same options, so each test starts from an empty library."""
     page.evaluate("""async () => {

@@ -33,6 +33,8 @@ def normalise(data: dict[str, Any], tariff_id: str) -> dict[str, Any]:
             q["days"] = p["days"]
         if p.get("months"):
             q["months"] = sorted(int(m) for m in p["months"])
+        if p.get("weekdays"):
+            q["weekdays"] = sorted({int(w) for w in p["weekdays"]})
         periods.append(q)
     rec["periods"] = periods
     for k in EXTENSION_KEYS:
