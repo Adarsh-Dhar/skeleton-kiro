@@ -243,7 +243,8 @@ async function viewHistSession(id, tab) {
   } else if (tab === 'strategy') {
     await HistRace.strategy(body, api, id, m, await api('GET', `/api/historical/sessions/${id}/laps`));
   } else if (tab === 'weather') {
-    const [wx, laps] = await Promise.all([api('GET', `/api/historical/sessions/${id}/weather`), api('GET', `/api/historical/sessions/${id}/laps`)]);
+    const [wx, laps, pitRes] = await Promise.all([api('GET', `/api/historical/sessions/${id}/weather`), api('GET', `/api/historical/sessions/${id}/laps`),
+      api('GET', `/api/historical/sessions/${id}/datasets/pit_stops`).catch(() => ({ rows: [] }))]);
     const s = wx.samples || [];
     const wchart = (title, key, unit) => {
       const pts = downsample(s.map((p) => ({ x: p.time_s ?? 0, y: p[key] })).filter((p) => p.y !== null && p.y !== undefined));
@@ -251,10 +252,19 @@ async function viewHistSession(id, tab) {
     };
     const stints = {};
     laps.forEach((l) => { const k = `${l.driver}|${l.stint}`; if (l.compound || l.tyre_life != null) stints[k] = { driver: l.driver, stint: l.stint, compound: l.compound, tyre_life: l.tyre_life, laps: (stints[k]?.laps || 0) + 1 }; });
+    // A recorded pit stop with no tyre-stint change near it means the stint feed is incomplete for that driver (the table would hide a stop).
+    const startsOf = {};
+    laps.forEach((l) => { if (l.stint == null) return; const a = startsOf[l.driver] || (startsOf[l.driver] = {}); a[l.stint] = Math.min(a[l.stint] ?? Infinity, l.lap_number); });
+    const stintWarn = [];
+    (pitRes.rows || []).forEach((p) => {
+      const st = Object.values(startsOf[p.driver] || {});
+      if (p.lap_number != null && st.length && !st.some((n) => n === p.lap_number || n === p.lap_number + 1)) stintWarn.push(`${p.driver}: pit stop on lap ${p.lap_number}`);
+    });
+    const stintNote = stintWarn.length ? `<div class="note warn" role="status"><b>Stint data may be incomplete.</b> The pit-stop feed records a stop with no matching tyre-stint change in OpenF1's stint feed (${stintWarn.map(esc).join('; ')}). The stint and lap counts below for these drivers are as published by OpenF1 and can understate the number of stints.</div>` : '';
     body.innerHTML = `<div class="note info">${esc(wx.note || 'Weather is sampled sparsely by the timing feed.')}</div>
       <div class="grid g2">${wchart('Air temperature', 'air_temp_c', '°C')}${wchart('Track temperature', 'track_temp_c', '°C')}${wchart('Humidity', 'humidity_pct', '%')}${wchart('Wind speed', 'wind_speed_ms', 'm/s')}${s.some((p) => p.rainfall_flag != null) ? wchart('Rainfall (0 = dry, 1 = rain)', 'rainfall_flag', 'flag') : wchart('Rainfall', 'rainfall_mm', 'mm')}${wchart('Pressure', 'pressure_hpa', 'hPa')}</div>
       ${typeof HistAnalysis !== 'undefined' ? HistAnalysis.windDirection(s) : ''}
-      <div class="panel"><h2>Tyre strategy</h2><table><thead><tr><th>Driver</th><th>Stint</th><th>Compound</th><th class="num">Tyre life</th><th class="num">Laps</th></tr></thead><tbody>
+      <div class="panel"><h2>Tyre strategy</h2>${stintNote}<table><thead><tr><th>Driver</th><th>Stint</th><th>Compound</th><th class="num">Tyre life</th><th class="num">Laps</th></tr></thead><tbody>
       ${Object.values(stints).map((t) => `<tr><td class="mono">${histSwatch(drivers, t.driver, '#94a3b8')}<b>${esc(t.driver)}</b></td><td class="mono">${esc(t.stint ?? '&mdash;')}</td><td>${esc(t.compound || '&mdash;')}</td><td class="num">${esc(t.tyre_life ?? '&mdash;')}</td><td class="num">${t.laps}</td></tr>`).join('') || '<tr><td colspan="5" class="dim">No stint data.</td></tr>'}</tbody></table></div>`;
   }
 }

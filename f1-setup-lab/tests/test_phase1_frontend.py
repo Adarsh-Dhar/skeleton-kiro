@@ -275,10 +275,12 @@ def test_season_comparison_shows_a_null_cell_as_a_gap_with_its_reason_and_dashes
              {"session_id": SID2, "driver": "TSU", "value": None, "reason": "no valid lap in this session"},
              {"session_id": SID, "driver": "TSU", "value": 91.2, "reason": None}]
     mock(page, season_routes(cells))
-    goto(page, "#/season", "#cmp-sessions option:nth-child(2)")
-    page.select_option("#cmp-sessions", [SID2, SID])
-    page.wait_for_selector("#cmp-drivers option")
-    page.select_option("#cmp-drivers", ["VER", "TSU"])
+    goto(page, "#/season", "#cmp-sessions input.cmp-s >> nth=1")
+    for sid in (SID2, SID):
+        page.check(f"#cmp-sessions input.cmp-s[value='{sid}']")
+    page.wait_for_selector("#cmp-drivers input.cmp-d")
+    for code in ("VER", "TSU"):
+        page.check(f"#cmp-drivers input.cmp-d[value='{code}']")
     page.click("#cmp-go")
     page.wait_for_selector("#cmp-out svg")
     # one colour for both drivers, so the second series is dashed

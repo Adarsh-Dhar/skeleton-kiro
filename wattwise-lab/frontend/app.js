@@ -77,7 +77,7 @@ async function loadHousehold() {
   const legacy = legacyHousehold();
   if (legacy) {
     if (!state.saved) {
-      const body = { ...state.settings, ...legacy, ev: { ...state.settings.ev, ...legacy.ev }, appliances: legacy.appliances.slice(0, 6), migrated_from: 'localStorage' };
+      const body = { ...state.settings, ...legacy, ev: { ...(state.settings.ev || {}), ...legacy.ev }, appliances: legacy.appliances.slice(0, 6), migrated_from: 'localStorage' };
       if (!META.tariffs.some((t) => t.id === body.tariff_id)) body.tariff_id = state.settings.tariff_id;
       try { state = await api('PUT', '/api/household', body); toast('Household settings moved from this browser to the server', true); }
       catch (e) { console.warn('legacy household settings were not accepted', e); }
@@ -95,6 +95,9 @@ async function saveHousehold(next = HH) {
 }
 const hhBody = (extra = {}) => ({ tariff_id: HH.tariff_id, ev: HH.ev, appliances: HH.appliances, base_load_kw: HH.base_load_kw,
   ...(HH.baseline_import_id ? { baseline_import_id: HH.baseline_import_id } : {}), ...extra });
+const EV_DEFAULT = { battery_kwh: 60, efficiency: 0.92, initial_soc_pct: 30, desired_charge_pct: 80, departure_hour: 7.5 };
+const EV_ONLY = ['charge_start', 'charge_power_kw']; // schedule factors that only exist when the household has a car
+const carKpi = (m, ok, sub) => (HH.ev ? kpi(fmt(m.departure_charge_pct, 0) + '%', 'car charge at departure', ok ? 'good' : 'bad', sub) : '');
 const tariffOf = (id) => META.tariffs.find((t) => t.id === id);
 async function refreshTariffs() { META.tariffs = await api('GET', '/api/tariffs'); if (!tariffOf(HH.tariff_id)) { HH.tariff_id = META.tariffs[0]?.id; await saveHousehold(); } }
 // the whole tariff (incl. optional fixed charges, tiers, taxes, seasonal/day-type periods), minus its library id
@@ -147,8 +150,8 @@ async function viewDashboard() {
     const sim = await api('POST', '/api/simulate/day', hhBody());
     const m = sim.metrics;
     $('#day').innerHTML = `<div class="kpis">${kpi(money(m.energy_cost), 'cost per day', '', tariffOf(HH.tariff_id)?.name || '')}${kpi(fmt(m.energy_kwh, 1) + ' kWh', 'energy used')}${kpi(fmt(m.peak_power_kw, 1) + ' kW', 'peak demand')}
-      ${kpi(fmt(m.departure_charge_pct, 0) + '%', 'car charge at departure', m.departure_charge_pct >= HH.ev.desired_charge_pct ? 'good' : 'bad', `needs ${fmt(HH.ev.desired_charge_pct, 0)}%`)}</div>
-      ${Charts.dayProfile({ steps: sim.steps, tariff: sim.tariff, departure: HH.ev.departure_hour })}<p class="hint">Plugging in at ${clock(META.baseline.charge_start)} at ${fmt(META.baseline.charge_power_kw, 1)} kW and starting appliances at ${clock(META.baseline.appliance_start)}. <a href="#/simulator">Try other schedules</a> &middot; <a href="#/household">Edit household</a></p>`;
+      ${HH.ev ? carKpi(m, m.departure_charge_pct >= HH.ev.desired_charge_pct, `needs ${fmt(HH.ev.desired_charge_pct, 0)}%`) : ''}</div>
+      ${Charts.dayProfile({ steps: sim.steps, tariff: sim.tariff, departure: HH.ev?.departure_hour })}<p class="hint">${HH.ev ? `Plugging in at ${clock(META.baseline.charge_start)} at ${fmt(META.baseline.charge_power_kw, 1)} kW and s` : 'S'}tarting appliances at ${clock(META.baseline.appliance_start)}. <a href="#/simulator">Try other schedules</a> &middot; <a href="#/household">Edit household</a></p>`;
   };
   const draw = async () => {
     const ov = await api('GET', '/api/overview');
@@ -248,21 +251,26 @@ async function viewHousehold() {
       <div id="tvalid"></div>
       <div class="row"><button type="button" class="btn primary" id="tsave">Save changes</button><button type="button" class="btn" id="tnew">Save as new tariff</button><button type="button" class="btn danger" id="tdel">Delete</button></div></div>
   </div><div>
-    <div class="panel"><h2>Electric vehicle</h2><div class="grid g2">
-      <div class="field"><label for="ev-bat">Battery size (kWh)</label><input id="ev-bat" type="number" step="0.5" min="10" max="200" value="${HH.ev.battery_kwh}"></div>
-      <div class="field"><label for="ev-eff">Charging efficiency (0.5&ndash;1)</label><input id="ev-eff" type="number" step="0.01" min="0.51" max="1" value="${HH.ev.efficiency}"></div>
+    <div class="panel" id="evpanel"><h2>Electric vehicle</h2>
+      <div class="field"><label class="inline"><input type="checkbox" id="noev" ${HH.ev ? '' : 'checked'}> I have no EV (schedule appliances only)</label></div>
+      <fieldset id="evfields" style="border:0;padding:0;margin:0"><div class="grid g2">
+      <div class="field"><label for="ev-bat">Battery size (kWh)</label><input id="ev-bat" type="number" step="0.5" min="10" max="200" value="${(HH.ev || EV_DEFAULT).battery_kwh}"></div>
+      <div class="field"><label for="ev-eff">Charging efficiency (0.5&ndash;1)</label><input id="ev-eff" type="number" step="0.01" min="0.51" max="1" value="${(HH.ev || EV_DEFAULT).efficiency}"></div>
       <div class="field"><label for="ev-charger">Home charger power, kW (optional)</label><input id="ev-charger" type="number" step="0.1" min="0.1" max="22" value="${HH.charger_power_kw ?? ''}"></div>
-      <div class="field"><label for="ev-init">Charge when you plug in (%)</label><input id="ev-init" type="number" step="1" min="0" max="100" value="${HH.ev.initial_soc_pct}"></div>
-      <div class="field"><label for="ev-want">Charge needed at departure (%)</label><input id="ev-want" type="number" step="1" min="1" max="100" value="${HH.ev.desired_charge_pct}"></div>
-      <div class="field"><label for="ev-dep">Departure time</label><input id="ev-dep" type="time" value="${toTime(HH.ev.departure_hour)}"></div></div>
-      <p class="hint">The needed charge is the constraint: no schedule that leaves the car below it is ever recommended.</p></div>
-    <div class="panel"><h2>Appliances</h2><div class="scroll"><table><thead><tr><th>Name</th><th>kW</th><th>Hours</th><th>Movable</th><th>Fixed start</th><th></th></tr></thead><tbody id="apps">${apps()}</tbody></table></div>
+      <div class="field"><label for="ev-init">Charge when you plug in (%)</label><input id="ev-init" type="number" step="1" min="0" max="100" value="${(HH.ev || EV_DEFAULT).initial_soc_pct}"></div>
+      <div class="field"><label for="ev-want">Charge needed at departure (%)</label><input id="ev-want" type="number" step="1" min="1" max="100" value="${(HH.ev || EV_DEFAULT).desired_charge_pct}"></div>
+      <div class="field"><label for="ev-dep">Departure time</label><input id="ev-dep" type="time" value="${toTime((HH.ev || EV_DEFAULT).departure_hour)}"></div></div>
+      </div><p class="hint">The needed charge is the constraint: no schedule that leaves the car below it is ever recommended.</p></fieldset></div>
+    <div class="panel" id="apppanel"><h2>Appliances</h2><div class="scroll"><table><thead><tr><th>Name</th><th>kW</th><th>Hours</th><th>Movable</th><th>Fixed start</th><th></th></tr></thead><tbody id="apps">${apps()}</tbody></table></div>
       <div class="row" style="margin:8px 0"><button type="button" class="btn small" id="adda">Add appliance</button><span class="hint">Movable appliances start at the scheduled time; the others always run at their fixed start.</span></div>
       <div class="field"><label for="base">Always-on base load (kW)</label><input id="base" type="number" step="0.05" min="0" max="5" value="${HH.base_load_kw}"></div></div>
+    <div class="note" id="hdirty" role="status" hidden>Unsaved changes: press <b>Save household settings</b> or they are lost on reload.</div>
     <button type="button" class="btn primary" id="hsave" style="width:100%;padding:12px">Save household settings</button>
     <button type="button" class="btn" id="hreset" style="width:100%;margin-top:8px">Reset to example household</button>
     <p class="hint">Saved on the server (available in every browser on this installation). These are the values you enter, not measurements.</p></div></div>`;
   renderPeriods(); renderTiers(); validate();
+  const showEv = () => { const off = $('#noev').checked; $('#evfields').disabled = off; $('#evfields').style.opacity = off ? '.45' : '1'; };
+  $('#noev').addEventListener('change', showEv); showEv();
   $('#addtier').addEventListener('click', () => { editing = { ...editing, ...readTariff(), tiers: [...readTiers(), { up_to_kwh: null, adder_per_kwh: 0 }] }; renderTiers(); validate(); });
   $('#tiers').addEventListener('click', (e) => { const b = e.target.closest('[data-tdel]'); if (!b) return; const t = readTiers(); t.splice(+b.dataset.tdel, 1); editing = { ...editing, ...readTariff(), tiers: t }; renderTiers(); validate(); });
   $('#tadv').addEventListener('input', validate); $('#tadv').addEventListener('change', validate);
@@ -285,48 +293,57 @@ async function viewHousehold() {
   });
   const readApps = () => $$('#apps tr').map((tr) => ({ name: $('[data-f=name]', tr).value, power_kw: parseFloat($('[data-f=power_kw]', tr).value), duration_h: parseFloat($('[data-f=duration_h]', tr).value),
     flexible: $('[data-f=flexible]', tr).checked, fixed_start: toAbs(toHours($('[data-f=fixed_start]', tr).value)) }));
-  $('#adda').addEventListener('click', () => { HH.appliances = readApps(); if (HH.appliances.length >= 6) return toast('At most six appliances are supported'); HH.appliances.push({ name: 'New appliance', power_kw: 1, duration_h: 1, flexible: true, fixed_start: 19 }); $('#apps').innerHTML = apps(); });
-  $('#apps').addEventListener('click', (e) => { const b = e.target.closest('[data-adel]'); if (!b) return; HH.appliances = readApps(); HH.appliances.splice(+b.dataset.adel, 1); $('#apps').innerHTML = apps(); });
-  $('#hsave').addEventListener('click', async () => {
+  // Household edits are stored only by saveAll (the server validates first). Adding or removing an appliance saves at once;
+  // other edits mark the form as unsaved so a reload does not silently drop them.
+  let dirty = false;
+  const markDirty = (on) => { dirty = on; $('#hdirty').hidden = !on; };
+    ['#evpanel', '#apppanel'].forEach((sel) => { $(sel).addEventListener('input', () => markDirty(true)); $(sel).addEventListener('change', () => markDirty(true)); });
+  window.onbeforeunload = () => (dirty && $('#hsave') ? 'Unsaved household changes' : undefined);
+  $('#adda').addEventListener('click', () => { HH.appliances = readApps(); if (HH.appliances.length >= 6) return toast('At most six appliances are supported'); HH.appliances.push({ name: 'New appliance', power_kw: 1, duration_h: 1, flexible: true, fixed_start: 19 }); $('#apps').innerHTML = apps(); saveAll('Appliance added and saved'); });
+  $('#apps').addEventListener('click', (e) => { const b = e.target.closest('[data-adel]'); if (!b) return; HH.appliances = readApps(); HH.appliances.splice(+b.dataset.adel, 1); $('#apps').innerHTML = apps(); saveAll('Appliance removed and saved'); });
+  const saveAll = async (msg = 'Household settings saved') => {
     $('#err').innerHTML = '';
     const next = { tariff_id: HH.tariff_id, base_load_kw: num('#base'), appliances: readApps(),
-      ev: { battery_kwh: num('#ev-bat'), efficiency: num('#ev-eff'), initial_soc_pct: num('#ev-init'), desired_charge_pct: num('#ev-want'), departure_hour: toHours($('#ev-dep').value) } };
+      ev: $('#noev').checked ? null : { battery_kwh: num('#ev-bat'), efficiency: num('#ev-eff'), initial_soc_pct: num('#ev-init'), desired_charge_pct: num('#ev-want'), departure_hour: toHours($('#ev-dep').value) } };
     const charger = num('#ev-charger');
-    const extra = { charger_power_kw: Number.isFinite(charger) ? charger : null };
-    try { await api('POST', '/api/simulate/day', next); await saveHousehold({ ...HH, ...next, ...extra }); toast('Household settings saved', true); } // validated by the server; stored on the server
-    catch (e) { $('#err').innerHTML = errorsBox(e); window.scrollTo(0, 0); }
-  });
+    const extra = { charger_power_kw: next.ev && Number.isFinite(charger) ? charger : null };
+    try { await api('POST', '/api/simulate/day', next); await saveHousehold({ ...HH, ...next, ...extra }); markDirty(false); toast(msg, true); } // validated by the server; stored on the server
+    catch (e) { markDirty(true); $('#err').innerHTML = errorsBox(e); window.scrollTo(0, 0); }
+  };
+  $('#hsave').addEventListener('click', () => saveAll());
   $('#hreset').addEventListener('click', async () => {
     if (!confirm('Replace your saved household settings with the example household?')) return;
-    try { HH = (await api('POST', '/api/household/reset')).settings; toast('Household reset', true); viewHousehold(); } catch (e) { $('#err').innerHTML = errorsBox(e); }
+    try { HH = (await api('POST', '/api/household/reset')).settings; markDirty(false); toast('Household reset', true); viewHousehold(); } catch (e) { $('#err').innerHTML = errorsBox(e); }
   });
 }
 
 /* ------------------------------------------------------------ 4. energy schedule simulator */
 async function viewSimulator() {
   const S = { ...META.baseline }; let token = 0, baseSteps = null;
-  const ctl = Object.entries(META.factors).map(([k, v]) => `<div class="field"><label for="s-${k}">${esc(v.label)} <output id="o-${k}"></output></label>
+  if (!HH.ev) EV_ONLY.forEach((k) => delete S[k]); // no car: no charging sliders
+  const factorKeys = () => Object.keys(META.factors).filter((k) => HH.ev || !EV_ONLY.includes(k));
+  const ctl = Object.entries(META.factors).filter(([k]) => HH.ev || !EV_ONLY.includes(k)).map(([k, v]) => `<div class="field"><label for="s-${k}">${esc(v.label)} <output id="o-${k}"></output></label>
     <input id="s-${k}" type="range" min="${v.low}" max="${v.high}" step="${v.clock ? 0.25 : 0.1}" value="${S[k]}"></div>`).join('');
   view().innerHTML = `<div class="row"><div><h1>Schedule simulator</h1><p class="sub">Move the sliders to see how one day changes: when the car charges, how fast, and when the dishwasher and washing machine run.</p></div><div class="spacer"></div><button class="btn" id="reset">Back to today's schedule</button></div><div id="err"></div>
     <div class="panel"><div class="simctl">${ctl}</div></div><div id="out" class="panel">Loading&hellip;</div>`;
-  const labels = () => Object.keys(META.factors).forEach((k) => { $(`#o-${k}`).textContent = fmtFactor(k, S[k]); });
+  const labels = () => factorKeys().forEach((k) => { $(`#o-${k}`).textContent = fmtFactor(k, S[k]); });
   const run = async () => {
     const my = ++token; labels();
     try {
       if (!baseSteps) baseSteps = (await api('POST', '/api/simulate/day', hhBody())).steps;
       const sim = await api('POST', '/api/simulate/day', hhBody({ setup: S }));
       if (my !== token) return; // a newer slider move is already in flight
-      const m = sim.metrics, ok = m.departure_charge_pct >= HH.ev.desired_charge_pct - 1e-9;
+      const m = sim.metrics, ok = !HH.ev || m.departure_charge_pct >= HH.ev.desired_charge_pct - 1e-9;
       $('#err').innerHTML = '';
       $('#out').innerHTML = `<div class="kpis">${kpi(money(m.energy_cost), 'cost per day', '', m.demand_charge ? `includes ${money(m.demand_charge)} demand charge` : '')}${kpi(fmt(m.energy_kwh, 1) + ' kWh', 'energy used')}${kpi(fmt(m.peak_power_kw, 1) + ' kW', 'peak demand')}
-        ${kpi(fmt(m.departure_charge_pct, 0) + '%', 'car charge at departure', ok ? 'good' : 'bad', ok ? `meets the ${fmt(HH.ev.desired_charge_pct, 0)}% needed` : `below the ${fmt(HH.ev.desired_charge_pct, 0)}% needed`)}</div>
-        ${Charts.dayProfile({ steps: sim.steps, tariff: sim.tariff, departure: HH.ev.departure_hour, compare: baseSteps.map((s) => ({ t: s.t, kw: s.kw })) })}
+        ${HH.ev ? carKpi(m, ok, ok ? `meets the ${fmt(HH.ev.desired_charge_pct, 0)}% needed` : `below the ${fmt(HH.ev.desired_charge_pct, 0)}% needed`) : ''}</div>
+        ${Charts.dayProfile({ steps: sim.steps, tariff: sim.tariff, departure: HH.ev?.departure_hour, compare: baseSteps.map((s) => ({ t: s.t, kw: s.kw })) })}
         <h3>Where the money goes</h3><div class="scroll"><table><thead><tr><th>Price period</th><th class="num">kWh</th><th class="num">Cost</th></tr></thead><tbody>${Object.entries(sim.cost_by_period).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${fmt(v.kwh, 2)}</td><td class="num">${money(v.cost, 3)}</td></tr>`).join('')}</tbody></table></div>`;
     } catch (e) { if (my === token) $('#err').innerHTML = errorsBox(e); }
   };
   let t = null;
-  Object.keys(META.factors).forEach((k) => $(`#s-${k}`).addEventListener('input', () => { S[k] = parseFloat($(`#s-${k}`).value); labels(); clearTimeout(t); t = setTimeout(run, 120); }));
-  $('#reset').addEventListener('click', () => { Object.assign(S, META.baseline); Object.keys(S).forEach((k) => { $(`#s-${k}`).value = S[k]; }); run(); });
+  factorKeys().forEach((k) => $(`#s-${k}`).addEventListener('input', () => { S[k] = parseFloat($(`#s-${k}`).value); labels(); clearTimeout(t); t = setTimeout(run, 120); }));
+  $('#reset').addEventListener('click', () => { Object.assign(S, META.baseline); if (!HH.ev) EV_ONLY.forEach((k) => delete S[k]); Object.keys(S).forEach((k) => { $(`#s-${k}`).value = S[k]; }); run(); });
   run();
 }
 
@@ -530,8 +547,8 @@ async function showProfile(d, runId) {
     openModal(`<div class="row"><h2 style="margin:0">Schedule ${run ? run.order + 1 : ''}</h2><span class="spacer"></span><button class="btn small" data-close>Close</button></div>
       <p class="hint">${Object.entries(p.setup).map(([k, v]) => `${esc(label(k))}: <b>${esc(fmtFactor(k, v))}</b>`).join(' &middot; ')}</p>
       <div class="note info">This chart is the household model's profile for the schedule. Measured values in the table can differ slightly (simulated sensor noise) or come from an imported meter file.</div>
-      <div class="kpis">${kpi(money(m.energy_cost), 'cost per day')}${kpi(fmt(m.energy_kwh, 1) + ' kWh', 'energy')}${kpi(fmt(m.peak_power_kw, 1) + ' kW', 'peak')}${kpi(fmt(m.departure_charge_pct, 0) + '%', 'charge at departure')}</div>
-      ${Charts.dayProfile({ steps: p.steps, tariff: p.tariff, departure: d.household.ev.departure_hour })}`);
+      <div class="kpis">${kpi(money(m.energy_cost), 'cost per day')}${kpi(fmt(m.energy_kwh, 1) + ' kWh', 'energy')}${kpi(fmt(m.peak_power_kw, 1) + ' kW', 'peak')}${d.household.ev ? kpi(fmt(m.departure_charge_pct, 0) + '%', 'charge at departure') : ''}</div>
+      ${Charts.dayProfile({ steps: p.steps, tariff: p.tariff, departure: d.household.ev?.departure_hour })}`);
   } catch (e) { toast(e.message); }
 }
 function attachMeter(d, runId, done) {
@@ -629,7 +646,7 @@ async function viewOptimise(id) {
     if (!best) { $('#best').innerHTML = '<div class="empty">No feasible schedule measured yet. <a href="#/e/' + esc(id) + '/runs">Run the experiment</a>.</div>'; return; }
     const [bp, base] = await Promise.all([api('GET', `/api/experiments/${eid}/runs/${encodeURIComponent(best.run_id)}/profile`), api('POST', '/api/simulate/day', dayBody)]);
     $('#best').innerHTML = `<div class="sched">${Object.entries(best.schedule).map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(label(k))}</span></div>`).join('')}<div><b>${money(best.cost)}</b><span>per day, ${fmt(best.saving_pct, 0)}% below today</span></div></div>
-      ${Charts.dayProfile({ steps: bp.steps, tariff: bp.tariff, departure: hh.ev.departure_hour, compare: base.steps.map((s) => ({ t: s.t, kw: s.kw })) })}`;
+      ${Charts.dayProfile({ steps: bp.steps, tariff: bp.tariff, departure: hh.ev?.departure_hour, compare: base.steps.map((s) => ({ t: s.t, kw: s.kw })) })}`;
   };
   const loadRest = async () => {
     const [runs, hist] = await Promise.all([api('GET', `/api/experiments/${eid}/runs`), api('GET', `/api/experiments/${eid}/optimise/history`)]);

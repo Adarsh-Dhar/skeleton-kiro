@@ -456,8 +456,8 @@ const HistAnalysis = (() => {
     const errBox = deps.errorsBox || (typeof errorsBox === 'function' ? errorsBox : getErr);
     viewEl.innerHTML = `<div class="row"><div><h1>Season comparison</h1><p class="sub">One metric for up to 6 drivers across 2 to 24 stored sessions. Missing values are gaps with a reason, never 0.</p></div></div>
       <div id="cmp-err"></div><div class="panel"><div class="grid g3">
-      <div class="field"><label for="cmp-sessions">Sessions (2 to 24)</label><select id="cmp-sessions" multiple size="10"><option>Loading&hellip;</option></select></div>
-      <div class="field"><label for="cmp-drivers">Drivers (1 to 6)</label><select id="cmp-drivers" multiple size="10" disabled></select></div>
+      <div class="field"><label id="cmp-sessions-l">Sessions (2 to 24)</label><div id="cmp-sessions" role="group" aria-labelledby="cmp-sessions-l" style="max-height:15em;overflow:auto;border:1px solid var(--line,#333);border-radius:6px;padding:6px 8px"><span class="dim">Loading&hellip;</span></div></div>
+      <div class="field"><label id="cmp-drivers-l">Drivers (1 to 6)</label><div id="cmp-drivers" role="group" aria-labelledby="cmp-drivers-l" style="max-height:15em;overflow:auto;border:1px solid var(--line,#333);border-radius:6px;padding:6px 8px"><span class="dim">Select sessions first</span></div></div>
       <div><div class="field"><label for="cmp-metric">Metric</label><select id="cmp-metric">${METRICS.map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></div>
       <label class="dim"><input type="checkbox" id="cmp-mix"> Allow mixing session types</label></div></div>
       <button class="btn primary" id="cmp-go" type="button" disabled>Compare</button></div><div id="cmp-note"></div><div id="cmp-out"></div>`;
@@ -467,9 +467,10 @@ const HistAnalysis = (() => {
     try { sessions = await apiFn('GET', '/api/historical/sessions'); } catch (e) { errEl.innerHTML = errBox(e); selS.innerHTML = ''; return; }
     if (!sessions.length) { selS.innerHTML = ''; out.innerHTML = '<div class="empty">No sessions are stored yet. <a href="#/hist">Import a session</a>.</div>'; return; }
     sessions = [...sessions].sort((a, b) => String(a.session_date || '').localeCompare(String(b.session_date || '')));
-    selS.innerHTML = sessions.map((s) => `<option value="${esc(s.session_id)}">${esc(shortLabel(s))}</option>`).join('');
-    const chosen = () => [...selS.selectedOptions].map((o) => o.value);
-    const chosenDrivers = () => [...selD.selectedOptions].map((o) => o.value);
+    const tick = (cls, value, label, checked) => `<label style="display:flex;gap:8px;align-items:center;text-transform:none;letter-spacing:0;margin:2px 0;cursor:pointer"><input type="checkbox" class="${cls}" value="${esc(value)}"${checked ? ' checked' : ''}> <span>${label}</span></label>`;
+    selS.innerHTML = sessions.map((s) => tick('cmp-s', s.session_id, esc(shortLabel(s)), false)).join('');
+    const chosen = () => [...selS.querySelectorAll('input.cmp-s:checked')].map((o) => o.value);
+    const chosenDrivers = () => [...selD.querySelectorAll('input.cmp-d:checked')].map((o) => o.value);
     const picked = () => sessions.filter((s) => chosen().includes(s.session_id));
     const mixed = () => new Set(picked().map(typeOf)).size > 1;
     const validate = () => {
@@ -483,15 +484,14 @@ const HistAnalysis = (() => {
     };
     const loadDrivers = async () => {
       const my = ++dseq, keep = new Set(chosenDrivers()), ids = chosen();
-      if (!ids.length) { selD.innerHTML = ''; selD.disabled = true; validate(); return; }
+      if (!ids.length) { selD.innerHTML = '<span class="dim">Select sessions first</span>'; validate(); return; }
       const lists = await Promise.all(ids.map((id) => apiFn('GET', `/api/historical/sessions/${encodeURIComponent(id)}/drivers`).catch(() => [])));
       if (my !== dseq) return;
       const byCode = {};
       lists.flat().forEach((d) => { if (d && d.code && !byCode[d.code]) byCode[d.code] = d; });
       driverMeta = Object.values(byCode);
-      selD.disabled = false;
       selD.innerHTML = Object.values(byCode).sort((a, b) => a.code.localeCompare(b.code))
-        .map((d) => `<option value="${esc(d.code)}"${keep.has(d.code) ? ' selected' : ''}>${esc(d.code)}${d.name ? ` \u00b7 ${esc(d.name)}` : ''}</option>`).join('');
+        .map((d) => tick('cmp-d', d.code, `${esc(d.code)}${d.name ? ` \u00b7 ${esc(d.name)}` : ''}`, keep.has(d.code))).join('') || '<span class="dim">No drivers stored for these sessions</span>';
       validate();
     };
     selS.addEventListener('change', loadDrivers);

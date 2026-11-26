@@ -72,6 +72,15 @@ METHOD_INFO = {
 }
 
 
+
+class _RevalidatedStaticFiles(StaticFiles):
+    """Frontend files with ``Cache-Control: no-cache``: the browser keeps its copy but checks the ETag on every load, so an
+    updated app.js is picked up on a normal reload instead of a stale heuristically cached copy being reused."""
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
 def _issue(field: str, message: str) -> dict:
     return {"field": field, "message": message}
 
@@ -379,5 +388,5 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
     # ------------------------------------------------------------ frontend
     fe = Path(frontend_dir or os.environ.get("WATTWISE_FRONTEND_DIR", DEFAULT_ROOT / "frontend"))
     if fe.is_dir():
-        app.mount("/", StaticFiles(directory=fe, html=True), name="frontend")
+        app.mount("/", _RevalidatedStaticFiles(directory=fe, html=True), name="frontend")
     return app

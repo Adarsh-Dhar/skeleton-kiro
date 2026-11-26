@@ -120,13 +120,15 @@ const Charts = (() => {
     const sc = Math.min((W - m.l - m.r) / Math.max(x1 - x0, 1e-6), (H - m.t - m.b) / Math.max(y1 - y0, 1e-6));
     const ox = m.l + ((W - m.l - m.r) - (x1 - x0) * sc) / 2, oy = m.t + ((H - m.t - m.b) - (y1 - y0) * sc) / 2;
     const X = (p) => ox + (p.x_m - x0) * sc, Y = (p) => oy + (y1 - p.y_m) * sc;
-    const sp = ds.map((p) => p.speed_kph).filter((v) => v !== null && v !== undefined);
-    const s0 = Math.min(...sp), s1 = Math.max(...sp), sn = s1 - s0 || 1;
-    const col = (v) => { const t = Math.max(0, Math.min(1, (v - s0) / sn)); return `rgb(${Math.round(74 + t * (225 - 74))},${Math.round(168 - t * 120)},${Math.round(255 - t * 200)})`; };
+    const sp = ds.map((p) => p.speed_kph).filter((v) => v !== null && v !== undefined && Number.isFinite(v));
+    const hasSpeed = sp.length > 0; // OpenF1 location samples carry no speed; without it use one colour (NaN colours are invalid and the trace disappears)
+    const s0 = hasSpeed ? Math.min(...sp) : 0, s1 = hasSpeed ? Math.max(...sp) : 0, sn = s1 - s0 || 1;
+    const col = (v) => {
+      if (!hasSpeed || v === null || v === undefined || !Number.isFinite(v)) return '#94a3b8'; const t = Math.max(0, Math.min(1, (v - s0) / sn)); return `rgb(${Math.round(74 + t * (225 - 74))},${Math.round(168 - t * 120)},${Math.round(255 - t * 200)})`; };
     let b = '';
     for (let i = 0; i < ds.length - 1; i++) {
       const p = ds[i], q = ds[i + 1];
-      b += `<line x1="${X(p)}" y1="${Y(p)}" x2="${X(q)}" y2="${Y(q)}" stroke="${col(p.speed_kph ?? s0)}" stroke-width="3" stroke-linecap="round" opacity=".85"><title>${f(p.speed_kph, 0)} km/h</title></line>`;
+      b += `<line x1="${X(p)}" y1="${Y(p)}" x2="${X(q)}" y2="${Y(q)}" stroke="${col(p.speed_kph)}" stroke-width="3" stroke-linecap="round" opacity=".85">${hasSpeed ? `<title>${f(p.speed_kph, 0)} km/h</title>` : ''}</line>`;
     }
     const st = ds[0];
     b += `<circle cx="${X(st)}" cy="${Y(st)}" r="6" fill="#fff" stroke="#e10600" stroke-width="2.5"/><text x="${X(st) + 10}" y="${Y(st) - 8}" style="fill:#fff;font-weight:700">S/F</text>`;
@@ -137,7 +139,7 @@ const Charts = (() => {
       withDist.forEach((p) => { const d = Math.abs(p.distance_m - c.distance_m); if (d < bd) { bd = d; best = p; } });
       b += `<circle cx="${X(best)}" cy="${Y(best)}" r="3.5" fill="none" stroke="#ffb400" stroke-width="1.5"/><text x="${X(best) + 6}" y="${Y(best) + 4}" style="fill:#ffb400">${esc(c.number ?? '')}</text>`;
     });
-    return wrap(W, H, b, 'track map') + `<div class="legend"><span><i style="background:#4aa8ff"></i>slow</span><span><i style="background:#e10600"></i>fast</span><span>S/F = start/finish</span><span>amber = corner numbers</span></div>`;
+    return wrap(W, H, b, 'track map') + `<div class="legend">${hasSpeed ? '<span><i style="background:#4aa8ff"></i>slow</span><span><i style="background:#e10600"></i>fast</span>' : '<span><i style="background:#94a3b8"></i>driver trace (no speed in location data)</span>'}<span>S/F = start/finish</span>${(o.corners || []).length ? '<span>amber = corner numbers</span>' : ''}</div>`;
   }
 
   return { scatter, bars, lines, sectors, trackMap, esc, f };
