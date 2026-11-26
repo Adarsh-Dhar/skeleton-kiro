@@ -132,8 +132,9 @@ def test_import_one_driver_and_open_the_analysis(page):
     assert page.is_checked("#hlaps") and page.is_disabled("#hlaps")
     page.uncheck("#dsradio")
     page.click("#himport")
-    page.wait_for_function("document.querySelector('#hprog')?.textContent.includes('COMPLETED')", timeout=30000)
-    assert "Opening the session" in page.inner_text("#hprog") and "session result: ok" in page.inner_text("#hprog").lower().replace("_", " ")
+    # "COMPLETED" is shown first; the coverage line and "Opening the session" follow once the session fetch returns
+    page.wait_for_function("document.querySelector('#hprog')?.textContent.includes('Opening the session')", timeout=30000)
+    assert "COMPLETED" in page.inner_text("#hprog") and "session result: ok" in page.inner_text("#hprog").lower().replace("_", " ")
     page.wait_for_url(f"**/#/hist/{SID}/overview", timeout=10000)
     page.wait_for_selector(".chip.hist")
     assert page.inner_text(".chip.hist") == "HISTORICAL F1 · OPENF1"
