@@ -16,3 +16,8 @@ data/trialforge.db*
 data/backups/
 data/openf1-cache/
 .DS_Store
+
+# generated outputs (regenerate: wattwise-lab/demo-sandbox/run_demo.py, wattwise-lab/tests/test_ui_browser.py)
+wattwise-lab/demo-sandbox/demo-report.*
+wattwise-lab/docs/screenshots/*.png
+.hypothesis/

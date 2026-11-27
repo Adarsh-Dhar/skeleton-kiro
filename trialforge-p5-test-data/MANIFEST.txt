@@ -1,8 +1,0 @@
-P-5 fixture manifest (counts exclude the header row)
-A1_demo_8days.csv: 768 data rows; 20755 bytes
-A2_cumulative_register_reset.csv: 5 data rows; 164 bytes
-A3_dst_fall_back.csv: 6 data rows; 147 bytes
-A3_dst_spring_forward.csv: 4 data rows; 105 bytes
-A4_bad_rows.csv: 6 data rows; 170 bytes
-A5a_row_limit_20001.csv: 20001 data rows; 540046 bytes
-A5b_file_size_over_2mb.csv: 19000 data rows; 2831019 bytes
