@@ -84,3 +84,6 @@ td input[type=number]{min-width:72px}td input[type=time]{min-width:122px}td inpu
 /* tariff period rows: compact so Days/Months fit without sideways scrolling */
 #periods input,#periods select{min-width:0}
 #periods td{padding:4px 3px}
+/* source records (zero fabricated input data) */
+.srcbox{margin:6px 0 10px;border:1px dashed var(--line);border-radius:8px;padding:4px 10px;background:#fafcfb}.srcbox>summary{cursor:pointer;font-size:12.5px;color:var(--dim)}
+.srcbox .grid{margin-top:6px}.srcrow td{padding-top:0;border-top:0}

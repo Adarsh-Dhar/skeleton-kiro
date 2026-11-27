@@ -1,4 +1,6 @@
-"""Fixtures: API client on a temp database, and a live server for browser tests."""
+"""Fixtures: API client on a temp database, and a live server for browser tests.
+The application starts empty (zero fabricated input data). ``client`` seeds the TEST-ONLY tariffs from tests/inputs.py;
+``empty_client`` is a fresh installation with nothing configured."""
 
 from __future__ import annotations
 
@@ -9,6 +11,7 @@ import time
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
+from inputs import INPUTS, seed_tariffs
 
 from wattwise.api.app import create_app
 
@@ -19,8 +22,13 @@ def db_path(tmp_path):
 
 
 @pytest.fixture
+def empty_client(db_path):
+    with TestClient(create_app(db_path)) as c:
+        yield c
+@pytest.fixture
 def client(db_path):
     with TestClient(create_app(db_path)) as c:
+        seed_tariffs(c)
         yield c
 
 
@@ -40,7 +48,10 @@ def make_experiment(client):
     counter = iter(range(1, 1000))
 
     def _make(**kw):
-        body = {"name": "test experiment", "experiment_id": f"test-exp-{next(counter)}", **kw}
+        body = {**INPUTS, "name": "test experiment", "experiment_id": f"test-exp-{next(counter)}", **kw}
+        if kw.get("ev", ...) is None and "charger_capacity_kw" not in kw:
+            body.pop("charger_capacity_kw")
+            body.pop("charger_source")
         body.setdefault("simulator", {"latency_seconds": 0.0})
         r = client.post("/api/experiments", json=body)
         assert r.status_code == 201, r.text

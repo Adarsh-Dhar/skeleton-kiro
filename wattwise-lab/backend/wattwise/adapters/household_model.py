@@ -1,4 +1,6 @@
 """Household electricity model: tariff, EV charging session, appliances, base load. Pure Python, no SDK dependency.
+Zero fabricated input data: every input (tariff, EV, appliances, base load, current schedule) comes from the household's own
+configuration; nothing falls back to built-in example values. Missing inputs raise ``MissingInput`` instead of being invented.
 
 Time convention: *absolute clock hours* on a 24 h window that starts at 16:00. Values 16..24 are that evening; values 24..40 are the next
 day (e.g. 31.5 = 07:30 tomorrow). ``clock()`` formats them. The simulation uses 15-minute steps.
@@ -16,36 +18,24 @@ from wattwise.adapters import tariff_model as TM
 STEP_H = 0.25
 WINDOW_START = 16.0
 STEPS = 96
+# Schedule variables an experiment may vary, and the widest range it may search. These are search limits, not household data:
+# the household's current schedule (its baseline) comes from its own plug-in time, charger and appliance start times.
 FACTORS: dict[str, dict[str, Any]] = {
-    "charge_start": {"low": 17.0, "high": 31.0, "unit": "h", "label": "EV charging start", "default": 19.0, "clock": True},
-    "charge_power_kw": {"low": 1.4, "high": 11.0, "unit": "kW", "label": "Charger power", "default": 7.4, "clock": False},
-    "appliance_start": {"low": 17.0, "high": 30.0, "unit": "h", "label": "Flexible appliances start", "default": 19.0, "clock": True},
+    "charge_start": {"low": 17.0, "high": 31.0, "unit": "h", "label": "EV charging start", "clock": True},
+    "charge_power_kw": {"low": 1.4, "high": 11.0, "unit": "kW", "label": "Charger power", "clock": False},
+    "appliance_start": {"low": 17.0, "high": 30.0, "unit": "h", "label": "Flexible appliances start", "clock": True},
 }
-BASELINE = {k: v["default"] for k, v in FACTORS.items()}
 METRIC_UNITS = {"energy_cost": "currency", "energy_kwh": "kWh", "peak_power_kw": "kW", "departure_charge_pct": "percent", "ev_energy_kwh": "kWh", "grid_power": "kW"}
-
-DEFAULT_TARIFFS: list[dict[str, Any]] = [
-    {"id": "time-of-use", "name": "Time-of-use", "demand_charge_per_kw": 0.0,
-     "periods": [{"label": "Night", "start": 23, "end": 7, "price": 0.11}, {"label": "Day", "start": 7, "end": 16, "price": 0.22},
-                 {"label": "Peak", "start": 16, "end": 21, "price": 0.36}, {"label": "Evening", "start": 21, "end": 23, "price": 0.22}]},
-    {"id": "flat-rate", "name": "Flat rate", "demand_charge_per_kw": 0.0, "periods": [{"label": "All day", "start": 0, "end": 24, "price": 0.25}]},
-    {"id": "night-saver-demand", "name": "Night saver + demand charge", "demand_charge_per_kw": 0.60,
-     "periods": [{"label": "Night", "start": 0, "end": 6, "price": 0.09}, {"label": "Standard", "start": 6, "end": 24, "price": 0.28}]},
-]  # fmt: skip
-DEFAULT_EV = {"battery_kwh": 60.0, "initial_soc_pct": 30.0, "desired_charge_pct": 80.0, "departure_hour": 7.5, "efficiency": 0.92}
-DEFAULT_APPLIANCES = [
-    {"name": "Dishwasher", "power_kw": 1.1, "duration_h": 2.0, "flexible": True, "fixed_start": 20.0},
-    {"name": "Washing machine", "power_kw": 0.5, "duration_h": 1.5, "flexible": True, "fixed_start": 19.0},
-    {"name": "Tumble dryer", "power_kw": 2.0, "duration_h": 1.5, "flexible": False, "fixed_start": 18.0},
-]  # fmt: skip
 
 CHARGER_MIN_KW = 1.4
 CHARGER_MAX_KW = 350.0
-DEFAULT_CHARGER_MAX_KW = 11.0
+DEFAULT_CHARGER_MAX_KW = 11.0  # upper search limit for charger power when no charger capacity is known (not a household value)
 MAX_FLEXIBLE_APPLIANCES = 20
 APPLIANCE_KEY_PREFIX = "appliance_start__"
 
 
+class MissingInput(ValueError):
+    """A required household input is not configured. It is reported, never replaced by an invented value."""
 class ChargerCapacityError(ValueError):
     """The charging power of a setup exceeds the household's charger capacity."""
 
@@ -98,12 +88,25 @@ def household_catalog(household: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 def baseline_setup(household: dict[str, Any]) -> dict[str, float]:
-    """BASELINE with the charging power clipped to the household's charger capacity (when it has one)."""
-    setup = dict(BASELINE)
-    cap = household.get("charger_capacity_kw")
-    if cap is not None:
-        setup["charge_power_kw"] = min(setup["charge_power_kw"], float(cap))
+    """The household's current schedule, from its own inputs: the EV plugs in at its usual plug-in time and charges at the
+    charger's capacity; each movable appliance starts at its usual start time (``fixed_start``). Missing inputs are omitted."""
+    setup: dict[str, float] = {}
+    ev = household.get("ev")
+    if ev is not None:
+        if ev.get("plug_in_hour") is not None:
+            setup["charge_start"] = departure_abs(float(ev["plug_in_hour"]))
+        if household.get("charger_capacity_kw") is not None:
+            setup["charge_power_kw"] = float(household["charger_capacity_kw"])
+    for a in household.get("appliances") or []:
+        if a.get("flexible") and a.get("fixed_start") is not None:
+            setup[appliance_key(a)] = float(a["fixed_start"])
     return setup
+def with_baseline(household: dict[str, Any], setup: dict[str, float]) -> dict[str, float]:
+    """``setup`` completed with the current schedule. A shared ``appliance_start`` in ``setup`` replaces the per-appliance usual starts."""
+    base = baseline_setup(household)
+    if "appliance_start" in setup:
+        base = {k: v for k, v in base.items() if not k.startswith(APPLIANCE_KEY_PREFIX) or k in setup}
+    return {**base, **setup}
 
 
 def check_setup_keys(setup: dict[str, Any]) -> None:
@@ -218,15 +221,24 @@ def _window_ctx(tariff: dict[str, Any], household: dict[str, Any]) -> TM.WindowC
     return TM.window_context(tariff, start)
 
 
-def simulate(setup: dict[str, float], household: dict[str, Any], rng: random.Random | None = None) -> dict[str, Any]:
-    """Simulate one day for a schedule. ``setup`` may omit factors (baseline values are used). Noise only if ``rng`` is given.
-
-    ``household["ev"]`` may be ``None`` (no EV: no charging, no ``departure_charge_pct``). A ``charger_capacity_kw`` in the household
-    bounds ``charge_power_kw``. Flexible appliances start at ``appliance_start__<id>`` when given, else at ``appliance_start``.
+def simulate(setup: dict[str, float], household: dict[str, Any]) -> dict[str, Any]:
+    """Project one day for a schedule (a model result, never a measurement). ``setup`` may omit factors: the household's current
+    schedule is used (see ``baseline_setup``). ``household["ev"]`` may be ``None`` (no EV: no charging, no ``departure_charge_pct``).
+    Flexible appliances start at ``appliance_start__<id>`` when given, else at ``appliance_start``, else at their usual start.
+    Background load is the measured profile (``base_profile_kw``) or the owner's ``base_load_kw``; without either, ``MissingInput``.
+    The result is deterministic: no noise is added.
     """
     check_setup_keys(setup)
-    s = {**BASELINE, **setup}
-    ev, tariff, apps = household["ev"], household["tariff"], household["appliances"]
+    ev, tariff, apps = household.get("ev"), household.get("tariff"), household.get("appliances") or []
+    if not tariff:
+        raise MissingInput("no tariff is configured: enter the rates from your electricity bill or tariff order")
+    profile = household.get("base_profile_kw")  # measured: calibrated from imported meter readings (96 steps from 16:00)
+    base_kw = household.get("base_load_kw")
+    if not profile and base_kw is None:
+        raise MissingInput("background load is missing: import your meter readings or enter your always-on load (base_load_kw)")
+    s = with_baseline(household, setup)
+    if ev is not None and ("charge_start" not in s or "charge_power_kw" not in s):
+        raise MissingInput("the EV needs its usual plug-in time and the charger capacity (charger_power_kw) before charging can be projected")
     cap_limit = household.get("charger_capacity_kw")
     if ev is not None and cap_limit is not None and s["charge_power_kw"] > float(cap_limit):
         raise ChargerCapacityError(f"charging power {s['charge_power_kw']:g} kW exceeds the charger capacity {float(cap_limit):g} kW")
@@ -237,20 +249,13 @@ def simulate(setup: dict[str, float], household: dict[str, Any], rng: random.Ran
         depart = departure_abs(ev["departure_hour"])
     else:
         cap_kwh = eff = soc = depart = 0.0
-    starts = [(appliance_id(a.get("name", ""), a.get("id")), a, s.get(appliance_key(a), s["appliance_start"]) if a["flexible"] else a["fixed_start"])
-              for a in apps]
+    starts = [(appliance_id(a.get("name", ""), a.get("id")), a,
+               s.get(appliance_key(a), s.get("appliance_start", a["fixed_start"])) if a["flexible"] else a["fixed_start"]) for a in apps]
     soc_at_departure = None
     steps: list[dict[str, Any]] = []
     for i in range(STEPS):
         t = WINDOW_START + i * STEP_H
-        hod = t % 24
-        profile = household.get("base_profile_kw")  # calibrated from historical meter data (96 steps from 16:00), if selected
-        if profile:
-            base = float(profile[i])
-        else:  # synthetic profile: base load plus evening and morning peaks
-            base = household.get("base_load_kw", 0.35) + (1.0 if 18 <= hod < 21 else 0.0) + (0.6 if 6.5 <= hod < 8.5 else 0.0)
-        if rng:
-            base += abs(rng.gauss(0, 0.03))
+        base = float(profile[i]) if profile else float(base_kw)  # measured profile, else the owner's constant always-on load
         by_app: dict[str, float] = {}
         kws = []
         for aid, a, st in starts:

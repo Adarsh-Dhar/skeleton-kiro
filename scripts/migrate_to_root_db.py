@@ -148,7 +148,6 @@ def verify_sdk(prepared: Path, label: str, app: str, target: Path, rep: Report) 
 
 # ------------------------------------------------------------------------------------------- WATTWISE tariffs.json
 def migrate_tariffs(path: Path, engine, rep: Report, verify_only: bool = False) -> None:
-    from wattwise.adapters.household_model import DEFAULT_TARIFFS
     from wattwise.services.tariffs import TariffStore
 
     legacy = json.loads(path.read_text())
@@ -160,9 +159,10 @@ def migrate_tariffs(path: Path, engine, rep: Report, verify_only: bool = False) 
         rep.say(f"  ok tariffs: {len(legacy)} checked")
         return
     store = TariffStore(engine)
-    # the legacy file is the user's whole library: it replaces the seeded examples, unless tariffs were already edited here
+    # the legacy file is the user's whole library: it replaces an empty library or one holding only the old built-in examples
+    # (recognised by their content and labelled source_type "example"), unless tariffs were already added or edited here
     current = store.list()
-    untouched = all(t in DEFAULT_TARIFFS for t in current)
+    untouched = all((t.get("source") or {}).get("source_type") == "example" for t in current)
     n = store.import_records(legacy, replace=untouched)
     rep.count("tariffs", n)
     rep.say(f"  {n} tariff(s) from {path}" + ("" if untouched else " (merged into an already edited library)"))

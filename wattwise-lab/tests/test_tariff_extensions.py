@@ -7,15 +7,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 import pytest
+from inputs import SRC, TEST_APPLIANCES, TEST_EV, TEST_PROFILE, TEST_TARIFFS
 
-from wattwise.adapters.household_model import (
-    DEFAULT_APPLIANCES,
-    DEFAULT_EV,
-    DEFAULT_TARIFFS,
-    simulate,
-    summarise,
-    validate_tariff,
-)
+from wattwise.adapters.household_model import simulate, summarise, validate_tariff
 from wattwise.adapters.tariff_model import bill, is_extended
 
 # energy_cost etc. computed with the code BEFORE the extensions were added (captured once, never edited)
@@ -26,14 +20,14 @@ REGRESSION = {
     "night-saver-demand|19.0|7.4|19.0": (23.2840109797, 15.8740109797, 7.41), "night-saver-demand|23.0|3.7|25.0": (12.2125, 8.8225, 3.39),
     "night-saver-demand|17.0|11.0|17.0": (27.1476086957, 17.5776086957, 9.57),
 }
-HH = {"ev": DEFAULT_EV, "base_load_kw": 0.35, "appliances": DEFAULT_APPLIANCES}
+HH = {"ev": TEST_EV, "base_load_kw": 0.35, "base_profile_kw": TEST_PROFILE, "appliances": TEST_APPLIANCES}
 FLAT = {"name": "flat", "demand_charge_per_kw": 0.0, "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.2}]}
 
 
 @pytest.mark.parametrize("key", sorted(REGRESSION))
 def test_existing_tariffs_give_identical_costs(key):
     tid, cs, cp, ap = key.split("|")
-    t = next(t for t in DEFAULT_TARIFFS if t["id"] == tid)
+    t = next(t for t in TEST_TARIFFS if t["id"] == tid)
     assert not is_extended(t)
     m = simulate({"charge_start": float(cs), "charge_power_kw": float(cp), "appliance_start": float(ap)}, {**HH, "tariff": t})["metrics"]
     cost, charge, demand = REGRESSION[key]
@@ -104,7 +98,7 @@ def test_demand_charge_bases():
 
 
 def test_tariff_api_persists_extensions_in_the_database(client, db_path):
-    body = {"name": "Generic example", "demand_charge_per_kw": 0.0, "fixed_daily_charge": 0.4, "tax_pct": 5,
+    body = {"name": "Generic example", "source": SRC, "demand_charge_per_kw": 0.0, "fixed_daily_charge": 0.4, "tax_pct": 5,
             "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.2}]}
     r = client.post("/api/tariffs", json=body)
     assert r.status_code == 201, r.text

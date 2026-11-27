@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from conftest import wait_done
+from inputs import inputs, meter_csv
 
 from wattwise.adapters.meter_import import interpret
 from wattwise.services import baseline as B
@@ -92,7 +93,7 @@ def test_summary_endpoint(client, imported):
 
 
 def test_experiment_from_calibrated_baseline_and_comparison(client, imported):
-    body = {"name": "calibrated", "experiment_id": "cal-exp", "baseline_import_id": imported, "baseline_excludes_modelled_appliances": True, "simulator": {"latency_seconds": 0.0},
+    body = {**inputs(), "name": "calibrated", "experiment_id": "cal-exp", "baseline_import_id": imported, "baseline_excludes_modelled_appliances": True, "simulator": {"latency_seconds": 0.0},
             "design": {"method": "full_factorial", "levels": 2}}
     r = client.post("/api/experiments", json=body)
     assert r.status_code == 201, r.text
@@ -111,17 +112,18 @@ def test_experiment_from_calibrated_baseline_and_comparison(client, imported):
     assert "PROJECTED" in html and "MEASURED" in html and "not estimated" in html
 
 
-def test_synthetic_experiment_never_claims_savings_against_real_usage(client, imported, run_experiment):
+def test_experiment_without_a_meter_baseline_never_claims_savings_against_real_usage(client, imported, run_experiment):
     d = run_experiment(design={"method": "full_factorial", "levels": 2})
     c = client.get("/api/comparison", params={"import_id": imported, "exp_id": d["id"]}).json()
-    assert c["experiment"]["baseline"] == "synthetic"
+    assert c["experiment"]["baseline"] == "owner_entered_base_load"
     sv = c["savings"]["projected_vs_measured_history"]
-    assert sv["value"] is None and "synthetic household" in sv["note"]
-    assert any("SYNTHETIC" in a for a in c["assumptions"])
+    assert sv["value"] is None and "owner-entered constant base load" in sv["note"]
+    assert any("OWNER-ENTERED" in a for a in c["assumptions"]) and not any("SYNTHETIC" in a for a in c["assumptions"])
+    assert {i["input"] for i in c["input_sources"]} >= {"tariff", "ev", "base_load"}
 
 
 def test_measured_schedule_is_labelled_measured(client, imported):
-    body = {"name": "measured", "experiment_id": "meas-exp", "baseline_import_id": imported, "baseline_excludes_modelled_appliances": True, "simulator": {"latency_seconds": 0.0},
+    body = {**inputs(), "name": "measured", "experiment_id": "meas-exp", "baseline_import_id": imported, "baseline_excludes_modelled_appliances": True, "simulator": {"latency_seconds": 0.0},
             "design": {"method": "full_factorial", "levels": 2}}
     d = client.post("/api/experiments", json=body).json()
     run = d["runs"][0]
@@ -134,15 +136,20 @@ def test_measured_schedule_is_labelled_measured(client, imported):
 
 
 def test_calibrated_day_simulation_and_bad_baseline(client, imported):
-    syn = client.post("/api/simulate/day", json={}).json()
-    cal = client.post("/api/simulate/day", json={"baseline_import_id": imported}).json()
-    assert cal["metrics"]["energy_kwh"] != pytest.approx(syn["metrics"]["energy_kwh"])
-    assert client.post("/api/simulate/day", json={"baseline_import_id": "mi-nope"}).status_code == 404
+    own = client.post("/api/simulate/day", json=inputs()).json()
+    cal = client.post("/api/simulate/day", json=inputs(baseline_import_id=imported)).json()
+    assert cal["metrics"]["energy_kwh"] != pytest.approx(own["metrics"]["energy_kwh"])
+    assert client.post("/api/simulate/day", json=inputs(baseline_import_id="mi-nope")).status_code == 404
+    # the meter baseline replaces the owner's constant: base_load_kw is not needed with it
+    only_meter = inputs(baseline_import_id=imported)
+    only_meter.pop("base_load_kw")
+    only_meter.pop("base_load_source")
+    assert client.post("/api/simulate/day", json=only_meter).status_code == 200
 
 
 def test_partial_days_never_produce_a_daily_average(client, run_experiment):
     """The demo file spans 16:00 -> 15:45 next day: two partial local days, so no 'mean daily' value may be reported."""
-    m = client.post("/api/meter/import", json={"csv": client.get("/api/demo/meter.csv").text, "file_name": "demo.csv"}).json()
+    m = client.post("/api/meter/import", json={"csv": meter_csv(), "file_name": "demo.csv", "source": "test meter export"}).json()
     d = run_experiment(design={"method": "full_factorial", "levels": 2})
     c = client.get("/api/comparison", params={"import_id": m["import_id"], "exp_id": d["id"]}).json()
     assert c["historical"]["coverage"]["days_complete"] == 0

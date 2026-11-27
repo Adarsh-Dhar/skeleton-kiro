@@ -2,11 +2,13 @@
 
 A browser-based **experiment workstation for household electricity**, built entirely on the **TRIALFORGE** SDK
 (`trialforge-core`, in [`../skeleton`](../skeleton)). Describe your tariff, your electric car and the appliances you can schedule; choose which
-parts of the evening schedule to vary; measure every combination on a simulated household; see which choices move the bill; let a Bayesian
+parts of the evening schedule to vary; project every combination from your own inputs; see which choices move the bill; let a Bayesian
 optimiser look for the cheapest schedule that **still leaves the car charged by the time it leaves**. Starting it takes one command (`scripts/start-wattwise.sh`); after that everything is done in the browser and no Python or command-line knowledge is needed to *use* it.
 
-> **SIMULATED DATA BY DEFAULT.** Household load, EV charging and meter readings come from a simple model unless you import your own meter
-> export, and no tariff API, meter or vehicle is contacted. Every number is labelled with where it came from (see *Data provenance* below). Every screen carries a banner saying so, and every report repeats it.
+> **ZERO FABRICATED INPUT DATA.** A fresh installation is empty: no example tariff, household, appliance, EV or meter file. Every input is
+> yours (bill, meter export, appliance labels, vehicle documents) or comes from a cited real-world source, and carries a source record
+> (type, name, document, collection and effective dates, verification). Missing data stays missing: projections are refused until it is
+> entered. Schedule costs are **projections** from those inputs, never measurements. What to collect and where: [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
 
 ## Run it
 
@@ -43,14 +45,17 @@ It runs independently of F1 SETUP LAB (port 8001); both can be installed in the 
 | **My usage** | Import your real meter export into the historical library, see exactly how each row was read, get your measured baseline, use it as the household's background load, and compare your actual usage with the optimised schedule |
 | **Meter preview** | Quick preview of a `timestamp,power_kw` (or `power_w`) CSV, priced with a chosen tariff; quality problems are listed, not hidden |
 
-Bundled demo files: `data/demo_meter.csv` (kW) and `data/demo_meter_w.csv` (W), one evening-to-evening day at 15-minute resolution. Failures are
-easy to demo: set *Demo fault rate* to 1 and *Retries* to 0 in the designer.
+No demo files are bundled. Use your own meter export (the automated tests use their own fixtures in `tests/fixtures/`, which are not
+shipped). To see retries and failures, set *Injected fault rate* to 1 and *Retries* to 0 in the designer.
 
 ## Your real data
 
-**Household settings** are stored on the server (`GET/PUT /api/household`, `POST /api/household/reset`): base load, appliances and which are
-flexible, EV battery, initial and desired charge, departure time, charging efficiency, home charger power, selected tariff and the meter import
-used as baseline. They are the values *you* enter, not measurements.
+**Household settings** are stored on the server (`GET/PUT /api/household`): always-on load, appliances (average power, cycle length, usual
+start, movable or not), EV (usable battery, charging efficiency, typical and required charge, usual plug-in and departure time), charger
+capacity, selected tariff and the meter import used as baseline, each with its source. `GET /api/household` also returns `readiness` (what is
+still missing) and `current_schedule` (today's schedule, derived from your plug-in time, charger capacity and usual appliance starts).
+`POST /api/household/reset` clears everything and keeps a backup; `POST /api/household/restore` brings it back. `GET /api/inputs/export.json`
+exports every input with its source and status.
 
 **Historical meter library** (`POST /api/meter/import/preview`, `POST /api/meter/import`, `GET /api/meter/imports[/{id}[/readings|/summary|/calibration]]`,
 `DELETE /api/meter/imports/{id}`). Imports are your measured usage and are kept separate from experiment-run measurements. The interpreter
@@ -71,8 +76,8 @@ columns and units explicitly, or send a header plus 10–20 anonymised rows to a
 **Baseline analytics** (`/summary`): daily energy (mean, spread, min/max), hourly profile, weekday vs weekend profiles, peak demand (of the
 interval averages), coverage, and the cost of your readings under the selected tariff. Only days covered ≥ 95 % are used for profiles and
 daily averages; with fewer than 7 complete days a warning says the baseline is unreliable. **Use as my household baseline** makes new
-experiments start from the measured 15-minute profile as background load instead of the synthetic one (EV and flexible appliances are still
-simulated on top, so import a period without them or remove them from the appliance list; the app warns when the profile looks like it
+experiments start from the measured 15-minute profile as background load instead of the always-on load you entered (EV and flexible appliances are still
+projected on top, so import a period without them or remove them from the appliance list; the app warns when the profile looks like it
 includes EV charging).
 
 **Tariffs.** Every field below can be edited in *Household setup → Electricity tariff*: each period's days (all / weekday / weekend), individual weekdays (Mon-Sun tick boxes; none ticked = every day)
@@ -80,8 +85,9 @@ and months, and an *Advanced charges* section for fixed daily and monthly charge
 tax, export credit, tiered (slab) prices and the day the one-day simulator uses. Saving from the editor keeps every field; earlier versions
 dropped the advanced ones. The original fields are unchanged and existing tariffs give identical costs (regression-tested). Optional, generic extensions:
 weekday/weekend, individual-weekday and seasonal periods, fixed daily and monthly charges, tiered energy pricing (daily or billing-period basis), per-kWh surcharges,
-tax percentage, export credits, and a billing-period demand charge. The bundled tariffs are examples, not any utility's prices: enter your own
-tariff from your bill and check the computed cost of a billed period against the bill (manual gate).
+tax percentage, export credits, and a billing-period demand charge. No tariff is bundled: enter your own from your bill or your DISCOM's
+tariff order, with its source, and check the computed cost of a billed period against the bill (manual gate). The three example tariffs
+earlier versions seeded are recognised in an existing database, labelled EXAMPLE · NOT REAL and refused by every calculation.
 
 **My actual electricity usage vs optimised schedule** (`GET /api/comparison?import_id=&exp_id=`, printable `/api/comparison/report.html`):
 historical daily usage and cost, cost by tariff period, peak, the current and best projected schedules (cost, energy, peak, EV charge at
@@ -93,11 +99,11 @@ departure), measured schedules, estimated savings and the assumptions behind the
 |---|---|
 | `historical_measured` | your imported meter readings |
 | `historical_measured_priced` | those readings priced with the tariff you entered (only as accurate as that tariff) |
-| `synthetic` | the built-in example household profile |
+| `owner_entered_base_load` | the constant always-on load you entered (no meter baseline) |
 | `projected` | a model estimate for a schedule |
 | `measured_schedule` | readings imported to a run after the household actually used that schedule |
-Where the labels appear: the *My usage* library marks each imported **file** with one of three source badges (MEASURED, SYNTHETIC DEMO,
-UNVERIFIED SOURCE). The data labels above are applied to figures in the baseline, comparison, experiment and report views:
+Where the labels appear: the *My usage* library marks each imported **file** with a source badge (MEASURED · USER SUPPLIED for a meter
+export, UNVERIFIED SOURCE for a file of unknown origin; synthetic files are rejected). The data labels above are applied to figures in the baseline, comparison, experiment and report views:
 `historical_measured_priced` on readings priced with your tariff, `projected` on model estimates and `measured_schedule` on readings attached to a run.
 ## Time convention
 
@@ -138,9 +144,10 @@ The browser test walks the whole workflow with the mouse only and writes screens
 * The recommended schedule is always the cheapest **measured, feasible** run. A schedule that leaves the car below the required charge is never
   recommended, even when cheaper, and the analysis states what the requirement costs.
 * Effects are the change in *daily cost* from the low to the high end of each tested range (negative is cheaper).
-* Costs are for one simulated day on the tariff you entered; real savings depend on real usage and your supplier's billing rules.
+* Costs are for one projected day on the tariff you entered; real savings depend on real usage and your supplier's billing rules.
 * A **projected** saving is a model estimate. Only a **measured schedule** (readings imported after the household actually ran it) is evidence
-  of a real saving. An experiment on the synthetic household never produces a saving against your real usage.
+  of a real saving. An experiment without a meter baseline never produces a saving against your real usage. Experiments created before
+  the data policy were built on example inputs: they are marked EXAMPLE INPUTS, cannot be run again and show no saving.
 
 ## Limits and optional pieces
 - **Appliances.** The household screen allows up to 6 appliances in total; the API accepts up to 20 flexible appliances

@@ -9,10 +9,9 @@ import pytest
 pw = pytest.importorskip("playwright.sync_api")
 
 CASES = [
-    ("real_meter", "MEASURED", "prov-m", "2026-03-03"),
-    ("synthetic_demo", "SYNTHETIC DEMO", "prov-s", "2026-03-10"),
+    ("real_meter", "MEASURED · USER SUPPLIED", "prov-m", "2026-03-03"),
     ("unknown", "UNVERIFIED SOURCE", "prov-u", "2026-03-17"),
-]
+]  # synthetic_demo can no longer be imported
 
 
 def _csv(day: str) -> str:

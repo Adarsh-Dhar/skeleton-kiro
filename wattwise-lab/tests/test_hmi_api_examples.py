@@ -8,10 +8,11 @@ from datetime import datetime, timedelta
 
 import pytest
 from conftest import wait_done
+from inputs import appliance, household, inputs, meter_csv, tariff
 from sqlalchemy import text
 
-DISH = {"name": "Dish", "power_kw": 1.0, "duration_h": 1.0}
-BIG = {"name": "Big", "power_kw": 6.0, "duration_h": 1.0}  # too large to be mistaken for the 2 kW evening load
+DISH = appliance("Dish", power_kw=1.0, duration_h=1.0)
+BIG = appliance("Big", power_kw=6.0, duration_h=1.0)  # too large to be mistaken for the 2 kW evening load
 IMPORT_OPTS = {"timestamp_column": "timestamp", "value_column": "import_kwh", "reading_kind": "interval_energy", "unit": "kWh"}
 MONDAY = datetime(2026, 3, 2)  # 2026-03-02 is a Monday
 
@@ -29,7 +30,7 @@ def quarter_hour_csv(days=14, bump=None, export=False, start=MONDAY):
 
 
 def do_import(client, csv, provenance=None, **opts):
-    body = {"csv": csv, "options": {**IMPORT_OPTS, **opts}, "force": True}
+    body = {"csv": csv, "options": {**IMPORT_OPTS, **opts}, "force": True, "source": "test meter export"}
     if provenance is not None:
         body["provenance"] = provenance
     r = client.post("/api/meter/import", json=body)
@@ -38,30 +39,32 @@ def do_import(client, csv, provenance=None, **opts):
 
 
 def study(client, **kw):
-    return client.post("/api/experiments", json={"name": "t", "design": {"method": "ofat"}, **kw})
+    return client.post("/api/experiments", json=inputs(**{"name": "t", "design": {"method": "ofat"}, **kw}))
+def day(client, **kw):
+    return client.post("/api/simulate/day", json=inputs(**kw))
 
 
 # ------------------------------------------------------------------ charger capacity (1.3, 1.4, 1.5)
 def test_default_charger_range_is_1_4_to_11_kw(client):
     f = client.get("/api/meta").json()["factors"]["charge_power_kw"]
     assert (f["low"], f["high"]) == (1.4, 11.0)
-    d = client.post("/api/simulate/day", json={}).json()
+    d = day(client).json()
     assert max(s["ev_kw"] if "ev_kw" in s else s["ev"] for s in d["steps"]) <= 11.0 + 1e-9
 
 
 @pytest.mark.parametrize("cap", [1.39, 350.01, 0, -3, 7.123])
 def test_invalid_charger_capacity_is_rejected_and_stored_settings_unchanged(client, cap):
-    saved = client.put("/api/household", json={"charger_power_kw": 7.4}).json()["settings"]
-    r = client.put("/api/household", json={"charger_power_kw": cap})
+    saved = client.put("/api/household", json=household(charger_power_kw=7.4)).json()["settings"]
+    r = client.put("/api/household", json=household(charger_power_kw=cap))
     assert r.status_code == 422 and "charger capacity" in r.json()["detail"][0]["message"]
     assert client.get("/api/household").json()["settings"] == saved
     assert study(client, charger_capacity_kw=cap).status_code == 422
 
 
 def test_charging_power_above_capacity_is_422_charger_capacity_error(client):
-    r = client.post("/api/simulate/day", json={"charger_capacity_kw": 5, "setup": {"charge_power_kw": 7}})
+    r = day(client, charger_capacity_kw=5, setup={"charge_power_kw": 7})
     assert r.status_code == 422 and r.json()["detail"][0]["field"] == "charger_capacity_kw" and "exceeds the charger capacity" in r.json()["detail"][0]["message"]
-    assert client.post("/api/simulate/day", json={"charger_capacity_kw": 7, "setup": {"charge_power_kw": 7}}).status_code == 200
+    assert day(client, charger_capacity_kw=7, setup={"charge_power_kw": 7}).status_code == 200
 
 
 def test_capacity_widens_the_design_range_and_designed_runs_stay_inside(client):
@@ -84,21 +87,22 @@ def test_no_ev_with_one_flexible_appliance_completes_with_ofat_fallback(client):
     assert done["status"] == "completed" and done["counts"]["completed"] == done["runs_total"] > 0 and done["counts"]["failed"] == 0
     det = client.get(f"/api/experiments/{d['id']}").json()
     assert det["design"]["method"] == "ofat" and any("ofat" in n for n in det["notes"])
-    day = client.post("/api/simulate/day", json={"ev": None, "appliances": [DISH]}).json()
-    assert all(s["ev"] == 0 for s in day["steps"]) and day["metrics"]["ev_energy_kwh"] == 0
+    one = day(client, ev=None, appliances=[DISH]).json()
+    assert all(s["ev"] == 0 for s in one["steps"]) and one["metrics"]["ev_energy_kwh"] == 0
 
 
-def test_no_ev_and_no_appliances_is_rejected_and_stored_household_unchanged(client):
-    saved = client.put("/api/household", json={"base_load_kw": 0.5, "charger_power_kw": 7.4}).json()["settings"]
-    r = client.put("/api/household", json={"ev": None, "appliances": []})
-    assert r.status_code == 422 and "optimisable load" in r.json()["detail"][0]["message"]
-    assert client.get("/api/household").json()["settings"] == saved
-    assert study(client, ev=None, appliances=[]).status_code == 422
+def test_no_ev_and_no_appliances_can_be_saved_but_is_not_ready_and_cannot_run(client):
+    # a partly configured household may be saved (zero fabricated data: nothing is filled in), but it is reported as not ready
+    r = client.put("/api/household", json=household(ev=None, appliances=[]))
+    assert r.status_code == 200 and not r.json()["readiness"]["ready"]
+    assert [m["field"] for m in r.json()["readiness"]["missing"]] == ["appliances"]
+    s = study(client, ev=None, appliances=[])
+    assert s.status_code == 422 and "optimisable load" in s.json()["detail"][0]["message"]
     assert client.get("/api/experiments").json() == []
 
 
 # ------------------------------------------------------------------ provenance (3.3, 3.7, 3.8, 3.9)
-@pytest.mark.parametrize("given,stored", [("real_meter", "real_meter"), ("synthetic_demo", "synthetic_demo"), ("unknown", "unknown"), (None, "unknown"), ("", "unknown")])
+@pytest.mark.parametrize("given,stored", [("real_meter", "real_meter"), ("unknown", "unknown"), (None, "unknown"), ("", "unknown")])
 def test_import_stores_provenance_and_surfaces_source_label(client, given, stored):
     meta = do_import(client, quarter_hour_csv(2), given)
     assert meta["source_label"] == stored and meta["provenance"] == "historical_measured"  # C1: quantity kind unchanged
@@ -109,25 +113,31 @@ def test_import_stores_provenance_and_surfaces_source_label(client, given, store
 
 
 def test_invalid_provenance_is_422_and_nothing_is_written(client):
-    r = client.post("/api/meter/import", json={"csv": quarter_hour_csv(1), "options": IMPORT_OPTS, "provenance": "bogus"})
-    assert r.status_code == 422 and r.json()["detail"][0]["field"] == "provenance"
+    for label in ("bogus", "synthetic_demo"):  # synthetic data is never accepted as an import
+        r = client.post("/api/meter/import", json={"csv": quarter_hour_csv(1), "options": IMPORT_OPTS, "provenance": label, "source": "x"})
+        assert r.status_code == 422 and r.json()["detail"][0]["field"] == "provenance"
     assert client.get("/api/meter/imports").json() == []
-
-
-def test_demo_import_is_labelled_synthetic_demo_in_summary(client):
-    meta = do_import(client, client.get("/api/demo/meter.csv").text, "synthetic_demo", timestamp_column="timestamp", value_column="power_kw", reading_kind="power", unit="kW")
+def test_a_stored_synthetic_import_is_labelled_and_cannot_be_a_baseline(client):
+    # imports labelled synthetic_demo by earlier versions stay readable but are blocked from every calculation
+    meta = do_import(client, quarter_hour_csv(2), "real_meter")
+    with client.app.state.lab.engine.begin() as c:
+        c.execute(text("UPDATE ww_meter_import SET provenance = 'synthetic_demo', options_json = '{}' WHERE import_id = :i"), {"i": meta["import_id"]})
+    got = client.get(f"/api/meter/imports/{meta['import_id']}").json()
+    assert got["source_label"] == "synthetic_demo" and got["source_status"]["label"] == "EXAMPLE · NOT REAL"
     assert client.get(f"/api/meter/imports/{meta['import_id']}/summary").json()["source_label"] == "synthetic_demo"
+    r = client.get(f"/api/meter/imports/{meta['import_id']}/calibration")
+    assert r.status_code == 422 and "synthetic demo data" in r.json()["detail"][0]["message"]
 
 
 # Requirement 3.7 / design C1: the comparison view should carry the file's source_label. It does not yet:
 # comparison.build copies only hist["import"] (no source_label key) and none of hist's top-level keys.
 @pytest.mark.xfail(strict=True, reason="BUG: GET /api/comparison does not expose the import's source_label (Requirement 3.7)")
 def test_comparison_carries_the_import_source_label(client, run_experiment):
-    meta = do_import(client, client.get("/api/demo/meter.csv").text, "synthetic_demo", timestamp_column="timestamp", value_column="power_kw", reading_kind="power", unit="kW")
+    meta = do_import(client, meter_csv(), "real_meter", timestamp_column="timestamp", value_column="power_kw", reading_kind="power", unit="kW")
     exp = run_experiment(design={"method": "ofat"})
     cmp_ = client.get("/api/comparison", params={"import_id": meta["import_id"], "exp_id": exp["id"]})
     assert cmp_.status_code == 200
-    assert "synthetic_demo" in str(cmp_.json())
+    assert "real_meter" in str(cmp_.json())
 
 
 def test_meta_exposes_provenance_badges_and_keeps_factor_keys(client):
@@ -187,7 +197,7 @@ def test_billing_cycle_default_endpoint(client):
 # ------------------------------------------------------------------ overlap check (10.1, 10.3, 10.6, 10.7)
 # A 2 kW load for one hour at 20:00 every day, two days of 14 give a clear rise
 EVENING = (20, 1, 2.0)
-TWO_KW = {"name": "Oven", "power_kw": 2.0, "duration_h": 1.0, "flexible": False, "fixed_start": 20.0}
+TWO_KW = appliance("Oven", power_kw=2.0, duration_h=1.0, flexible=False, fixed_start=20.0)
 
 
 def test_overlap_not_applicable_without_a_baseline(client):
@@ -247,7 +257,7 @@ def test_empty_baseline_blocks_the_study_with_422(client):
 
 # ------------------------------------------------------------------ appliance start mode and factor conflict (4.x)
 def test_per_appliance_mode_creates_one_factor_per_flexible_appliance(client):
-    apps = [{"id": "dish", **DISH}, {"id": "wash", "name": "Wash", "power_kw": 0.5, "duration_h": 1.5}, {"name": "Dryer", "power_kw": 2, "duration_h": 1, "flexible": False}]
+    apps = [{"id": "dish", **DISH}, appliance("Wash", id="wash", power_kw=0.5, duration_h=1.5), appliance("Dryer", power_kw=2, flexible=False)]
     d = study(client, appliances=apps, appliance_start_mode="per_appliance", ev=None, factors={"appliance_start": {"low": 18, "high": 26}}).json()
     names = [f["name"] for f in d["factors"]]
     assert names == ["appliance_start__dish", "appliance_start__wash"]
@@ -260,31 +270,31 @@ def test_shared_mode_is_the_default(client):
 
 
 def test_setup_with_shared_and_per_appliance_keys_is_422_factor_conflict(client):
-    r = client.post("/api/simulate/day", json={"appliances": [{"id": "dish", **DISH}], "setup": {"appliance_start": 19, "appliance_start__dish": 20}})
+    r = day(client, appliances=[{"id": "dish", **DISH}], setup={"appliance_start": 19, "appliance_start__dish": 20})
     assert r.status_code == 422 and r.json()["detail"][0]["field"] == "appliance_start" and "both" in r.json()["detail"][0]["message"]
 
 
 def test_explicit_per_appliance_start_in_a_setup_is_accepted(client):
-    r = client.post("/api/simulate/day", json={"appliances": [{"id": "dish", **DISH}], "ev": None, "setup": {"appliance_start__dish": 22}})
+    r = day(client, appliances=[{"id": "dish", **DISH}], ev=None, setup={"appliance_start__dish": 22})
     assert r.status_code == 200 and r.json()["setup"]["appliance_start__dish"] == 22
 
 
 # ------------------------------------------------------------------ tariff dates and meter pricing (6.x, 8.1)
 def test_meter_reading_across_a_period_boundary_is_split_and_priced_per_slice(client):
-    tariff = {"name": "Split", "periods": [{"label": "night", "start": 0, "end": 7, "price": 0.1}, {"label": "day", "start": 7, "end": 24, "price": 0.3}]}
+    split = tariff("Split", [{"label": "night", "start": 0, "end": 7, "price": 0.1}, {"label": "day", "start": 7, "end": 24, "price": 0.3}])
     csv = "timestamp,power_kw\n2026-03-03T06:30:00,2\n2026-03-03T07:30:00,2\n2026-03-03T08:30:00,2\n"
-    s = client.post("/api/meter/preview", json={"csv": csv, "tariff": tariff}).json()["summary"]
+    s = client.post("/api/meter/preview", json={"csv": csv, "tariff": split}).json()["summary"]
     assert s["energy_kwh"] == pytest.approx(6.0) and s["interval_minutes"] == 60
     assert s["cost_by_period"]["night"]["kwh"] == pytest.approx(1.0) and s["cost_by_period"]["day"]["kwh"] == pytest.approx(5.0)
     assert s["energy_charge"] == pytest.approx(1.0 * 0.1 + 5.0 * 0.3)
 
 
 def test_date_dependent_tariff_prices_the_window_by_its_start_date(client):
-    t = {"name": "Wk", "periods": [{"label": "wd", "start": 0, "end": 24, "price": 0.1, "days": "weekday"},
-                                   {"label": "we", "start": 0, "end": 24, "price": 0.5, "days": "weekend"}]}
+    t = tariff("Wk", [{"label": "wd", "start": 0, "end": 24, "price": 0.1, "days": "weekday"},
+                      {"label": "we", "start": 0, "end": 24, "price": 0.5, "days": "weekend"}])
     req = {"tariff": t, "ev": None, "appliances": [DISH], "base_load_kw": 0.0, "setup": {"appliance_start": 25.0}}
-    fri = client.post("/api/simulate/day", json={**req, "window_start_date": "2026-03-06"}).json()  # Friday: 25h = Saturday 01:00
-    mon = client.post("/api/simulate/day", json={**req, "window_start_date": "2026-03-02"}).json()  # Monday: 25h = Tuesday 01:00
+    fri = day(client, **req, window_start_date="2026-03-06").json()  # Friday: 25h = Saturday 01:00
+    mon = day(client, **req, window_start_date="2026-03-02").json()  # Monday: 25h = Tuesday 01:00
     # window hour 24 and later is Saturday for the Friday start and Tuesday for the Monday start (rates 0.5 weekend, 0.1 weekday)
     def expected(day, weekend_from):
         return sum(s["kw"] * 0.25 * (0.5 if weekend_from is not None and s["t"] >= weekend_from else 0.1) for s in day["steps"])

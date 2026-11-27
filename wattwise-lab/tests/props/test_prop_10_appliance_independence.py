@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from inputs import TEST_EV, TEST_TARIFFS
 
 from wattwise.adapters import household_model as HM
 
@@ -25,7 +26,7 @@ def scenarios(draw):
     flexible = [a for a in apps if a["flexible"]]
     changed = draw(st.sampled_from(flexible))
     new_start = draw(starts)
-    household = {"ev": HM.DEFAULT_EV, "tariff": HM.DEFAULT_TARIFFS[1], "appliances": apps}
+    household = {"ev": TEST_EV, "tariff": TEST_TARIFFS[1], "appliances": apps, "base_load_kw": 0.35, "charger_capacity_kw": 11.0}
     return household, setup, changed, new_start
 
 

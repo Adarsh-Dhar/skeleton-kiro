@@ -1,6 +1,8 @@
-"""End-to-end browser test (Chromium via Playwright): a new user completes the whole WATTWISE workflow with the mouse only.
+"""End-to-end browser test (Chromium via Playwright): from a FRESH installation (no example data at all) a user configures their
+own household with sources and completes the whole WATTWISE workflow with the mouse only.
 
-Screenshots of every screen are written to docs/screenshots/ (used by the README). Run ``playwright install chromium`` once first.
+The values typed in below are test inputs, not real data. Screenshots of every screen are written to docs/screenshots/ (used by
+the README). Run ``playwright install chromium`` once first.
 """
 
 from __future__ import annotations
@@ -8,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from inputs import meter_csv
 
 pw = pytest.importorskip("playwright.sync_api")
 SHOTS = Path(__file__).resolve().parents[1] / "docs" / "screenshots"
@@ -22,6 +25,7 @@ def page(live):
         browser = p.chromium.launch()
         ctx = browser.new_context(viewport={"width": 1440, "height": 900})
         pg = ctx.new_page()
+        pg.on("dialog", lambda d: d.accept())
         pg.errors = []
         # the browser logs every 4xx response as a console error; those are intentional in the validation tests
         pg.on("console", lambda m: pg.errors.append(m.text) if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
@@ -42,25 +46,84 @@ def shot(page, name):
     page.screenshot(path=str(SHOTS / f"{name}.png"), full_page=True)
 
 
-def test_whole_workflow_without_touching_the_terminal(page):
-    # 1. dashboard: empty state offers a demo experiment
-    page.goto(page.base + "/")
-    page.wait_for_selector("#kpis .kpi")
-    page.wait_for_selector("#day svg.chart")
-    assert "No experiments yet" in page.inner_text("#dash")
-    shot(page, "1-dashboard")
-
-    # 2. household setup: an invalid tariff is explained as you type, a valid change saves
+def configure_household(page):
+    """Enter a tariff, an EV, an appliance and the always-on load through the Household setup form (test inputs)."""
     page.click("#nav a[data-nav=household]")
-    page.wait_for_selector("#periods tr")
-    page.fill("#periods tr:first-child [data-f=end]", "6")
+    page.wait_for_selector("#tname")
+    assert "Configuration required" in page.inner_text("#ready")
+    page.fill("#tname", "Test bill tariff")
+    page.fill("#tcur", "INR")
+    page.click("#tsrc > summary")
+    page.fill("#tsrc-doc", "bill for test month")
+    page.fill("#tsrc-col", "2026-11-01")
+    # an incomplete price table is explained as you type, a valid one is confirmed
+    page.fill("#periods tr:first-child [data-f=start]", "23")
+    page.fill("#periods tr:first-child [data-f=end]", "7")
+    page.fill("#periods tr:first-child [data-f=price]", "4")
     page.wait_for_selector("#tvalid .errors")
     assert "gaps" in page.inner_text("#tvalid")
-    page.fill("#periods tr:first-child [data-f=end]", "7")
-    page.wait_for_selector("#tvalid .note")
-    shot(page, "2-household")
+    page.click("#addp")
+    page.fill("#periods tr:nth-child(2) [data-f=start]", "7")
+    page.fill("#periods tr:nth-child(2) [data-f=end]", "23")
+    page.fill("#periods tr:nth-child(2) [data-f=price]", "8")
+    page.wait_for_selector("#tvalid .note.info")
+    page.click("#tnew")
+    page.wait_for_selector("#toast.ok")
+    page.wait_for_selector("#tsave")  # the saved tariff is now selected
+    # EV, charger, one movable appliance, the always-on load
+    page.uncheck("#noev")
+    page.fill("#ev-bat", "40")
+    page.fill("#ev-eff", "0.9")
+    page.fill("#ev-init", "30")
+    page.fill("#ev-want", "80")
+    page.fill("#ev-plug", "18:30")
+    page.fill("#ev-dep", "07:30")
+    page.fill("#ev-charger", "7.2")
+    page.click("#adda")
+    page.fill("#apps tr[data-a='0'] [data-f=name]", "Washing machine")
+    page.fill("#apps tr[data-a='0'] [data-f=power_kw]", "0.5")
+    page.fill("#apps tr[data-a='0'] [data-f=duration_h]", "1.5")
+    page.fill("#apps tr[data-a='0'] [data-f=fixed_start]", "19:00")
+    page.fill("#base", "0.3")
+    assert not page.is_hidden("#hdirty")  # unsaved edits are announced
     page.click("#hsave")
     page.wait_for_selector("#toast.ok")
+    page.wait_for_selector("#ready .note.info")
+    assert "Ready" in page.inner_text("#ready")
+
+
+def test_fresh_installation_has_no_example_data(page):
+    page.goto(page.base + "/")
+    page.wait_for_selector("#day .empty")
+    assert "Configuration required" in page.inner_text("#day") and "No experiments yet" in page.inner_text("#dash")
+    assert page.query_selector("#demo") is None and page.query_selector("#mine") is None  # no demo experiment
+    assert page.evaluate("fetch('/api/tariffs').then(r => r.json())") == []
+    hh = page.evaluate("fetch('/api/household').then(r => r.json())")
+    assert hh["saved"] is False and hh["settings"]["appliances"] == [] and hh["settings"]["ev"] is None
+    for where in ("#/simulator", "#/new"):
+        fresh(page, where)
+        page.wait_for_selector("text=Configuration required")
+    shot(page, "1-dashboard")
+    assert page.errors == [], page.errors
+
+
+def test_whole_workflow_without_touching_the_terminal(page):
+    # 1. household setup from nothing: every value typed in, with its source
+    page.goto(page.base + "/")
+    page.wait_for_selector("#kpis")
+    configure_household(page)
+    shot(page, "2-household")
+    hh = page.evaluate("fetch('/api/household').then(r => r.json())")
+    s = hh["settings"]
+    assert s["ev"]["plug_in_hour"] == 18.5 and s["ev"]["source"]["verification"] == "user_supplied" and s["charger_power_kw"] == 7.2
+    assert s["appliances"][0]["source"]["source_name"] == "household owner" and s["base_load_source"]["source_type"] == "user_provided"
+    t = page.evaluate("fetch('/api/tariffs').then(r => r.json())")[0]
+    assert t["source"]["document"] == "bill for test month" and t["currency"] == "INR"
+
+    # 2. dashboard: today's projected day
+    page.click("#nav a[data-nav=dash]")
+    page.wait_for_selector("#day svg.chart")
+    assert "Projected from your inputs" in page.inner_text("#day")
 
     # 3. schedule simulator: moving a slider re-prices the day
     page.click("#nav a[data-nav=simulator]")
@@ -75,6 +138,7 @@ def test_whole_workflow_without_touching_the_terminal(page):
     # 4. experiment designer: invalid input is rejected with a readable message, then a valid design is generated
     page.click("#nav a[data-nav=new]")
     page.wait_for_selector("#f")
+    assert page.input_value("#cap") == "7.2" and page.input_value("[data-hi=charge_power_kw]") == "7.2"
     page.fill("[data-lo=charge_start]", "29")
     page.fill("[data-hi=charge_start]", "20")
     page.click("#f button[type=submit]")
@@ -86,7 +150,8 @@ def test_whole_workflow_without_touching_the_terminal(page):
     page.select_option("#method", "full_factorial")
     page.fill("#lat", "0")
     page.click("#f button[type=submit]")
-    page.wait_for_selector("text=Combinations to measure")
+    page.wait_for_selector("#go")
+    assert "Inputs and their sources" in page.inner_text("#view") and "USER SUPPLIED" in page.inner_text("#view")
     shot(page, "5-design")
 
     # 5. run it and watch progress
@@ -97,6 +162,7 @@ def test_whole_workflow_without_touching_the_terminal(page):
     shot(page, "6-runs")
     page.click("[data-prof] >> nth=0")
     page.wait_for_selector(".modal svg.chart")
+    assert "PROJECTION" in page.inner_text(".modal")
     page.keyboard.press("Escape")
 
     # 6. analysis
@@ -119,19 +185,22 @@ def test_whole_workflow_without_touching_the_terminal(page):
     page.wait_for_selector("#runs-root table")
     page.wait_for_function("document.querySelectorAll('.chip.opt').length >= 1 && document.querySelectorAll('.chip.queued, .chip.running').length === 0", timeout=60000)
 
-    # 8. reports
+    # 8. reports: the inputs and their sources are part of the report
     page.click("#nav a[data-nav=reports]")
     page.click("text=Open reports")
     page.wait_for_selector("iframe")
     page.wait_for_selector("a:has-text('Schedules (CSV)')")
+    html = page.evaluate("fetch(document.querySelector('iframe').src).then(r => r.text())")
+    assert "Inputs (your data and cited sources)" in html and "bill for test month" in html and "PROJECTED RESULTS" in html
     shot(page, "9-report")
     with page.expect_download() as dl:
         page.click("a:has-text('Report (JSON)')")
     assert dl.value.suggested_filename.endswith("-report.json")
 
-    # 9. meter import
+    # 9. meter preview: the user's own export (here a test file), no demo button
     page.click("#nav a[data-nav=meter]")
-    page.click("#d2")
+    assert page.query_selector("#d1") is None and page.query_selector("#d2") is None
+    page.fill("#csv", meter_csv())
     page.click("#prev")
     page.wait_for_selector("#res .kpis")
     assert "readings every 15 min" in page.inner_text("#res")
@@ -141,6 +210,19 @@ def test_whole_workflow_without_touching_the_terminal(page):
     page.click("#nav a[data-nav=dash]")
     page.wait_for_selector("tr.clickable")
     assert "%" in page.inner_text("tr.clickable")
+    assert page.errors == [], page.errors
+
+
+def test_clear_and_restore_the_household(page):
+    fresh(page, "#/household")
+    page.wait_for_selector("#hreset")
+    page.click("#hreset")
+    page.wait_for_selector("#toast.ok")
+    page.wait_for_selector("#ready .errors")
+    assert page.input_value("#base") == "" and page.is_checked("#noev")
+    page.click("#hrestore")
+    page.wait_for_selector("#ready .note.info")
+    assert page.input_value("#base") == "0.3" and not page.is_checked("#noev") and page.input_value("#ev-charger") == "7.2"
     assert page.errors == [], page.errors
 
 
@@ -160,11 +242,14 @@ def test_user_text_is_escaped_in_the_browser(page):
 
 
 def test_my_usage_library_baseline_and_comparison(page):
-    """Historical meter library (K2/K3), measured baseline (K4) and actual-vs-optimised comparison (K6) in the browser."""
+    """Historical meter library, measured baseline and actual-vs-optimised comparison in the browser."""
+    _clear_meter_library(page)
     fresh(page, "#/usage")
-    page.wait_for_selector("#u-demo")
-    page.click("#u-demo")
-    page.wait_for_function("document.querySelector('#u-csv').value.length > 100")
+    page.wait_for_selector("#u-csv")
+    assert page.query_selector("#u-demo") is None  # no demo data
+    page.fill("#u-csv", meter_csv())
+    page.select_option("#u-prov", "real_meter")
+    page.fill("#u-src", "test meter export")
     page.click("#u-prev")
     page.wait_for_selector("text=How this file will be read")
     res = page.inner_text("#u-res")
@@ -173,8 +258,7 @@ def test_my_usage_library_baseline_and_comparison(page):
     page.wait_for_selector("[data-open]")
     page.wait_for_selector("#u-base")
     assert "mean daily energy" in page.inner_text("#u-detail").lower()
-    # the bundled demo file is labelled SYNTHETIC DEMO; only a file the user labels "real meter" reads MEASURED
-    assert "SYNTHETIC DEMO" in page.inner_text("#u-detail h2") and "MEASURED" not in page.inner_text("#u-detail h2")
+    assert "MEASURED · USER SUPPLIED" in page.inner_text("#u-detail h2")  # measured by the meter, supplied by the owner: not "verified"
     page.click("#u-base")  # use as household baseline (stored on the server)
     page.wait_for_selector("text=Stop using as baseline")
     hh = page.evaluate("fetch('/api/household').then(r => r.json())")
@@ -184,12 +268,15 @@ def test_my_usage_library_baseline_and_comparison(page):
     out = page.inner_text("#u-cmpres")
     assert "PROJECTED" in out and "MEASURED" in out
     shot(page, "11-my-usage")
+    page.click("#u-base")  # stop using it again, so later tests use the always-on load
+    page.wait_for_selector("text=Use as my household baseline")
     assert page.errors == [], page.errors
 
 
 def test_tariff_editor_keeps_and_edits_advanced_fields(page):
     """Saving from the Household setup screen must never drop fixed charges, tiers, taxes or seasonal periods."""
-    body = {"name": "Generic slab example", "demand_charge_per_kw": 0.0, "fixed_monthly_charge": 9.0, "billing_days": 30, "tax_pct": 5,
+    src = {"source_type": "user_provided", "source_name": "automated test fixture", "verification": "user_supplied"}
+    body = {"name": "Slab test tariff", "source": src, "demand_charge_per_kw": 0.0, "fixed_monthly_charge": 9.0, "billing_days": 30, "tax_pct": 5,
             "tiers": [{"up_to_kwh": 10, "adder_per_kwh": 0}, {"up_to_kwh": None, "adder_per_kwh": 0.05}], "tier_basis": "daily",
             "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.2}]}
     fresh(page, "#/")
@@ -205,12 +292,15 @@ def test_tariff_editor_keeps_and_edits_advanced_fields(page):
     page.wait_for_selector("#toast:not([hidden])")
     saved = page.evaluate("id => fetch('/api/tariffs').then(r => r.json()).then(ts => ts.find(x => x.id === id))", t["id"])
     assert saved["tax_pct"] == 7.5 and saved["fixed_daily_charge"] == 0.25 and saved["fixed_monthly_charge"] == 9.0
-    assert saved["tiers"] == body["tiers"] and saved["billing_days"] == 30
+    assert saved["tiers"] == body["tiers"] and saved["billing_days"] == 30 and saved["source"]["source_name"] == "automated test fixture"
     assert page.errors == [], page.errors
+
+
 def test_tariff_editor_sets_individual_weekdays(page):
     """Ticking weekday boxes in the period table saves ``weekdays`` and reloads them ticked."""
+    src = {"source_type": "user_provided", "source_name": "automated test fixture", "verification": "user_supplied"}
     wk = [{"label": "weekdays", "start": 0, "end": 24, "price": 0.3, "weekdays": [0, 1, 2, 3, 4]}, {"label": "weekend", "start": 0, "end": 24, "price": 0.1, "weekdays": [5, 6]}]
-    body = {"name": "Weekday boxes example", "demand_charge_per_kw": 0.0, "periods": wk, "simulation_day": {"month": 6, "day_type": "wed"}}
+    body = {"name": "Weekday boxes test", "source": src, "demand_charge_per_kw": 0.0, "periods": wk, "simulation_day": {"month": 6, "day_type": "wed"}}
     fresh(page, "#/")
     page.wait_for_selector("#kpis")
     t = page.evaluate("b => fetch('/api/tariffs', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}).then(r => r.json())", body)
@@ -227,20 +317,25 @@ def test_tariff_editor_sets_individual_weekdays(page):
     saved = page.evaluate("id => fetch('/api/tariffs').then(r => r.json()).then(ts => ts.find(x => x.id === id))", t["id"])
     assert saved["periods"][0]["weekdays"] == [0, 1, 2, 3, 4] and saved["periods"][1]["weekdays"] == [5, 6]
     assert page.errors == [], page.errors
+
+
 def _clear_meter_library(page):
     """The library rejects a file that was already imported with the same options, so each test starts from an empty library."""
+    page.goto(page.base + "/")
     page.evaluate("""async () => {
         const imports = await fetch('/api/meter/imports').then(r => r.json());
         for (const m of imports) await fetch('/api/meter/imports/' + m.import_id, {method: 'DELETE'});
     }""")
+
+
 def _import_with_label(page, value):
-    """Fill the demo CSV, pick a provenance in the select, preview, import; return (preview chips, detail chips)."""
+    """Paste the test meter file, pick a provenance in the select, preview, import; return (preview chips, detail chips)."""
     _clear_meter_library(page)
     fresh(page, "#/usage")
-    page.wait_for_selector("#u-demo")
-    page.click("#u-demo")
-    page.wait_for_function("document.querySelector('#u-csv').value.length > 100")
-    page.select_option("#u-prov", value)  # overrides what the demo button set
+    page.wait_for_selector("#u-csv")
+    page.fill("#u-csv", meter_csv())
+    page.fill("#u-src", "test meter export")
+    page.select_option("#u-prov", value)
     page.click("#u-prev")
     page.wait_for_selector("#u-res h2 .chip")
     preview = page.eval_on_selector_all("#u-res h2 .chip", "els => els.map(e => [e.textContent, e.className])")
@@ -248,28 +343,23 @@ def _import_with_label(page, value):
     page.wait_for_selector("#u-detail h2 .chip")
     detail = page.eval_on_selector_all("#u-detail h2 .chip", "els => els.map(e => [e.textContent, e.className])")
     return preview, detail
-@pytest.mark.parametrize("value,text,css", [("real_meter", "MEASURED", "prov-m"), ("synthetic_demo", "SYNTHETIC DEMO", "prov-s"), ("unknown", "UNVERIFIED SOURCE", "prov-u"),
-                                            ("", "UNVERIFIED SOURCE", "prov-u")])
+
+
+@pytest.mark.parametrize("value,text,css", [("real_meter", "MEASURED · USER SUPPLIED", "prov-m"), ("unknown", "UNVERIFIED SOURCE", "prov-u")])
 def test_provenance_badge_matches_label_on_preview_and_detail(page, value, text, css):
-    """Exactly one badge per screen, with the label's text and class; only a real_meter file reads MEASURED (3.4 to 3.6)."""
+    """Exactly one badge per screen, with the label's text and class; only a real_meter file reads MEASURED."""
     preview, detail = _import_with_label(page, value)
     for chips in (preview, detail):
         assert len(chips) == 1, chips
         assert chips[0][0] == text and css in chips[0][1].split(), chips
-    if text != "MEASURED":
+    if not text.startswith("MEASURED"):
         assert "MEASURED" not in page.inner_text("#u-detail h2")
     assert page.errors == [], page.errors
-def test_demo_button_selects_synthetic_demo_and_imports_with_that_label(page):
-    _clear_meter_library(page)
+
+
+def test_synthetic_files_cannot_be_imported_from_the_ui(page):
     fresh(page, "#/usage")
-    page.wait_for_selector("#u-demo")
-    page.click("#u-demo")
-    page.wait_for_function("document.querySelector('#u-csv').value.length > 100")
-    assert page.input_value("#u-prov") == "synthetic_demo"
-    page.click("#u-prev")
-    page.wait_for_selector("#u-res h2 .chip.prov-s")
-    page.click("#u-import")
-    page.wait_for_selector("#u-detail h2 .chip.prov-s")
-    labels = page.evaluate("fetch('/api/meter/imports').then(r => r.json()).then(l => Promise.all(l.map(m => fetch('/api/meter/imports/' + m.import_id + '/summary').then(r => r.json()))))")
-    assert labels and labels[0]["source_label"] == "synthetic_demo", [x["source_label"] for x in labels]
+    page.wait_for_selector("#u-prov")
+    options = page.eval_on_selector_all("#u-prov option", "os => os.map(o => o.value)")
+    assert "synthetic_demo" not in options and options == ["real_meter", "unknown"]
     assert page.errors == [], page.errors

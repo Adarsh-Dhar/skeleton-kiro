@@ -3,29 +3,18 @@
 from __future__ import annotations
 
 import pytest
+from inputs import SRC, TEST_APPLIANCES, TEST_EV, TEST_SETUP, TEST_TARIFFS
 
-from wattwise.adapters.household_model import (
-    BASELINE,
-    DEFAULT_APPLIANCES,
-    DEFAULT_EV,
-    DEFAULT_TARIFFS,
-    clock,
-    departure_abs,
-    price_at,
-    rng_for,
-    simulate,
-    summarise,
-    validate_tariff,
-)
-from wattwise.services.tariffs import TariffError, TariffStore
+from wattwise.adapters.household_model import MissingInput, clock, departure_abs, price_at, simulate, summarise, validate_tariff
+from wattwise.services.tariffs import LEGACY_EXAMPLE_TARIFFS, TariffError, TariffStore
 
-TOU = DEFAULT_TARIFFS[0]
-FLAT = DEFAULT_TARIFFS[1]
-DEMAND = DEFAULT_TARIFFS[2]
+TOU = TEST_TARIFFS[0]
+FLAT = TEST_TARIFFS[1]
+DEMAND = TEST_TARIFFS[2]
 
 
 def household(tariff=TOU, **ev):
-    return {"ev": {**DEFAULT_EV, **ev}, "tariff": tariff, "base_load_kw": 0.35, "appliances": [dict(a) for a in DEFAULT_APPLIANCES]}
+    return {"ev": {**TEST_EV, **ev}, "tariff": tariff, "base_load_kw": 0.35, "appliances": [dict(a) for a in TEST_APPLIANCES]}
 
 
 # ------------------------------------------------------------------ tariffs
@@ -36,7 +25,7 @@ def test_prices_wrap_past_midnight():
 
 
 def test_default_tariffs_are_valid():
-    assert all(validate_tariff(t) == [] for t in DEFAULT_TARIFFS)
+    assert all(validate_tariff(t) == [] for t in TEST_TARIFFS)
 
 
 @pytest.mark.parametrize(
@@ -66,18 +55,18 @@ def test_clock_formatting():
 
 # ------------------------------------------------------------------ simulation
 def test_flat_tariff_cost_is_energy_times_price():
-    m = simulate(BASELINE, household(FLAT))["metrics"]
+    m = simulate(TEST_SETUP, household(FLAT))["metrics"]
     assert m["energy_cost"] == pytest.approx(m["energy_kwh"] * 0.25) and m["demand_charge"] == 0
 
 
 def test_cost_by_period_adds_up_to_the_energy_charge():
-    m = simulate(BASELINE, household())["metrics"]
+    m = simulate(TEST_SETUP, household())["metrics"]
     assert sum(p["cost"] for p in m["cost_by_period"].values()) == pytest.approx(m["energy_charge"])
     assert sum(p["kwh"] for p in m["cost_by_period"].values()) == pytest.approx(m["energy_kwh"])
 
 
 def test_demand_charge_scales_with_peak():
-    m = simulate(BASELINE, household(DEMAND))["metrics"]
+    m = simulate(TEST_SETUP, household(DEMAND))["metrics"]
     assert m["demand_charge"] == pytest.approx(0.60 * m["peak_power_kw"]) and m["energy_cost"] == pytest.approx(m["energy_charge"] + m["demand_charge"])
 
 
@@ -92,7 +81,7 @@ def test_ev_charging_reaches_a_full_battery_when_given_time_and_power():
 def test_late_start_or_slow_charger_leaves_the_car_short():
     late = simulate({"charge_start": 31.0, "charge_power_kw": 7.4}, household())["metrics"]
     slow = simulate({"charge_start": 23.0, "charge_power_kw": 1.4}, household())["metrics"]
-    assert late["departure_charge_pct"] < 40 and slow["departure_charge_pct"] < DEFAULT_EV["desired_charge_pct"]
+    assert late["departure_charge_pct"] < 40 and slow["departure_charge_pct"] < TEST_EV["desired_charge_pct"]
 
 
 def test_charging_tapers_above_80_percent():
@@ -103,8 +92,8 @@ def test_charging_tapers_above_80_percent():
 
 def test_moving_flexible_appliances_off_peak_lowers_cost_but_fixed_ones_stay():
     hh = household()
-    peak = simulate({**BASELINE, "appliance_start": 19.0, "charge_start": 31.0}, hh)
-    night = simulate({**BASELINE, "appliance_start": 24.0, "charge_start": 31.0}, hh)
+    peak = simulate({**TEST_SETUP, "appliance_start": 19.0, "charge_start": 31.0}, hh)
+    night = simulate({**TEST_SETUP, "appliance_start": 24.0, "charge_start": 31.0}, hh)
     assert night["metrics"]["energy_cost"] < peak["metrics"]["energy_cost"]
     for sim in (peak, night):  # the non-flexible tumble dryer (fixed 18:00) always runs
         assert sim["steps"][int((18.0 - 16.0) / 0.25)]["appliances"] == pytest.approx(2.0)
@@ -112,22 +101,36 @@ def test_moving_flexible_appliances_off_peak_lowers_cost_but_fixed_ones_stay():
 
 def test_inflexible_appliance_ignores_the_schedule_and_energy_is_conserved():
     hh = household()
-    a = simulate({**BASELINE, "appliance_start": 20.0}, hh)["metrics"]["energy_kwh"]
-    b = simulate({**BASELINE, "appliance_start": 26.0}, hh)["metrics"]["energy_kwh"]
+    a = simulate({**TEST_SETUP, "appliance_start": 20.0}, hh)["metrics"]["energy_kwh"]
+    b = simulate({**TEST_SETUP, "appliance_start": 26.0}, hh)["metrics"]["energy_kwh"]
     assert a == pytest.approx(b)  # same appliances, only shifted in time
 
 
-def test_noise_only_with_rng_and_is_reproducible():
+def test_projection_is_deterministic_and_adds_no_noise():
     hh = household()
-    clean1, clean2 = simulate(BASELINE, hh), simulate(BASELINE, hh)
-    n1, n2 = simulate(BASELINE, hh, rng_for("run-1", "meter")), simulate(BASELINE, hh, rng_for("run-1", "meter"))
-    other = simulate(BASELINE, hh, rng_for("run-2", "meter"))
-    assert clean1["metrics"] == clean2["metrics"] and n1["metrics"] == n2["metrics"]
-    assert n1["metrics"]["energy_kwh"] != clean1["metrics"]["energy_kwh"] and other["metrics"] != n1["metrics"]
+    a, b = simulate(TEST_SETUP, hh), simulate(TEST_SETUP, hh)
+    assert a["metrics"] == b["metrics"] and a["steps"] == b["steps"]
+def test_background_load_is_the_owner_value_with_no_invented_peaks():
+    hh = {**household(), "ev": None, "appliances": []}
+    steps = simulate({}, hh)["steps"]
+    assert {s["base"] for s in steps} == {0.35} and {s["kw"] for s in steps} == {0.35}  # flat: exactly what the owner entered
+def test_missing_inputs_are_reported_not_invented():
+    with pytest.raises(MissingInput, match="background load"):
+        simulate({}, {**household(), "base_load_kw": None})
+    with pytest.raises(MissingInput, match="tariff"):
+        simulate({}, {**household(), "tariff": None})
+    with pytest.raises(MissingInput, match="plug-in time"):
+        simulate({}, household())  # the EV has no charger capacity and no schedule given
+def test_current_schedule_comes_from_the_households_own_times():
+    from wattwise.adapters.household_model import baseline_setup, with_baseline
+    hh = {**household(), "charger_capacity_kw": 3.3}
+    assert baseline_setup(hh) == {"charge_start": 19.0, "charge_power_kw": 3.3, "appliance_start__dishwasher": 20.0, "appliance_start__washing_machine": 19.0}
+    shared = with_baseline(hh, {"appliance_start": 22.0})
+    assert shared == {"charge_start": 19.0, "charge_power_kw": 3.3, "appliance_start": 22.0}
 
 
 def test_window_covers_exactly_24_hours_in_quarter_hours():
-    steps = simulate(BASELINE, household())["steps"]
+    steps = simulate(TEST_SETUP, household())["steps"]
     assert len(steps) == 96 and steps[0]["t"] == 16.0 and steps[-1]["t"] == 39.75
 
 
@@ -145,17 +148,38 @@ def _db(tmp_path):
     return e
 
 
-def test_store_seeds_defaults_and_persists(tmp_path):
+def _seed(s: TariffStore) -> None:
+    for t in TEST_TARIFFS:
+        s.save({**{k: v for k, v in t.items() if k != "id"}, "source": SRC}, None)
+def test_store_starts_empty_and_persists(tmp_path):
     p = _db(tmp_path)
-    assert {t["id"] for t in TariffStore(p).list()} == {"time-of-use", "flat-rate", "night-saver-demand"}
+    assert TariffStore(p).list() == []  # nothing is seeded
     s = TariffStore(p)
-    saved = s.save({"name": "My Tariff", "demand_charge_per_kw": 0.1, "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.3}]})
+    saved = s.save({"name": "My Tariff", "source": SRC, "demand_charge_per_kw": 0.1, "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.3}]})
     assert saved["id"] == "my-tariff" and TariffStore(p).get("my-tariff")["periods"][0]["price"] == 0.3
+    assert TariffStore(p).get("my-tariff")["source"]["source_name"] == SRC["source_name"]
     assert not list(tmp_path.glob("*.json"))  # no tariffs.json any more
+def test_stored_example_tariffs_from_earlier_versions_are_labelled_and_not_usable(tmp_path):
+    import json
+    from datetime import UTC, datetime
+
+    from db.models.wattwise import Tariff
+    p = _db(tmp_path)
+    now = datetime.now(UTC)
+    with p.begin() as c:
+        for i, (tid, periods) in enumerate(LEGACY_EXAMPLE_TARIFFS.items()):
+            c.execute(Tariff.__table__.insert().values(tariff_id=tid, name=tid, position=i, created_at=now, updated_at=now,
+                                                       data_json=json.dumps({"id": tid, "name": tid, "demand_charge_per_kw": 0.0, "periods": periods})))
+        edited = {"id": "flat-rate", "name": "flat-rate", "periods": [{"label": "All day", "start": 0, "end": 24, "price": 0.31}]}
+        c.execute(Tariff.__table__.update().where(Tariff.tariff_id == "flat-rate").values(data_json=json.dumps(edited)))
+    got = {t["id"]: t for t in TariffStore(p).list()}
+    assert got["time-of-use"]["source"]["source_type"] == "example" and got["time-of-use"]["source_status"]["usable"] is False
+    assert got["flat-rate"]["source"]["source_type"] == "unverified" and got["flat-rate"]["source_status"]["usable"] is True
 
 
 def test_store_rejects_invalid_duplicate_and_unknown(tmp_path):
     s = TariffStore(_db(tmp_path))
+    _seed(s)
     with pytest.raises(TariffError):
         s.save({"name": "bad", "periods": [{"label": "x", "start": 0, "end": 5, "price": 0.1}]})
     with pytest.raises(TariffError):
@@ -166,14 +190,15 @@ def test_store_rejects_invalid_duplicate_and_unknown(tmp_path):
         s.save({"name": "x", "periods": FLAT["periods"]}, tariff_id="nope")
 
 
-def test_store_update_and_delete_keep_at_least_one(tmp_path):
+def test_store_update_and_delete_down_to_an_empty_library(tmp_path):
     s = TariffStore(_db(tmp_path))
-    s.save({"name": "Flat rate", "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.4}]}, tariff_id="flat-rate")
+    _seed(s)
+    s.save({"name": "Flat rate", "source": SRC, "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.4}]}, tariff_id="flat-rate")
     assert s.get("flat-rate")["periods"][0]["price"] == 0.4
     s.delete("time-of-use")
     s.delete("night-saver-demand")
-    with pytest.raises(TariffError):
-        s.delete("flat-rate")  # the last tariff cannot be deleted
-    s.save({"name": "Extra", "periods": FLAT["periods"]})
+    s.delete("flat-rate")  # the last tariff can go: an empty library is valid
+    assert s.list() == []
+    s.save({"name": "Extra", "source": SRC, "periods": FLAT["periods"]})
     with pytest.raises(KeyError):
         s.delete("time-of-use")  # already deleted

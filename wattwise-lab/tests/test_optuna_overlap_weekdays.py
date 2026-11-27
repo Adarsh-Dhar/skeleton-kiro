@@ -122,9 +122,10 @@ def test_old_tariffs_without_weekdays_still_work():
 
 
 def test_weekday_tariff_round_trips_through_the_api_and_simulates(client):
-    r = client.post("/api/tariffs", json={**MON_FRI_PEAK, "name": "week split", "simulation_day": {"month": 6, "day_type": "fri"}})
+    from inputs import SRC
+    r = client.post("/api/tariffs", json={**MON_FRI_PEAK, "name": "week split", "source": SRC, "simulation_day": {"month": 6, "day_type": "fri"}})
     assert r.status_code == 201, r.text
     got = client.get("/api/tariffs").json()
     saved = next(t for t in (got if isinstance(got, list) else got.get("tariffs", [])) if t["name"] == "week split")
     assert saved["periods"][1]["weekdays"] == [0, 1, 2, 3, 4] and saved["simulation_day"]["day_type"] == "fri"
-    assert client.post("/api/tariffs", json=T(P(0, 24, 0.1, weekdays=[9]))).status_code in (400, 422)
+    assert client.post("/api/tariffs", json={**T(P(0, 24, 0.1, weekdays=[9])), "source": SRC}).status_code in (400, 422)

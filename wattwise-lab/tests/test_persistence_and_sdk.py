@@ -17,12 +17,13 @@ SKELETON = Path(__file__).resolve().parents[2] / "skeleton"
 # ------------------------------------------------------------------ persistence
 def test_experiments_and_tariffs_survive_restart_and_reanalysis_is_identical(db_path):
     from fastapi.testclient import TestClient
+    from inputs import inputs, seed_tariffs, tariff
 
     from wattwise.api.app import create_app
-
-    t = {"name": "Persisted", "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.3}]}
+    t = tariff("Persisted", [{"label": "all", "start": 0, "end": 24, "price": 0.3}])
     with TestClient(create_app(db_path)) as c1:
-        eid = c1.post("/api/experiments", json={"name": "persist", "simulator": {"latency_seconds": 0}, "design": {"method": "ofat", "replicates": 1}}).json()["id"]
+        seed_tariffs(c1)
+        eid = c1.post("/api/experiments", json=inputs(name="persist", simulator={"latency_seconds": 0}, design={"method": "ofat", "replicates": 1})).json()["id"]
         c1.post(f"/api/experiments/{eid}/execute")
         before = wait_done(c1, eid)
         a1 = c1.post(f"/api/experiments/{eid}/analysis", json={}).json()
@@ -39,11 +40,13 @@ def test_experiments_and_tariffs_survive_restart_and_reanalysis_is_identical(db_
 
 
 async def test_interrupted_runs_are_recovered_after_a_crash(db_path):
+    from inputs import TARIFFS, inputs
+
     from wattwise.api.schemas import ExperimentRequest
     from wattwise.services.lab import LabService
-
     lab = LabService(db_path)
-    d = lab.create(ExperimentRequest(name="crash", simulator={"latency_seconds": 5.0}, design={"method": "ofat", "replicates": 1}))
+    lab.tariffs.save(TARIFFS[0])
+    d = lab.create(ExperimentRequest(**inputs(name="crash", simulator={"latency_seconds": 5.0}, design={"method": "ofat", "replicates": 1})))
     lab.execute(d["id"])
     await asyncio.sleep(0.5)
     assert lab.detail(d["id"])["counts"]["running"] > 0

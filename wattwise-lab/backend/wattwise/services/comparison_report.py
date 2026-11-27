@@ -5,7 +5,7 @@ from html import escape
 from typing import Any
 
 BADGE = {"historical_measured": ("MEASURED", "#1b7f3b"), "historical_measured_priced": ("MEASURED x TARIFF", "#2d6a4f"),
-         "synthetic": ("SYNTHETIC", "#8a5a00"), "projected": ("PROJECTED", "#7a3db8"), "measured_schedule": ("MEASURED SCHEDULE", "#0b5394")}  # fmt: skip
+         "owner_entered_base_load": ("OWNER-ENTERED", "#8a5a00"), "projected": ("PROJECTED", "#7a3db8"), "measured_schedule": ("MEASURED SCHEDULE", "#0b5394")}  # fmt: skip
 
 
 def _cell(v: dict[str, Any] | None) -> str:

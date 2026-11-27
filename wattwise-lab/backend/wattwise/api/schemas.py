@@ -1,4 +1,6 @@
-"""Request schemas (field validation). Experiment-level validation is done by the SDK."""
+"""Request schemas (field validation). Experiment-level validation is done by the SDK.
+Zero fabricated input data: no schema supplies a household, tariff, EV or appliance value of its own. Every input record carries
+a ``source`` (see wattwise.adapters.provenance); a missing input stays missing and is reported instead of being invented."""
 
 from __future__ import annotations
 
@@ -9,11 +11,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from wattwise.adapters import provenance as PV
 from wattwise.adapters.household_model import (
     CHARGER_MAX_KW,
     CHARGER_MIN_KW,
-    DEFAULT_APPLIANCES,
-    DEFAULT_EV,
     FACTORS,
     MAX_FLEXIBLE_APPLIANCES,
     appliance_id,
@@ -71,6 +72,40 @@ def validate_appliances(apps: list[Any]) -> list[Any]:
     return apps
 
 
+class SourceRef(BaseModel):
+    """Where an input value comes from. ``verified`` needs an official/manufacturer/research source, a document and a collection
+    date; the owner's own data is ``user_supplied``. See wattwise.adapters.provenance for the rules."""
+    source_type: Literal["official", "manufacturer", "research_dataset", "meter_export", "user_provided", "unverified"]
+    source_name: str = Field(min_length=1, max_length=200, description="Publisher (utility, regulator, manufacturer) or 'household owner'")
+    document: str | None = Field(None, max_length=500, description="URL or reference of the original document (tariff order, spec sheet, bill)")
+    collected_on: date | None = Field(None, description="Date the value was read from the document")
+    effective_from: date | None = Field(None, description="First day the value applies (tariff orders, model years)")
+    effective_to: date | None = Field(None, description="Last day the value applies; a past date marks the input as expired")
+    verification: Literal["verified", "user_supplied", "unverified"]
+    notes: str | None = Field(None, max_length=500)
+    legacy: bool = Field(False, description="Set by the server for values saved before source tracking (to be confirmed by the owner)")
+    @model_validator(mode="after")
+    def _policy(self):
+        issues = PV.source_issues(self.model_dump())
+        if issues:
+            raise ValueError("; ".join(issues))
+        return self
+def _require_inputs(req: Any) -> None:
+    """A projection needs real inputs only: a tariff, a background load (meter baseline or the owner's own value, with its source)
+    and, for an EV, the charger capacity with its source. Nothing is filled in on the household's behalf."""
+    missing: list[str] = []
+    if req.tariff is None and not req.tariff_id:
+        missing.append("a tariff (tariff_id from your library, or an inline tariff from your bill)")
+    if not req.baseline_import_id and req.base_load_kw is None:
+        missing.append("a background load: a meter import (baseline_import_id) or your always-on load (base_load_kw)")
+    if req.base_load_kw is not None and req.base_load_source is None:
+        missing.append("base_load_source for base_load_kw")
+    if req.ev is not None and req.charger_capacity_kw is None:
+        missing.append("charger_capacity_kw for the EV (from the charger's nameplate)")
+    if req.charger_capacity_kw is not None and req.charger_source is None:
+        missing.append("charger_source for charger_capacity_kw")
+    if missing:
+        raise ValueError("missing input data: " + "; ".join(missing))
 def _require_load(ev: Any, apps: list[Any]) -> None:
     if ev is None and not any(a.flexible for a in apps):
         raise ValueError("at least one optimisable load is required: add a flexible appliance or an EV")
@@ -93,10 +128,13 @@ class SimulationDay(BaseModel):
     month: int = Field(1, ge=1, le=12)
     day_type: Literal["weekday", "weekend", "mon", "tue", "wed", "thu", "fri", "sat", "sun"] = "weekday"
 class TariffIn(BaseModel):
-    """Original fields plus optional generic extensions (see wattwise.adapters.tariff_model). Leave them empty unless
-    your own tariff/bill has them; nothing here is a real utility's tariff."""
-
+    """A real tariff: copied from the household's bill or the utility's tariff order, with its ``source``. Optional extensions
+    (see wattwise.adapters.tariff_model) are left empty unless that tariff has them."""
     name: str = Field(min_length=1, max_length=60)
+    source: SourceRef
+    utility: str | None = Field(None, max_length=120, description="Distribution company (DISCOM) or supplier")
+    consumer_category: str | None = Field(None, max_length=120, description="Tariff category, e.g. 'LT-1 Domestic'")
+    currency: str | None = Field(None, max_length=8, description="Currency of every price, e.g. INR")
     demand_charge_per_kw: float = Field(0.0, ge=0, le=100)
     periods: list[Period] = Field(min_length=1, max_length=48)
     fixed_daily_charge: float | None = Field(None, ge=0, le=1000)
@@ -112,11 +150,15 @@ class TariffIn(BaseModel):
 
 
 class EVSettings(BaseModel):
-    battery_kwh: float = Field(DEFAULT_EV["battery_kwh"], ge=10, le=200)
-    initial_soc_pct: float = Field(DEFAULT_EV["initial_soc_pct"], ge=0, le=100)
-    desired_charge_pct: float = Field(DEFAULT_EV["desired_charge_pct"], ge=1, le=100, description="Minimum charge required at departure (constraint)")
-    departure_hour: float = Field(DEFAULT_EV["departure_hour"], ge=0, lt=24, description="Hour of day the car leaves, e.g. 7.5 = 07:30")
-    efficiency: float = Field(DEFAULT_EV["efficiency"], gt=0.5, le=1.0)
+    """The household's car. ``battery_kwh`` and ``efficiency`` come from the vehicle documentation (``source``); the charge levels
+    and times are the owner's own usage. No field has a default."""
+    battery_kwh: float = Field(ge=10, le=200, description="Usable battery capacity (manufacturer specification)")
+    initial_soc_pct: float = Field(ge=0, le=100, description="Typical charge when plugged in (owner)")
+    desired_charge_pct: float = Field(ge=1, le=100, description="Minimum charge required at departure (constraint, owner)")
+    departure_hour: float = Field(ge=0, lt=24, description="Hour of day the car leaves, e.g. 7.5 = 07:30 (owner)")
+    plug_in_hour: float = Field(ge=0, lt=24, description="Hour of day the car is usually plugged in today, e.g. 18.5 = 18:30 (owner)")
+    efficiency: float = Field(gt=0.5, le=1.0, description="Charging efficiency, grid to battery (manufacturer or measured)")
+    source: SourceRef
     in_baseline: bool = Field(False, description="The baseline meter data already contains this EV's charging")
 
     @model_validator(mode="after")
@@ -132,19 +174,23 @@ class ApplianceIn(BaseModel):
     power_kw: float = Field(gt=0, le=10)
     duration_h: float = Field(gt=0, le=8)
     flexible: bool = True
-    fixed_start: float = Field(19.0, ge=16, lt=40, description="Absolute hour (16-40) used when the appliance is not flexible")
+    fixed_start: float = Field(ge=16, lt=40, description="Usual start today, absolute hour (16-40): the current schedule, and the "
+                                                          "only start of a non-movable appliance")
+    source: SourceRef
     in_baseline: bool = Field(False, description="The baseline meter data already contains this appliance's use")
 
 
 class HouseholdSettings(BaseModel):
-    """The household configuration persisted on the server (``/api/household``). Values are the user's, not measured."""
-
-    tariff_id: str = Field("time-of-use", min_length=1, max_length=60)
-    base_load_kw: float = Field(0.35, ge=0, le=5)
-    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=20)
-    ev: EVSettings | None = Field(default_factory=EVSettings, description="null means the household has no EV")
+    """The household configuration persisted on the server (``/api/household``). Empty until the owner configures it: every
+    value is theirs or comes from a cited source. A partly configured household can be saved; ``readiness`` says what is missing."""
+    tariff_id: str | None = Field(None, min_length=1, max_length=60)
+    base_load_kw: float | None = Field(None, ge=0, le=5, description="Constant always-on load; only used without a meter baseline")
+    base_load_source: SourceRef | None = None
+    appliances: list[ApplianceIn] = Field(default_factory=list, max_length=20)
+    ev: EVSettings | None = Field(None, description="null means no EV is configured")
     charger_power_kw: float | None = Field(None, description="Charger capacity (kW), 1.4 to 350 with at most 2 decimals")
-    baseline_import_id: str | None = Field(None, max_length=40, description="Historical meter import used as the calibrated baseline")
+    charger_source: SourceRef | None = None
+    baseline_import_id: str | None = Field(None, max_length=40, description="Meter import whose measured profile is the background load")
 
     @field_validator("charger_power_kw", mode="before")
     @classmethod
@@ -154,10 +200,11 @@ class HouseholdSettings(BaseModel):
     @model_validator(mode="after")
     def _loads(self):
         validate_appliances(self.appliances)
-        _require_load(self.ev, self.appliances)
+        if self.base_load_kw is not None and self.base_load_source is None:
+            raise ValueError("base_load_kw needs a base_load_source (your meter, bill or own measurement)")
+        if self.charger_power_kw is not None and self.charger_source is None:
+            raise ValueError("charger_power_kw needs a charger_source (the charger's nameplate or manual)")
         return self
-
-
 class HouseholdPut(HouseholdSettings):
     migrated_from: Literal["localStorage"] | None = Field(None, description="Set once by the browser when it uploads legacy settings")
 
@@ -196,15 +243,17 @@ class ExperimentRequest(BaseModel):
     experiment_id: str | None = Field(None, pattern=r"^[a-z0-9][a-z0-9-]{2,40}$", description="Optional; a fixed id reproduces simulated data exactly")
     name: str = Field(min_length=1, max_length=80)
     hypothesis: str = Field("", max_length=1000)
-    tariff_id: str | None = "time-of-use"
+    tariff_id: str | None = Field(None, description="Tariff from the library (required unless an inline tariff is given)")
     tariff: TariffIn | None = Field(None, description="Inline tariff (overrides tariff_id)")
-    ev: EVSettings | None = Field(default_factory=EVSettings, description="null means the household has no EV")
-    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=20)
+    ev: EVSettings | None = Field(None, description="null means the household has no EV")
+    appliances: list[ApplianceIn] = Field(default_factory=list, max_length=20)
     appliance_start_mode: Literal["shared", "per_appliance"] = "shared"
-    base_load_kw: float = Field(0.35, ge=0, le=5)
-    charger_capacity_kw: float | None = Field(None, description="Charger capacity (kW), 1.4 to 350 with at most 2 decimals")
+    base_load_kw: float | None = Field(None, ge=0, le=5, description="Constant always-on load (owner); not needed with a meter baseline")
+    base_load_source: SourceRef | None = None
+    charger_capacity_kw: float | None = Field(None, description="Charger capacity (kW), 1.4 to 350 with at most 2 decimals; required with an EV")
+    charger_source: SourceRef | None = None
     baseline_import_id: str | None = Field(None, max_length=40, description="Start from the background load measured in this historical meter import "
-                                                                          "(otherwise the synthetic profile is used)")
+                                                                          "(otherwise base_load_kw is required)")
     baseline_excludes_modelled_appliances: bool = Field(False, description="Confirms the baseline does not contain the modelled loads (skips the overlap check)")
     day_type: Literal["weekday", "weekend"] | None = Field(None, description="Baseline profile day type; null uses the all-days profile")
     window_start_date: date | None = Field(None, description="Local date on which the simulated window starts (ISO)")
@@ -235,6 +284,7 @@ class ExperimentRequest(BaseModel):
     def _factors_ok(self):
         validate_appliances(self.appliances)
         _require_load(self.ev, self.appliances)
+        _require_inputs(self)
         has_ev = self.ev is not None
         catalog = factor_limits(self.charger_capacity_kw, [a.model_dump() for a in self.appliances], has_ev)
         ev_only = set(FACTORS) - set(factor_limits(has_ev=False))
@@ -260,12 +310,14 @@ class ExperimentRequest(BaseModel):
 
 
 class DayRequest(BaseModel):
-    tariff_id: str | None = "time-of-use"
+    tariff_id: str | None = None
     tariff: TariffIn | None = None
-    ev: EVSettings | None = Field(default_factory=EVSettings, description="null means the household has no EV")
-    appliances: list[ApplianceIn] = Field(default_factory=lambda: [ApplianceIn(**a) for a in DEFAULT_APPLIANCES], max_length=20)
-    base_load_kw: float = Field(0.35, ge=0, le=5)
-    charger_capacity_kw: float | None = Field(None, description="Charger capacity (kW), 1.4 to 350 with at most 2 decimals")
+    ev: EVSettings | None = Field(None, description="null means the household has no EV")
+    appliances: list[ApplianceIn] = Field(default_factory=list, max_length=20)
+    base_load_kw: float | None = Field(None, ge=0, le=5)
+    base_load_source: SourceRef | None = None
+    charger_capacity_kw: float | None = Field(None, description="Charger capacity (kW), 1.4 to 350 with at most 2 decimals; required with an EV")
+    charger_source: SourceRef | None = None
     baseline_import_id: str | None = Field(None, max_length=40, description="Use the profile measured in this meter import as background load")
     day_type: Literal["weekday", "weekend"] | None = Field(None, description="Baseline profile day type; null uses the all-days profile")
     window_start_date: date | None = Field(None, description="Local date on which the simulated window starts (ISO)")
@@ -286,13 +338,12 @@ class DayRequest(BaseModel):
     def _loads(self):
         validate_appliances(self.appliances)
         _require_load(self.ev, self.appliances)
+        _require_inputs(self)
         return self
-
-
 class MeterRequest(BaseModel):
     csv: str = Field(min_length=1)
     unit: Literal["kW", "W"] = "kW"
-    tariff_id: str | None = "time-of-use"
+    tariff_id: str | None = None
     tariff: TariffIn | None = None
     filename: str = "meter.csv"
     options: dict | None = Field(None, description="Optional: read the file with the historical-library interpreter (same keys as "
@@ -305,8 +356,9 @@ class MeterImportRequest(BaseModel):
 
     csv: str = Field(min_length=1)
     file_name: str = Field("meter.csv", min_length=1, max_length=300)
-    source: str = Field("csv upload", max_length=120, description="Where the file came from, e.g. the supplier's portal")
-    provenance: str | None = Field(None, description="real_meter, synthetic_demo or unknown; checked by the meter library (blank means unknown)")
+    source: str | None = Field(None, max_length=120, description="Where the file came from, e.g. the DISCOM's consumer portal (required to import)")
+    provenance: str | None = Field(None, description="real_meter or unknown (blank means unknown); synthetic data is rejected")
+    meter_source: SourceRef | None = Field(None, description="Full source record: portal or meter, document, download date")
     options: dict = Field(default_factory=dict)
     force: bool = Field(False, description="import again even if the same file was imported with the same options")
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from inputs import TEST_EV, TEST_TARIFFS
 
 from wattwise.adapters import household_model as HM
 
@@ -24,8 +25,8 @@ def households(draw):
             "flexible": draw(st.booleans()) if i else True,  # at least one flexible appliance
             "fixed_start": draw(st.floats(17, 30, allow_nan=False)),
         })
-    ev = draw(st.one_of(st.none(), st.just(dict(HM.DEFAULT_EV))))
-    return {"ev": ev, "tariff": HM.DEFAULT_TARIFFS[0], "appliances": apps}
+    ev = draw(st.one_of(st.none(), st.just(dict(TEST_EV))))
+    return {"ev": ev, "tariff": TEST_TARIFFS[0], "appliances": apps, "base_load_kw": 0.35, "charger_capacity_kw": 11.0}
 
 
 start_times = st.floats(17.0, 30.0, allow_nan=False)

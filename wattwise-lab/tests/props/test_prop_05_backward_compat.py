@@ -1,4 +1,7 @@
 """Property 5: backward compatibility with the previous model.
+Since the zero-fabricated-data policy the model no longer invents a load profile, a default schedule or noise, so the comparison
+gives both implementations the same explicit inputs (a background profile and a complete schedule, no noise): with identical
+inputs the model's arithmetic must be unchanged.
 
 Old-format inputs (EV present, no charger capacity, shared appliance start, no window date, no billing cycle value, uniform
 meter intervals) give results equal to the frozen copy of the previous implementation. New additive keys (``by_appliance``,
@@ -9,7 +12,6 @@ new metric keys) are ignored; every legacy key must match exactly.
 
 from __future__ import annotations
 
-import random
 from datetime import datetime, timedelta
 
 import legacy_reference as LHM
@@ -97,7 +99,7 @@ evs = st.fixed_dictionaries({
     "departure_hour": st.integers(0, 95).map(lambda v: v / 4),
     "efficiency": st.integers(70, 100).map(lambda v: v / 100),
 })
-setups = st.fixed_dictionaries({}, optional={
+setups = st.fixed_dictionaries({
     "charge_start": st.floats(17.0, 31.0),
     "charge_power_kw": st.floats(1.4, 11.0),
     "appliance_start": st.floats(17.0, 30.0),
@@ -108,17 +110,16 @@ setups = st.fixed_dictionaries({}, optional={
 def households(draw):
     hh = {"ev": draw(evs), "tariff": draw(tariffs()), "appliances": draw(st.lists(appliance, max_size=4)),
           "base_load_kw": draw(st.integers(0, 100).map(lambda v: v / 100))}
-    if draw(st.booleans()):
-        hh["base_profile_kw"] = [draw(st.integers(0, 300)) / 100 for _ in range(96)]
+    hh["base_profile_kw"] = [draw(st.integers(0, 300)) / 100 for _ in range(96)]  # explicit: the model no longer invents one
     return hh
 
 
 # Feature: wattwise-household-model-improvements, Property 5: Backward compatibility with the previous model
 @settings(max_examples=100, deadline=None)
-@given(hh=households(), setup=setups, seed=st.one_of(st.none(), st.integers(0, 10_000)))
-def test_simulate_matches_legacy(hh, setup, seed):
-    legacy = LHM.simulate(dict(setup), hh, random.Random(seed) if seed is not None else None)
-    new = HM.simulate(dict(setup), hh, random.Random(seed) if seed is not None else None)
+@given(hh=households(), setup=setups)
+def test_simulate_matches_legacy(hh, setup):
+    legacy = LHM.simulate(dict(setup), hh, None)
+    new = HM.simulate(dict(setup), hh)
     assert_legacy_subset(legacy, new)
 
 

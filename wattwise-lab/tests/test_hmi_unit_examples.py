@@ -9,9 +9,10 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from inputs import TEST_EV
 
 from wattwise.adapters import tariff_model as TM
-from wattwise.adapters.household_model import DEFAULT_EV, price_at, simulate
+from wattwise.adapters.household_model import price_at, simulate
 from wattwise.services.baseline import BaselineUnavailable, ModelledLoad, check_overlap
 
 TARIFF_BY_DAY = {"name": "Wk", "periods": [{"label": "wd", "start": 0, "end": 24, "price": 0.1, "days": "weekday"},
@@ -61,7 +62,7 @@ def test_simulation_without_ev_has_no_ev_load_or_charge_metric():
           "appliances": [{"name": "d", "power_kw": 1.0, "duration_h": 1.0, "flexible": True, "fixed_start": 19.0}]}
     out = simulate({"appliance_start": 20.0}, hh)
     assert all(s["ev"] == 0 for s in out["steps"]) and out["metrics"]["ev_energy_kwh"] == 0 and "departure_charge_pct" not in out["metrics"]
-    with_ev = simulate({"charge_start": 20.0, "charge_power_kw": 7.0, "appliance_start": 20.0}, {**hh, "ev": DEFAULT_EV})
+    with_ev = simulate({"charge_start": 20.0, "charge_power_kw": 7.0, "appliance_start": 20.0}, {**hh, "ev": TEST_EV})
     assert with_ev["metrics"]["energy_kwh"] > out["metrics"]["energy_kwh"]
 
 

@@ -16,16 +16,36 @@ from sqlalchemy import Engine, delete, select
 
 from db.engine import immediate_transaction
 from db.models.wattwise import MeterImport, MeterReading
+from wattwise.adapters import provenance as PV
 from wattwise.adapters.meter_import import ImportOptions, ImportResult, Reading, interpret
 
 PREVIEW_ROWS = 50
 PROVENANCE = "historical_measured"  # fixed quantity-kind key (clarification C1); the file's label is reported as ``source_label``
-PROVENANCE_LABELS = ("real_meter", "synthetic_demo", "unknown")
-_BADGES = {"real_meter": ("MEASURED", "prov-m"), "synthetic_demo": ("SYNTHETIC DEMO", "prov-s"), "unknown": ("UNVERIFIED SOURCE", "prov-u")}
+PROVENANCE_LABELS = ("real_meter", "synthetic_demo", "unknown")  # every label a stored import may carry
+IMPORT_LABELS = ("real_meter", "unknown")  # labels a NEW import may claim: synthetic data is not accepted (zero fabricated input data)
+# A meter export is measured by the meter but supplied by the household: it is never shown as independently verified.
+_BADGES = {"real_meter": ("MEASURED · USER SUPPLIED", "prov-m"), "synthetic_demo": ("SYNTHETIC · NOT USABLE", "prov-s"),
+           "unknown": ("UNVERIFIED SOURCE", "prov-u")}
 
 
 class ProvenanceError(ValueError):
     """The supplied provenance label is not one of PROVENANCE_LABELS."""
+def _source_record(source: str, label: str, record: dict[str, Any] | None, legacy: bool = False) -> dict[str, Any]:
+    """The import's source record. A meter export is the household's own data: at most ``user_supplied``, never ``verified``."""
+    if record:
+        rec = {k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in record.items()}
+        if label == "unknown":
+            rec.update(source_type="unverified", verification="unverified")
+        elif rec.get("verification") == "verified":
+            rec["verification"] = "user_supplied"
+        return rec
+    if label == "synthetic_demo":
+        return {**PV.example_source("synthetic demo meter file"), "source_name": source}
+    if label == "real_meter":
+        return {"source_type": "meter_export", "source_name": source, "document": None, "collected_on": None, "effective_from": None,
+                "effective_to": None, "verification": "user_supplied", "legacy": legacy, "notes": "meter export supplied by the household"}
+    return {"source_type": "unverified", "source_name": source, "document": None, "collected_on": None, "effective_from": None,
+            "effective_to": None, "verification": "unverified", "legacy": legacy, "notes": "origin of the file not stated"}
 
 
 def normalize_provenance(value: Any) -> str:
@@ -42,6 +62,18 @@ def normalize_provenance(value: Any) -> str:
     return v
 
 
+def import_label(value: Any) -> str:
+    """The label of a new import: like ``normalize_provenance`` but synthetic data is rejected."""
+    v = normalize_provenance(value)
+    if v not in IMPORT_LABELS:
+        raise ProvenanceError("synthetic or demo meter data cannot be imported: WATTWISE accepts only real meter exports "
+                              "(provenance 'real_meter') or files of unknown origin ('unknown', labelled unverified)")
+    return v
+def usable_as_baseline(meta: dict[str, Any]) -> None:
+    """Synthetic imports stored by earlier versions cannot be the household's background load."""
+    if meta.get("source_label") == "synthetic_demo":
+        from wattwise.services.baseline import BaselineUnavailable
+        raise BaselineUnavailable(f"meter import {meta.get('import_id')} is synthetic demo data, not real readings; import your own meter export")
 def provenance_badge(label: str | None) -> dict[str, str]:
     text, css = _BADGES[label if label in _BADGES else "unknown"]
     return {"text": text, "css": css}
@@ -73,8 +105,8 @@ class MeterLibrary:
         self.engine = engine
 
     def import_csv(self, text: str, file_name: str, opts: dict[str, Any] | None, source: str = "csv upload", force: bool = False,
-                   provenance: str | None = None) -> dict[str, Any]:
-        label = normalize_provenance(provenance)  # validate before anything is written
+                   provenance: str | None = None, source_record: dict[str, Any] | None = None) -> dict[str, Any]:
+        label = import_label(provenance)  # validate before anything is written
         opt = options_from(opts)  # export_column / signed travel in the options
         res: ImportResult = interpret(text, opt)
         if not res.readings:
@@ -92,7 +124,8 @@ class MeterLibrary:
                 import_id=iid, file_name=file_name[:300], imported_at=datetime.now(UTC), source=source[:120], timezone=opt.timezone,
                 reading_kind=res.options["resolved"]["reading_kind"], unit=res.options["resolved"]["unit"], interval_minutes=res.interval_minutes,
                 resample_minutes=opt.resample_minutes, first_ts_utc=first, last_ts_utc=last, rows_total=res.rows_total, rows_used=len(res.readings),
-                rows_skipped=res.rows_skipped, content_sha256=digest, options_json=json.dumps(res.options), warnings_json=json.dumps(res.warnings),
+                rows_skipped=res.rows_skipped, content_sha256=digest,
+                options_json=json.dumps({**res.options, "source_record": _source_record(source, label, source_record)}), warnings_json=json.dumps(res.warnings),
                 row_log_json=json.dumps(res.row_log), gaps_json=json.dumps(res.gaps), provenance=label,
                 total_import_kwh=sum(r.kwh for r in res.readings), total_export_kwh=sum(r.export_kwh for r in res.readings)))
             c.exec_driver_sql(
@@ -105,13 +138,16 @@ class MeterLibrary:
 
     @staticmethod
     def _view(m: MeterImport, full: bool = False) -> dict[str, Any]:
+        opts = json.loads(m.options_json)
+        record = opts.pop("source_record", None) or _source_record(m.source, m.provenance or "unknown", None, legacy=True)
         out = {"import_id": m.import_id, "file_name": m.file_name, "imported_at": str(m.imported_at), "source": m.source, "timezone": m.timezone,
                "reading_kind": m.reading_kind, "unit": m.unit, "interval_minutes": m.interval_minutes, "resample_minutes": m.resample_minutes,
                "first_utc": m.first_ts_utc, "last_utc": m.last_ts_utc, "rows_total": m.rows_total, "rows_used": m.rows_used,
                "rows_skipped": m.rows_skipped, "warnings": json.loads(m.warnings_json), "provenance": PROVENANCE,
-               "source_label": m.provenance or "unknown", "total_import_kwh": m.total_import_kwh, "total_export_kwh": m.total_export_kwh or 0.0}  # fmt: skip
+               "source_label": m.provenance or "unknown", "total_import_kwh": m.total_import_kwh, "total_export_kwh": m.total_export_kwh or 0.0,
+               "source_record": record, "source_status": PV.status(record)}  # fmt: skip
         if full:
-            out.update(options=json.loads(m.options_json), row_log=json.loads(m.row_log_json), gaps=json.loads(m.gaps_json))
+            out.update(options=opts, row_log=json.loads(m.row_log_json), gaps=json.loads(m.gaps_json))
         return out
 
     def list(self) -> list[dict[str, Any]]:

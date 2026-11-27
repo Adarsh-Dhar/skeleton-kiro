@@ -10,20 +10,23 @@ from pathlib import Path
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from inputs import SRC, TARIFFS, inputs
 
 from wattwise.adapters import household_model as HM
 from wattwise.api.schemas import ExperimentRequest, FactorSetting
 from wattwise.services.lab import LabService
 
 _LAB = LabService(str(Path(tempfile.mkdtemp(prefix="prop09-")) / "lab.db"))
+_LAB.tariffs.save(TARIFFS[0])
 LIMITS = HM.FACTORS["appliance_start"]
 
 
 @st.composite
 def scenarios(draw):
     n_flex = draw(st.integers(1, 8))
-    apps = [{"id": f"flex{i}", "name": f"Flexible {i}", "power_kw": 1.0, "duration_h": 1.0, "flexible": True} for i in range(n_flex)]
-    apps += [{"id": f"fixed{i}", "name": f"Fixed {i}", "power_kw": 1.0, "duration_h": 1.0, "flexible": False, "fixed_start": 19.0}
+    apps = [{"id": f"flex{i}", "name": f"Flexible {i}", "power_kw": 1.0, "duration_h": 1.0, "flexible": True, "fixed_start": 19.0, "source": SRC}
+            for i in range(n_flex)]
+    apps += [{"id": f"fixed{i}", "name": f"Fixed {i}", "power_kw": 1.0, "duration_h": 1.0, "flexible": False, "fixed_start": 19.0, "source": SRC}
              for i in range(draw(st.integers(0, 3)))]
     apps = draw(st.permutations(apps))
     low = draw(st.floats(LIMITS["low"], LIMITS["high"] - 1.0, allow_nan=False))
@@ -34,8 +37,8 @@ def scenarios(draw):
 
 
 def _build(apps, mode, method, low, high):
-    req = ExperimentRequest(name="p9", ev=None, appliances=apps, appliance_start_mode=mode, design={"method": method},
-                            factors={"appliance_start": FactorSetting(low=low, high=high)})
+    req = ExperimentRequest(**inputs(name="p9", ev=None, appliances=apps, appliance_start_mode=mode, design={"method": method},
+                                     factors={"appliance_start": FactorSetting(low=low, high=high)}))
     household = _LAB.household(req)
     return _LAB.build_spec(req, "ww-prop09", household), household
 

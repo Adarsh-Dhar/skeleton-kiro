@@ -1,4 +1,5 @@
-"""The application's SDK adapter: simulates a smart-meter day for a candidate schedule."""
+"""The application's SDK adapter: projects one day for a candidate schedule from the household's configured inputs.
+Its outputs are model projections (``reading_kind: projected``), never measurements, and are deterministic: no noise is added."""
 
 from __future__ import annotations
 
@@ -21,14 +22,13 @@ from wattwise.adapters.household_model import (
     METRIC_UNITS,
     STEP_H,
     FactorConflict,
-    baseline_setup,
     check_setup_keys,
     household_catalog,
     rng_for,
     simulate,
 )
 
-SOURCE = "wattwise-simulated-meter v1"
+SOURCE = "wattwise-household-model v2 (projection)"
 T0 = datetime(2026, 1, 12, 16, 0, tzinfo=UTC)  # reference calendar day (simulated)
 
 
@@ -44,9 +44,9 @@ class MeterSimulatorAdapter:
         self.catalog = household_catalog(household)  # factors valid for this household (capacity, appliances, EV)
         self.metadata = AdapterMetadata(
             name=name, version="1.0", domain="household electricity", synthetic=True,
-            description="SIMULATED smart-meter day for an EV charging + appliance schedule. No real meter, vehicle or tariff API.",
+            description="PROJECTED household day for an EV charging + appliance schedule, from the configured inputs. Not a meter reading.",
             input_schema={n: {"type": "continuous", "min": f["low"], "max": f["high"], "required": False} for n, f in self.catalog.items()},
-            tags=("wattwise", "simulated"),
+            tags=("wattwise", "projected"),
         )  # fmt: skip
         self.latency, self.fault_rate = latency_seconds, fault_rate
         self._prepared: ExecutionContext | None = None
@@ -70,10 +70,10 @@ class MeterSimulatorAdapter:
         return True
 
     def _measure(self, run_id: str, cfg: dict[str, Any], requested: list[str] | None) -> list[Measurement]:
-        # an omitted charger power (fixed factor, small capacity) defaults to the capacity-clipped baseline, not the raw 7.4 kW
-        sim = simulate({"charge_power_kw": baseline_setup(self.household)["charge_power_kw"], **cfg}, self.household, rng_for(run_id, "meter"))
+        # omitted factors (a fixed factor, or a no-EV household) stay at the household's current schedule (its charger capacity, plug-in time)
+        sim = simulate(cfg, self.household)
         m = sim["metrics"]
-        meta = {"synthetic": True, "reading_kind": "simulated"}
+        meta = {"synthetic": True, "reading_kind": "projected"}
         out = [Measurement(run_id=run_id, metric=k, value=round(float(m[k]), 5), unit=METRIC_UNITS[k], timestamp=T0, source=SOURCE, metadata=dict(meta))
                for k in ("energy_cost", "energy_kwh", "peak_power_kw", "departure_charge_pct", "ev_energy_kwh") if k in m and (not requested or k in requested)]  # fmt: skip
         if requested and "grid_power" in requested:

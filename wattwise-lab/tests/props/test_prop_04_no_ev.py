@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from inputs import TEST_TARIFFS
 
 from wattwise.adapters import household_model as HM
 
@@ -30,7 +31,7 @@ setups = st.fixed_dictionaries({
     apps=st.lists(appliance, min_size=1, max_size=4).filter(lambda a: any(x["flexible"] for x in a)),
     setup=setups,
     base=st.integers(0, 100).map(lambda v: v / 100),
-    tariff=st.sampled_from(HM.DEFAULT_TARIFFS),
+    tariff=st.sampled_from(TEST_TARIFFS),
 )
 def test_no_ev_simulation_has_no_ev_load(apps, setup, base, tariff):
     hh = {"ev": None, "tariff": tariff, "base_load_kw": base, "appliances": apps}

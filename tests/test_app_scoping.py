@@ -13,7 +13,13 @@ from wattwise.api.app import create_app as create_ww
 from db import create_db_engine, current_version, latest_version
 from db.scoped import ScopedExperimentRepository
 
-BODY = {"name": "scoping test", "simulator": {"latency_seconds": 0.0}}
+# Test inputs (not real data): WATTWISE has no default household or tariff, so the experiment brings its own, each with a source.
+SRC = {"source_type": "user_provided", "source_name": "automated test fixture", "verification": "user_supplied"}
+BODY = {"name": "scoping test", "simulator": {"latency_seconds": 0.0}, "base_load_kw": 0.35, "base_load_source": SRC,
+        "tariff": {"name": "Test tariff", "source": SRC, "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.25}]},
+        "ev": {"battery_kwh": 60.0, "initial_soc_pct": 30.0, "desired_charge_pct": 80.0, "departure_hour": 7.5, "plug_in_hour": 19.0, "efficiency": 0.92, "source": SRC},
+        "charger_capacity_kw": 11.0, "charger_source": SRC,
+        "appliances": [{"name": "Dishwasher", "power_kw": 1.1, "duration_h": 2.0, "flexible": True, "fixed_start": 20.0, "source": SRC}]}
 
 
 def _wait(client, exp_id, timeout=60):

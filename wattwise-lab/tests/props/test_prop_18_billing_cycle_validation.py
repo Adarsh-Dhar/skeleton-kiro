@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from inputs import inputs
 from pydantic import ValidationError
 
 from wattwise.api.schemas import DayRequest, ExperimentRequest, validate_billing_consumption
@@ -49,7 +50,7 @@ def test_validator_accepts_iff_in_range_with_three_decimals(v):
 @settings(max_examples=100, deadline=None)
 @given(v=valid_values)
 def test_valid_values_accepted_by_request_models(v):
-    assert DayRequest(billing_cycle_consumption_kwh=v).billing_cycle_consumption_kwh == v
+    assert DayRequest(**inputs(billing_cycle_consumption_kwh=v)).billing_cycle_consumption_kwh == v
     assert "billing_cycle_consumption_kwh" in ExperimentRequest.model_fields
 
 
@@ -57,9 +58,7 @@ def test_valid_values_accepted_by_request_models(v):
 @given(v=any_value.filter(lambda x: not _expected_valid(x)))
 def test_request_models_reject_invalid_values(v):
     with pytest.raises(ValidationError):
-        DayRequest(billing_cycle_consumption_kwh=v)
-
-
+        DayRequest(**inputs(billing_cycle_consumption_kwh=v))
 def test_boundaries_and_none():
     assert validate_billing_consumption(None) is None
     assert validate_billing_consumption(0) == 0.0
@@ -68,4 +67,4 @@ def test_boundaries_and_none():
     for bad in (-0.001, 1_000_000.001, 1.2345, True, "5", float("nan"), float("inf")):
         with pytest.raises(ValueError):
             validate_billing_consumption(bad)
-    assert DayRequest().billing_cycle_consumption_kwh is None
+    assert DayRequest(**inputs()).billing_cycle_consumption_kwh is None

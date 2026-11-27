@@ -8,6 +8,7 @@ import time
 
 import pytest
 from conftest import wait_done
+from inputs import SRC, appliance, ev, inputs, seed_tariffs, tariff
 
 THREE = {
     "charge_start": {"low": 19, "high": 29},
@@ -20,16 +21,17 @@ OFAT = {"design": {"method": "ofat", "replicates": 1}}
 # ------------------------------------------------------------------ meta, frontend, tariffs
 def test_meta_and_frontend(client):
     m = client.get("/api/meta").json()
-    assert "SIMULATED" in m["notice"] and set(m["factors"]) == {"charge_start", "charge_power_kw", "appliance_start"}
+    assert "PROJECTED" in m["notice"] and set(m["factors"]) == {"charge_start", "charge_power_kw", "appliance_start"}
     assert {x["id"] for x in m["methods"]} == {"full_factorial", "fractional_factorial", "ofat", "central_composite", "box_behnken", "random"}
-    assert {t["id"] for t in m["tariffs"]} >= {"time-of-use", "flat-rate"} and m["baseline"]["charge_start"] == 19.0
+    assert {t["id"] for t in m["tariffs"]} >= {"time-of-use", "flat-rate"} and "baseline" not in m and "default_ev" not in m
+    assert "user_provided" in m["source_types"] and "example" not in m["source_types"] and m["input_units"]["ev.battery_kwh"] == "kWh"
     page = client.get("/")
     assert page.status_code == 200 and "Wattwise Lab" in page.text
     assert client.get("/app.js").status_code == 200 and client.get("/charts.js").status_code == 200 and client.get("/style.css").status_code == 200
 
 
 def test_tariff_crud_and_validation_over_http(client):
-    t = {"name": "Weekend saver", "demand_charge_per_kw": 0.2, "periods": [{"label": "Off", "start": 0, "end": 8, "price": 0.1}, {"label": "On", "start": 8, "end": 24, "price": 0.3}]}
+    t = tariff("Weekend saver", [{"label": "Off", "start": 0, "end": 8, "price": 0.1}, {"label": "On", "start": 8, "end": 24, "price": 0.3}], demand_charge_per_kw=0.2)
     r = client.post("/api/tariffs", json=t)
     assert r.status_code == 201 and r.json()["id"] == "weekend-saver"
     assert client.post("/api/tariffs", json=t).status_code == 422  # duplicate name
@@ -38,7 +40,7 @@ def test_tariff_crud_and_validation_over_http(client):
     assert client.put("/api/tariffs/nope", json=t).status_code == 404
     assert any(x["id"] == "weekend-saver" for x in client.get("/api/tariffs").json())
     assert client.delete("/api/tariffs/weekend-saver").status_code == 204 and client.delete("/api/tariffs/weekend-saver").status_code == 404
-    gap = {"name": "Gappy", "periods": [{"label": "x", "start": 0, "end": 5, "price": 0.1}]}
+    gap = tariff("Gappy", [{"label": "x", "start": 0, "end": 5, "price": 0.1}])
     r = client.post("/api/tariffs", json=gap)
     assert r.status_code == 422 and any("gaps" in i["message"] for i in r.json()["detail"])
     v = client.post("/api/tariffs/validate", json=gap).json()
@@ -48,24 +50,25 @@ def test_tariff_crud_and_validation_over_http(client):
 def test_tariff_changes_do_not_alter_existing_experiments(make_experiment, client):
     d = make_experiment()
     before = d["household"]["tariff"]
-    client.put("/api/tariffs/time-of-use", json={"name": "Time-of-use", "periods": [{"label": "all", "start": 0, "end": 24, "price": 9.0}]})
+    client.put("/api/tariffs/time-of-use", json=tariff("Time-of-use", [{"label": "all", "start": 0, "end": 24, "price": 9.0}]))
     assert client.get(f"/api/experiments/{d['id']}").json()["household"]["tariff"] == before
 
 
 # ------------------------------------------------------------------ day simulation
 def test_day_simulation_matches_the_model_and_validates_input(client):
-    base = client.post("/api/simulate/day", json={}).json()
-    assert len(base["steps"]) == 96 and base["simulated"] is True and base["setup"]["charge_start"] == 19.0
-    night = client.post("/api/simulate/day", json={"setup": {"charge_start": 24.0, "charge_power_kw": 7.4, "appliance_start": 24.0}}).json()
+    base = client.post("/api/simulate/day", json=inputs()).json()
+    assert len(base["steps"]) == 96 and base["result_kind"] == "projected" and base["setup"]["charge_start"] == 19.0  # the EV's own plug-in time
+    night = client.post("/api/simulate/day", json=inputs(setup={"charge_start": 24.0, "charge_power_kw": 7.4, "appliance_start": 24.0})).json()
     assert night["metrics"]["energy_cost"] < base["metrics"]["energy_cost"] and night["metrics"]["departure_charge_pct"] >= 80
     assert sum(p["cost"] for p in night["cost_by_period"].values()) == pytest.approx(night["metrics"]["energy_charge"], abs=1e-3)
-    for bad in ({"setup": {"charge_start": 99}}, {"setup": {"wheel": 1}}, {"ev": {"initial_soc_pct": 90, "desired_charge_pct": 80}}, {"tariff_id": "nope"}):
-        assert client.post("/api/simulate/day", json=bad).status_code in (404, 422), bad
+    for bad in ({"setup": {"charge_start": 99}}, {"setup": {"wheel": 1}}, {"ev": ev(initial_soc_pct=90, desired_charge_pct=80)}, {"tariff_id": "nope"}):
+        assert client.post("/api/simulate/day", json=inputs(**bad)).status_code in (404, 422), bad
 
 
 def test_overview_starts_empty_then_counts_experiments(client, run_experiment):
     o = client.get("/api/overview").json()
-    assert o["kpis"]["experiments"] == 0 and o["kpis"]["best_saving_pct"] is None and len(o["baseline_day"]["steps"]) == 96
+    # nothing configured: no example household to show a day for
+    assert o["kpis"]["experiments"] == 0 and o["kpis"]["best_saving_pct"] is None and o["baseline_day"] is None and not o["readiness"]["ready"]
     run_experiment(**OFAT)
     o = client.get("/api/overview").json()
     assert o["kpis"]["experiments"] == 1 and o["kpis"]["runs"] > 0 and o["kpis"]["simulated_kwh"] > 0 and o["experiments"][0]["best"]["saving_pct"] is not None
@@ -104,39 +107,39 @@ def test_two_factors_with_ofat_and_disabled_factor_stays_at_baseline(make_experi
         ({"factors": {"charge_start": {"low": 19, "high": 29}, "charge_power_kw": {"enabled": False, "low": 1, "high": 2}, "appliance_start": {"enabled": False, "low": 1, "high": 2}}}, "at least two factors"),
         ({"factors": {"wheel": {"low": 0, "high": 1}}}, "unknown factor"),
         ({"name": "   "}, "blank"),
-        ({"ev": {"initial_soc_pct": 90, "desired_charge_pct": 80}}, "initial charge must be below"),
-        ({"ev": {"departure_hour": 25}}, "less than 24"),
+        ({"ev": ev(initial_soc_pct=90, desired_charge_pct=80)}, "initial charge must be below"),
+        ({"ev": ev(departure_hour=25)}, "less than 24"),
         ({"design": {"method": "magic"}}, "fractional_factorial"),
         ({"design": {"run_budget": 6}}, "exceeds budget"),
         ({"design": {"replicates": 0}}, "greater than or equal to 1"),
         ({"simulator": {"fault_rate": 2}}, "less than or equal to 1"),
-        ({"appliances": [{"name": f"a{i}", "power_kw": 1, "duration_h": 1} for i in range(21)]}, "at most 20"),
-        ({"appliances": [{"name": "x", "power_kw": 0, "duration_h": 1}]}, "greater than 0"),
+        ({"appliances": [appliance(f"a{i}") for i in range(21)]}, "at most 20"),
+        ({"appliances": [appliance("x", power_kw=0)]}, "greater than 0"),
         ({"experiment_id": "Bad Id"}, "pattern"),
     ],
 )
 def test_invalid_experiment_definitions_are_rejected_with_clear_messages(client, body, fragment):
-    r = client.post("/api/experiments", json={"name": "bad", **body})
+    r = client.post("/api/experiments", json=inputs(**{"name": "bad", **body}))
     assert r.status_code == 422, r.text
     assert any(fragment in i["message"] for i in r.json()["detail"]) and all({"field", "message"} <= set(i) for i in r.json()["detail"])
     assert client.get("/api/experiments").json() == []  # nothing half-created
 
 
 def test_unknown_tariff_and_duplicate_ids_are_rejected(client, make_experiment):
-    assert client.post("/api/experiments", json={"name": "x", "tariff_id": "nope"}).status_code == 404
+    assert client.post("/api/experiments", json=inputs(name="x", tariff_id="nope")).status_code == 404
     d = make_experiment()
-    assert client.post("/api/experiments", json={"name": "again", "experiment_id": d["id"]}).status_code == 409
+    assert client.post("/api/experiments", json=inputs(name="again", experiment_id=d["id"])).status_code == 409
 
 
 def test_inline_tariff_is_stored_with_the_experiment(client):
-    t = {"name": "Inline", "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.5}]}
-    d = client.post("/api/experiments", json={"name": "inline", "tariff": t, "simulator": {"latency_seconds": 0}, **OFAT}).json()
-    assert d["household"]["tariff"]["name"] == "Inline" and d["tariff"] == "Inline"
+    t = tariff("Inline", [{"label": "all", "start": 0, "end": 24, "price": 0.5}])
+    d = client.post("/api/experiments", json=inputs(name="inline", tariff=t, simulator={"latency_seconds": 0}, **OFAT)).json()
+    assert d["household"]["tariff"]["name"] == "Inline" and d["tariff"] == "Inline" and d["household"]["tariff"]["source"]["source_name"] == SRC["source_name"]
 
 
 def test_household_settings_flow_into_the_experiment(make_experiment):
-    d = make_experiment(ev={"battery_kwh": 80, "initial_soc_pct": 20, "desired_charge_pct": 90, "departure_hour": 6.0}, base_load_kw=0.5,
-                        appliances=[{"name": "Oven", "power_kw": 2, "duration_h": 1, "flexible": False, "fixed_start": 18}])
+    d = make_experiment(ev=ev(battery_kwh=80, initial_soc_pct=20, desired_charge_pct=90, departure_hour=6.0), base_load_kw=0.5,
+                        appliances=[appliance("Oven", power_kw=2, flexible=False, fixed_start=18)])
     assert d["desired_charge_pct"] == 90 and d["household"]["ev"]["battery_kwh"] == 80 and d["household"]["appliances"][0]["name"] == "Oven" and d["household"]["base_load_kw"] == 0.5
 
 
@@ -159,7 +162,7 @@ def test_second_execute_is_rejected_and_nothing_is_duplicated(run_experiment, cl
 
 
 def test_unreachable_requirement_gives_no_recommendation(run_experiment, client):
-    d = run_experiment(ev={"battery_kwh": 200, "initial_soc_pct": 0, "desired_charge_pct": 100}, **OFAT)
+    d = run_experiment(ev=ev(battery_kwh=200, initial_soc_pct=0, desired_charge_pct=100), **OFAT)
     a = client.post(f"/api/experiments/{d['id']}/analysis", json={}).json()
     assert a["best_run_id"] is None and a["recommendation"]["status"] == "no_feasible" and d["best"] is None and len(a["infeasible"]) == d["runs_total"]
 
@@ -219,7 +222,7 @@ def test_analysis_justifies_the_recommendation(run_experiment, client):
     a = client.post(f"/api/experiments/{d['id']}/analysis", json={"alpha": 0.05}).json()
     rec = a["recommendation"]
     assert rec["status"] == "recommended" and a["best_run_id"] == rec["run_id"] and rec["expected"]["departure_charge_pct"] >= 80 - 1e-6
-    assert rec["expected"]["energy_cost"] <= rec["baseline"]["energy_cost"] and any("never recommended" in r for r in rec["reasons"]) and any("SIMULATED" in c for c in rec["caveats"])
+    assert rec["expected"]["energy_cost"] <= rec["baseline"]["energy_cost"] and any("never recommended" in r for r in rec["reasons"]) and any("PROJECTED" in c for c in rec["caveats"])
     assert a["effects"]["significant_factors"] and a["effects"]["r_squared"] is not None and a["effects"]["anova"]["kind"] == "factorial"
     assert {e["term"] for e in a["effects"]["effects"]} == set(THREE)
     assert all(not r["feasible"] for r in a["runs"].values() if r["run_id"] in {i["run_id"] for i in a["infeasible"]})
@@ -294,7 +297,7 @@ def test_report_and_exports(run_experiment, client):
     assert rep["planned_runs"] == rep["completed_runs"] == d["runs_total"] and rep["best_configuration"] and rep["anova"] and rep["regression"]
     assert rep["reproducibility"]["random_seed"] == 1 and len(rep["reproducibility"]["specification_hash"]) == 64
     html = client.get(f"/api/experiments/{d['id']}/report.html")
-    assert html.status_code == 200 and "SIMULATED DATA" in html.text and "ANOVA" in html.text and "Recommendation" in html.text and "<script" not in html.text
+    assert html.status_code == 200 and "PROJECTED RESULTS" in html.text and "ANOVA" in html.text and "Inputs (your data and cited sources)" in html.text and "Recommendation" in html.text and "<script" not in html.text
     assert "Time-of-use" in html.text and "Peak" in html.text  # the tariff used is part of the report
     assert "attachment" in client.get(f"/api/experiments/{d['id']}/report.json").headers["content-disposition"]
     rows = list(csv.DictReader(io.StringIO(client.get(f"/api/experiments/{d['id']}/export/runs.csv").text)))
@@ -319,7 +322,8 @@ def test_a_fixed_id_reproduces_results_exactly(tmp_path):
     out = []
     for i in range(2):
         with TestClient(create_app(str(tmp_path / f"r{i}.db"))) as c:
-            c.post("/api/experiments", json={"name": "repro", "experiment_id": "repro-one", "simulator": {"latency_seconds": 0}, **OFAT})
+            seed_tariffs(c)
+            c.post("/api/experiments", json=inputs(name="repro", experiment_id="repro-one", simulator={"latency_seconds": 0}, **OFAT))
             c.post("/api/experiments/repro-one/execute")
             d = wait_done(c, "repro-one")
             out.append([(r["configuration"], r["outcomes"]) for r in d["runs"]])

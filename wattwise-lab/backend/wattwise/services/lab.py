@@ -36,6 +36,7 @@ from db.config import resolve_db_url
 from db.models.common import APP_WATTWISE
 from db.scoped import ScopedExperimentRepository
 from wattwise import SIMULATED_NOTICE
+from wattwise.adapters import provenance as PV
 from wattwise.adapters import tariff_model as TM
 from wattwise.adapters.household_model import (
     METRIC_UNITS,
@@ -44,6 +45,7 @@ from wattwise.adapters.household_model import (
     WINDOW_START,
     ChargerCapacityError,
     FactorConflict,  # noqa: F401  (re-exported: the API layer maps it to a validation error)
+    MissingInput,
     appliance_key,
     baseline_setup,
     check_setup_keys,
@@ -51,6 +53,7 @@ from wattwise.adapters.household_model import (
     factor_limits,
     household_catalog,
     simulate,
+    with_baseline,
 )
 from wattwise.adapters.meter_adapter import MeterSimulatorAdapter
 from wattwise.adapters.meter_csv import ParsedMeter, parse_meter_csv, to_series
@@ -65,7 +68,7 @@ from wattwise.services.baseline import (  # noqa: F401  (re-exported: the API la
     NoCompleteDay,
 )
 from wattwise.services.household import HouseholdStore
-from wattwise.services.meter_library import MeterLibrary, options_from
+from wattwise.services.meter_library import MeterLibrary, options_from, usable_as_baseline
 from wattwise.services.tariffs import TariffError, TariffStore  # noqa: F401  (TariffError re-exported)
 
 ADAPTER_PREFIX = "wattwise-sim/"
@@ -122,24 +125,86 @@ class LabService:
 
     # ------------------------------------------------------------------ tariffs & household
     def resolve_tariff(self, tariff_id: str | None, inline: Any) -> dict[str, Any]:
+        """The tariff to price with: an inline tariff (from the bill) or one from the library. There is no default tariff."""
         if inline is not None:
-            data = inline.model_dump()
+            data = inline.model_dump(mode="json", exclude_none=True)
             from wattwise.adapters.household_model import validate_tariff
-
             issues = validate_tariff(data)
             if issues:
                 raise TariffError(issues)
-            return {"id": "inline", **data}
+            return {"id": "inline", **data, "source_status": PV.status(data.get("source"))}
+        if not tariff_id:
+            raise MissingInput("no tariff is configured: add the tariff from your electricity bill or your utility's tariff order")
         try:
-            return self.tariffs.get(tariff_id or "time-of-use")
+            t = self.tariffs.get(tariff_id)
         except KeyError:
             raise NotFound(f"tariff {tariff_id}") from None
+        PV.require_usable(t.get("source"), f"tariff '{t.get('name', tariff_id)}'")
+        return t
+    # ------------------------------------------------------------------ readiness and input sources
+    def readiness(self, settings: dict[str, Any]) -> dict[str, Any]:
+        """What the saved household still needs before projections can run. Nothing missing is ever filled in."""
+        missing: list[dict[str, str]] = []
+        warnings: list[str] = []
+        tariff = None
+        if not settings.get("tariff_id"):
+            missing.append({"field": "tariff_id", "message": "add your tariff (from your bill or the utility's tariff order) and select it"})
+        else:
+            try:
+                tariff = self.tariffs.get(settings["tariff_id"])
+            except KeyError:
+                missing.append({"field": "tariff_id", "message": f"the selected tariff '{settings['tariff_id']}' no longer exists"})
+        if tariff is not None:
+            st = tariff["source_status"]
+            if not st["usable"]:
+                missing.append({"field": "tariff_id", "message": f"tariff '{tariff['name']}' is a built-in example, not a real tariff: replace it"})
+            warnings += [f"tariff '{tariff['name']}': {w}" for w in st["warnings"]]
+        if settings.get("baseline_import_id"):
+            try:
+                meta = self.meters.get(settings["baseline_import_id"])
+                usable_as_baseline(meta)
+            except (NotFound, baseline.BaselineUnavailable) as exc:
+                missing.append({"field": "baseline_import_id", "message": str(exc)})
+        elif settings.get("base_load_kw") is None:
+            missing.append({"field": "base_load_kw", "message": "import your meter readings (My usage) or enter your always-on load"})
+        if settings.get("ev") is not None and settings.get("charger_power_kw") is None:
+            missing.append({"field": "charger_power_kw", "message": "enter your charger's capacity from its nameplate"})
+        if settings.get("ev") is None and not any(a.get("flexible") for a in settings.get("appliances") or []):
+            missing.append({"field": "appliances", "message": "add at least one appliance you can move, or configure your EV"})
+        return {"ready": not missing, "missing": missing, "warnings": warnings}
+    @staticmethod
+    def input_sources(hh: dict[str, Any]) -> list[dict[str, Any]]:
+        """Snapshot of every input of a household with its source and status (stored with each experiment)."""
+        out: list[dict[str, Any]] = []
+        t = hh.get("tariff") or {}
+        if t:
+            out.append(PV.entry("tariff", t.get("source"), {"name": t.get("name"), "utility": t.get("utility"), "consumer_category": t.get("consumer_category"),
+                                                            "currency": t.get("currency"), "periods": t.get("periods")}))
+        ev = hh.get("ev")
+        if ev is not None:
+            out.append(PV.entry("ev", ev.get("source"), {k: ev.get(k) for k in ("battery_kwh", "efficiency", "initial_soc_pct", "desired_charge_pct",
+                                                                               "departure_hour", "plug_in_hour")}))
+        if hh.get("charger_capacity_kw") is not None:
+            out.append(PV.entry("charger", hh.get("charger_source"), {"charger_power_kw": hh["charger_capacity_kw"]}))
+        for a in hh.get("appliances") or []:
+            out.append(PV.entry(f"appliances[{a.get('name')}]", a.get("source"), {k: a.get(k) for k in ("power_kw", "duration_h", "flexible", "fixed_start")}))
+        bs = hh.get("baseline_source")
+        if bs:
+            out.append(PV.entry("meter_baseline", bs.get("source_record"), {"import_id": bs.get("import_id"), "file_name": bs.get("file_name"),
+                                                                            "days_used": bs.get("days_used")}))
+        elif hh.get("base_load_kw") is not None:
+            out.append(PV.entry("base_load", hh.get("base_load_source"), {"base_load_kw": hh["base_load_kw"]}))
+        return out
 
     def household(self, req: Any) -> dict[str, Any]:
-        hh = {"ev": req.ev.model_dump() if req.ev is not None else None, "tariff": self.resolve_tariff(req.tariff_id, req.tariff),
-              "base_load_kw": req.base_load_kw, "appliances": [a.model_dump() for a in req.appliances]}  # fmt: skip
-        if getattr(req, "charger_capacity_kw", None) is not None:  # only when set, so households without one are stored exactly as before
+        hh = {"ev": req.ev.model_dump(mode="json") if req.ev is not None else None, "tariff": self.resolve_tariff(req.tariff_id, req.tariff),
+              "base_load_kw": req.base_load_kw, "appliances": [a.model_dump(mode="json") for a in req.appliances]}  # fmt: skip
+        if req.base_load_source is not None:
+            hh["base_load_source"] = req.base_load_source.model_dump(mode="json")
+        if getattr(req, "charger_capacity_kw", None) is not None:
             hh["charger_capacity_kw"] = float(req.charger_capacity_kw)
+            if req.charger_source is not None:
+                hh["charger_source"] = req.charger_source.model_dump(mode="json")
         start = getattr(req, "window_start_date", None)
         if start is not None:  # ISO string so the household stays JSON-serialisable; absent = derived reference date (old behaviour)
             hh["window_start_date"] = start.isoformat() if hasattr(start, "isoformat") else str(start)
@@ -170,10 +235,10 @@ class LabService:
     @staticmethod
     def _modelled_loads(hh: dict[str, Any]) -> list[tuple[baseline.ModelledLoad, bool]]:
         """(load, declared_in_baseline) for every modelled appliance and the EV, at the baseline setup."""
-        setup = baseline_setup(hh)
+        setup = with_baseline(hh, {})
         out: list[tuple[baseline.ModelledLoad, bool]] = []
         for a in hh["appliances"]:
-            start = setup.get(appliance_key(a), setup["appliance_start"]) if a["flexible"] else a["fixed_start"]
+            start = setup.get(appliance_key(a), a["fixed_start"]) if a["flexible"] else a["fixed_start"]
             steps = max(1, math.ceil(a["duration_h"] / STEP_H - 1e-9))
             out.append((baseline.ModelledLoad(a["name"], float(a["power_kw"]), steps, int(round((start - WINDOW_START) / STEP_H))),
                         bool(a.get("in_baseline"))))
@@ -224,6 +289,7 @@ class LabService:
 
     def calibration(self, import_id: str, day_type: str | None = None) -> dict:
         meta = self.meters.get(import_id)
+        usable_as_baseline(meta)  # synthetic demo files stored by earlier versions are not a household's real load
         a = baseline.analyse(self.meters.readings(import_id), meta["timezone"], source_label=meta.get("source_label"))
         charger = self.households.get()["settings"].get("charger_power_kw")
         try:
@@ -238,7 +304,7 @@ class LabService:
         if sel["fallback"]:
             cal["notes"] = [*cal["notes"], f"no complete {sel['requested']} day in this file: the all-days profile is used instead"]
         cal.update(days_used=sel["days_used"], day_type_used=sel["day_type_used"], requested_day_type=sel["requested"], fallback=sel["fallback"])
-        return {**cal, "import_id": import_id, "file_name": meta["file_name"]}
+        return {**cal, "import_id": import_id, "file_name": meta["file_name"], "source_record": meta.get("source_record")}
 
     # ------------------------------------------------------------------ creation
     @staticmethod
@@ -263,7 +329,7 @@ class LabService:
                     if key is None or key in req.factors:
                         continue
                     if s.enabled:
-                        factors.append(self._factor(key, s.low, s.high, catalog[key], catalog[key]["default"]))
+                        factors.append(self._factor(key, s.low, s.high, catalog[key], base_setup.get(key, (s.low + s.high) / 2)))
                 continue
             if not s.enabled:
                 continue
@@ -271,7 +337,7 @@ class LabService:
             if meta["low"] >= meta["high"]:  # zero-width range (charger capacity at the 1.4 kW minimum): fixed, not designed
                 notes.append(f"{name} fixed at {meta['low']:g} {meta['unit']}: the allowed range has zero width")
                 continue
-            factors.append(self._factor(name, s.low, s.high, meta, base_setup.get(name, meta["default"])))
+            factors.append(self._factor(name, s.low, s.high, meta, base_setup.get(name, (s.low + s.high) / 2)))
         check_setup_keys({f.name: 0.0 for f in factors})  # FactorConflict before anything is stored
         k, d = len(factors), req.design
         method = {"full_factorial": "factorial"}.get(d.method, d.method)
@@ -295,15 +361,15 @@ class LabService:
         if req.also_minimise_peak:
             objectives.append(Objective(metric="peak_power_kw", direction="minimize", weight=0.5))
         return ExperimentSpec(
-            experiment_id=exp_id, name=req.name, hypothesis=req.hypothesis, description="WATTWISE LAB experiment on a SIMULATED household.",
+            experiment_id=exp_id, name=req.name, hypothesis=req.hypothesis, description="WATTWISE LAB experiment: projected outcomes computed from the household's configured inputs (not measurements).",
             factors=factors, objectives=objectives,
             constraints=[Constraint(metric="departure_charge_pct", kind="output", minimum=req.ev.desired_charge_pct)] if has_ev else [],
             measurement_definitions=measurement_definitions(has_ev), design_method=method, design_options=opts,
             adapter_name=ADAPTER_PREFIX + exp_id, run_budget=d.run_budget, random_seed=d.seed,
             execution=ExecutionPolicy(max_retries=req.simulator.max_retries, max_concurrency=4, run_timeout_seconds=120),
             metadata={"app": "wattwise-lab", "simulated": True, "desired_charge_pct": req.ev.desired_charge_pct if has_ev else None,
-                      "baseline": "calibrated" if household.get("base_profile_kw") else "synthetic",
-                      "lab": {"household": household, **req.simulator.model_dump(), **({"notes": notes} if notes else {}),
+                      "baseline": "calibrated" if household.get("base_profile_kw") else "owner_entered_constant",
+                      "lab": {"household": household, "input_sources": self.input_sources(household), **req.simulator.model_dump(), **({"notes": notes} if notes else {}),
                                 **({"baseline_check": baseline_check} if baseline_check is not None else {})}},
         )  # fmt: skip
 
@@ -335,9 +401,15 @@ class LabService:
         except KeyError:
             raise NotFound(exp_id) from None
 
+    LEGACY_NOTICE = ("created before the zero-fabricated-data policy: it was built on built-in example inputs (example household, "
+                     "synthetic load profile, simulated noise), so its results are not about your household and no saving is computed. "
+                     "Create a new experiment from your configured inputs.")
     @staticmethod
     def _hh(res: ExperimentResult) -> dict[str, Any]:
-        return res.spec.metadata["lab"]["household"]
+        lab = res.spec.metadata["lab"]
+        if "input_sources" not in lab:  # legacy experiment: never treated as real-input results
+            return {**lab["household"], "legacy_inputs": True}
+        return lab["household"]
 
     @staticmethod
     def _run_row(r) -> dict:
@@ -358,7 +430,7 @@ class LabService:
         feas = [r for r in rows if r["status"] == "completed" and r["feasible"] and "energy_cost" in r["outcomes"]]
         best = min(feas, key=lambda r: r["outcomes"]["energy_cost"]) if feas else None
         spec, hh = res.spec, self._hh(res)
-        base = simulate(baseline_setup(hh), hh)["metrics"]
+        base = None if hh.get("legacy_inputs") else simulate(baseline_setup(hh), hh)["metrics"]
         catalog = household_catalog(hh)
         kwh = sum(r["outcomes"].get("energy_kwh", 0.0) for r in rows if r["status"] == "completed")
         return {
@@ -367,10 +439,11 @@ class LabService:
             "desired_charge_pct": spec.metadata.get("desired_charge_pct"), "tariff": hh["tariff"]["name"], "simulated_kwh": round(kwh, 1),
             "factors": [{"name": f.name, "low": f.lower, "high": f.upper, "unit": f.unit, "label": catalog[f.name]["label"], "clock": catalog[f.name]["clock"]}
                         for f in spec.factors],
-            "baseline_cost": round(base["energy_cost"], 3),
+            "baseline_cost": round(base["energy_cost"], 3) if base else None,
+            "legacy_inputs": bool(hh.get("legacy_inputs")), **({"legacy_notice": self.LEGACY_NOTICE} if hh.get("legacy_inputs") else {}),
             "best": {"run_id": best["run_id"], "cost": best["outcomes"]["energy_cost"], "kwh": best["outcomes"].get("energy_kwh"), "peak": best["outcomes"].get("peak_power_kw"),
                      "charge": best["outcomes"].get("departure_charge_pct"), "schedule": best["schedule"], "configuration": best["configuration"],
-                     "saving_pct": round(100 * (base["energy_cost"] - best["outcomes"]["energy_cost"]) / base["energy_cost"], 1)} if best else None,
+                     "saving_pct": round(100 * (base["energy_cost"] - best["outcomes"]["energy_cost"]) / base["energy_cost"], 1) if base else None} if best else None,
             "multi_objective": len(spec.objectives) > 1,
         }  # fmt: skip
 
@@ -392,10 +465,11 @@ class LabService:
         d["design"] = {"method": res.plan.method, "seed": res.plan.random_seed, "runs_planned": len(res.plan.runs), "randomization": res.plan.randomization.get("scheme"),
                        "control": res.plan.control_configuration, **{k: info[k] for k in keep if k in info}}  # fmt: skip
         d["household"] = self._hh(res)
-        d["simulator"] = {k: v for k, v in res.spec.metadata["lab"].items() if k not in ("household", "notes", "baseline_check")}
+        d["simulator"] = {k: v for k, v in res.spec.metadata["lab"].items() if k not in ("household", "notes", "baseline_check", "input_sources")}
         if res.spec.metadata["lab"].get("notes"):
             d["notes"] = list(res.spec.metadata["lab"]["notes"])
         d["baseline_check"] = res.spec.metadata["lab"].get("baseline_check")  # None for studies created before the overlap check existed
+        d["input_sources"] = res.spec.metadata["lab"].get("input_sources")  # snapshot taken when the experiment was created
         d["simulated_notice"] = SIMULATED_NOTICE
         return d
 
@@ -422,8 +496,8 @@ class LabService:
                 if k == "charge_power_kw" and cap is not None and v > cap and hh["ev"] is not None and v >= catalog[k]["low"]:
                     raise ChargerCapacityError(f"charging power {v:g} kW exceeds the charger capacity {cap:g} kW")
                 raise ValueError(f"setup.{k} is not a valid schedule parameter value")
-        return {**self._profile(simulate(req.setup, hh)), "tariff": hh["tariff"], "setup": self._setup_view({**baseline_setup(hh), **req.setup}, hh),
-                "simulated": True}
+        return {**self._profile(simulate(req.setup, hh)), "tariff": hh["tariff"], "setup": self._setup_view(with_baseline(hh, req.setup), hh),
+                "simulated": True, "result_kind": "projected"}
 
     @staticmethod
     def _setup_view(setup: dict[str, float], hh: dict[str, Any]) -> dict[str, float]:
@@ -436,24 +510,40 @@ class LabService:
         if run is None:
             raise NotFound(run_id)
         hh = self._hh(res)
-        return {**self._profile(simulate(run.configuration, hh)), "tariff": hh["tariff"], "setup": self._setup_view({**baseline_setup(hh), **run.configuration}, hh),
+        return {**self._profile(simulate(run.configuration, hh)), "tariff": hh["tariff"], "setup": self._setup_view(with_baseline(hh, run.configuration), hh),
                 "run_id": run_id, "model_profile": True}
 
+    def baseline_profile(self, exp_id: str) -> dict:
+        """Today's schedule projected on the experiment's own stored inputs (including a measured baseline profile)."""
+        res = self._result(exp_id)
+        hh = self._hh(res)
+        if hh.get("legacy_inputs"):
+            raise Conflict(f"experiment {exp_id} was {self.LEGACY_NOTICE}")
+        return {**self._profile(simulate({}, hh)), "tariff": hh["tariff"], "setup": self._setup_view(baseline_setup(hh), hh), "result_kind": "projected"}
     def overview(self) -> dict:
         exps = self.list()
-        best = [e["best"]["saving_pct"] for e in exps if e["best"]]
-        default_hh = {"ev": {"battery_kwh": 60.0, "initial_soc_pct": 30.0, "desired_charge_pct": 80.0, "departure_hour": 7.5, "efficiency": 0.92},
-                      "tariff": self.tariffs.get("time-of-use") if any(t["id"] == "time-of-use" for t in self.tariffs.list()) else self.tariffs.list()[0],
-                      "base_load_kw": 0.35, "appliances": [{"name": "Dishwasher", "power_kw": 1.1, "duration_h": 2.0, "flexible": True, "fixed_start": 20.0},
-                                                          {"name": "Washing machine", "power_kw": 0.5, "duration_h": 1.5, "flexible": True, "fixed_start": 19.0},
-                                                          {"name": "Tumble dryer", "power_kw": 2.0, "duration_h": 1.5, "flexible": False, "fixed_start": 18.0}]}  # fmt: skip
+        best = [e["best"]["saving_pct"] for e in exps if e["best"] and e["best"]["saving_pct"] is not None]
+        settings = self.households.get()["settings"]
+        ready = self.readiness(settings)
+        day = None
+        if ready["ready"]:  # the household's own day; there is no example household to fall back to
+            from wattwise.api.schemas import DayRequest
+            s = settings
+            req = DayRequest(tariff_id=s["tariff_id"], ev=s["ev"], appliances=s["appliances"], base_load_kw=s["base_load_kw"], base_load_source=s["base_load_source"],
+                             charger_capacity_kw=s["charger_power_kw"], charger_source=s["charger_source"], baseline_import_id=s["baseline_import_id"])
+            hh = self.household(req)
+            day = {**self._profile(simulate({}, hh)), "tariff": hh["tariff"], "setup": baseline_setup(hh), "result_kind": "projected"}
         return {"experiments": exps, "kpis": {"experiments": len(exps), "runs": sum(e["counts"]["completed"] for e in exps), "best_saving_pct": max(best) if best else None,
                                               "simulated_kwh": round(sum(e["simulated_kwh"] for e in exps), 1)},
-                "baseline_day": {**self._profile(simulate(baseline_setup(default_hh), default_hh)), "tariff": default_hh["tariff"], "setup": baseline_setup(default_hh)}, "notice": SIMULATED_NOTICE}  # fmt: skip
+                "baseline_day": day, "readiness": ready, "notice": SIMULATED_NOTICE}  # fmt: skip
 
     # ------------------------------------------------------------------ execution
+    def _refuse_legacy(self, res: ExperimentResult) -> None:
+        if self._hh(res).get("legacy_inputs"):
+            raise Conflict(f"experiment {res.spec.experiment_id} was {self.LEGACY_NOTICE}")
     def execute(self, exp_id: str) -> dict:
         res = self._result(exp_id)
+        self._refuse_legacy(res)
         if not any(r.status in (RunStatus.QUEUED, RunStatus.CREATED) for r in res.runs):
             raise Conflict("no queued runs to execute")
         self._register_adapter(res.spec)
@@ -466,6 +556,7 @@ class LabService:
 
     def retry_failed(self, exp_id: str) -> dict:
         res = self._result(exp_id)
+        self._refuse_legacy(res)
         failed = [r for r in res.runs if r.status == RunStatus.FAILED]
         if not failed:
             raise Conflict("no failed runs to retry")
@@ -608,6 +699,7 @@ class LabService:
 
     async def optimise_apply(self, exp_id: str, count: int, method: str) -> dict:
         res = self._completed(exp_id)
+        self._refuse_legacy(res)
         if any(r.status in (RunStatus.QUEUED, RunStatus.RUNNING) for r in res.runs):
             raise Conflict("wait for the current runs to finish before requesting new ones")
         recs = await self.optimise_suggest(exp_id, count, method)
@@ -626,13 +718,15 @@ class LabService:
         analysis = await asyncio.to_thread(self.svc.analyse, res)
         report = await asyncio.to_thread(self.svc.report, res, analysis)
         rec = narrative.recommendation(res, analysis, self._hh(res))
-        return {"report": report.model_dump(mode="json"), "recommendation": rec, "effects": rec["effects"], "simulated_notice": SIMULATED_NOTICE, "tariff": self._hh(res)["tariff"]}
+        return {"report": report.model_dump(mode="json"), "recommendation": rec, "effects": rec["effects"], "simulated_notice": SIMULATED_NOTICE,
+                "tariff": self._hh(res)["tariff"], "input_sources": res.spec.metadata["lab"].get("input_sources"), "result_kind": "projected"}
 
     async def report_html(self, exp_id: str) -> str:
         data = await self.report(exp_id)
         res = self._result(exp_id)
         d = self.detail(exp_id)
-        return report_html.render(res.spec.name, res.spec.hypothesis, data["tariff"], data["recommendation"], d["design"], d["runs"], data["effects"], data["report"])
+        return report_html.render(res.spec.name, res.spec.hypothesis, data["tariff"], data["recommendation"], d["design"], d["runs"], data["effects"], data["report"],
+                                  data["input_sources"])
 
     def csv_export(self, exp_id: str, kind: str) -> str:
         res = self._result(exp_id)

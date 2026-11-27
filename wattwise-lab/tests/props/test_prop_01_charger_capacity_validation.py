@@ -9,6 +9,7 @@ from decimal import Decimal
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from inputs import SRC, inputs
 from pydantic import ValidationError
 
 from wattwise.api.schemas import DayRequest, ExperimentRequest, HouseholdSettings, validate_charger_capacity
@@ -57,17 +58,17 @@ def test_validator_accepts_iff_in_range_with_two_decimals(v):
 @settings(max_examples=100, deadline=None)
 @given(v=valid_values)
 def test_all_two_decimal_values_in_range_are_accepted_by_models(v):
-    assert HouseholdSettings(charger_power_kw=v).charger_power_kw == v
-    assert DayRequest(charger_capacity_kw=v).charger_capacity_kw == v
+    assert HouseholdSettings(charger_power_kw=v, charger_source=SRC).charger_power_kw == v
+    assert DayRequest(**inputs(charger_capacity_kw=v)).charger_capacity_kw == v
 
 
 @settings(max_examples=100, deadline=None)
 @given(v=any_value.filter(lambda x: not _expected_valid(x)))
 def test_models_reject_invalid_values(v):
     with pytest.raises(ValidationError):
-        HouseholdSettings(charger_power_kw=v)
+        HouseholdSettings(charger_power_kw=v, charger_source=SRC)
     with pytest.raises(ValidationError):
-        DayRequest(charger_capacity_kw=v)
+        DayRequest(**inputs(charger_capacity_kw=v))
 
 
 def test_boundaries_and_none():

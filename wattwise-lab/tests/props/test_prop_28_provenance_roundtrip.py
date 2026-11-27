@@ -10,11 +10,11 @@ from pathlib import Path
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from wattwise.services.meter_library import PROVENANCE_LABELS, MeterLibrary
+from wattwise.services.meter_library import IMPORT_LABELS, MeterLibrary
 
 T0 = datetime(2024, 1, 1)
 
-labels = st.sampled_from(PROVENANCE_LABELS)
+labels = st.sampled_from(IMPORT_LABELS)  # synthetic_demo is no longer accepted for a new import
 values = st.lists(st.floats(min_value=0, max_value=20, allow_nan=False, allow_infinity=False).map(lambda x: round(x, 3)), min_size=2, max_size=20)
 OPTS = {"timestamp_column": "timestamp", "value_column": "kwh", "reading_kind": "interval_energy", "unit": "kWh"}
 

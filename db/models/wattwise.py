@@ -10,7 +10,8 @@ from db.base import Base, utcnow
 
 
 class Household(Base):
-    """The household configuration (single row, id=1). Validated JSON (see wattwise.services.household)."""
+    """The household configuration: id=1 is the configuration, id=2 the backup taken when it is cleared. Validated JSON
+    (see wattwise.services.household)."""
 
     __tablename__ = "ww_household"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

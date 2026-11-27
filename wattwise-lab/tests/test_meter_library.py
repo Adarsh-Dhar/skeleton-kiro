@@ -116,25 +116,23 @@ def test_limits_are_kept():
 
 
 # ---------------------------------------------------------------------------------------------- API + storage
-DEMO = None
-
-
 def _demo(client):
-    return client.get("/api/demo/meter.csv").text
+    from inputs import meter_csv
+    return meter_csv()  # test fixture file (not shipped with the app)
 
 
 def test_preview_stores_nothing_and_import_persists(client, db_path):
     csv = _demo(client)
-    p = client.post("/api/meter/import/preview", json={"csv": csv, "file_name": "demo.csv"}).json()
+    p = client.post("/api/meter/import/preview", json={"csv": csv, "file_name": "demo.csv", "source": "test meter export"}).json()
     assert p["stored"] is False and p["columns"] == ["timestamp", "power_kw"] and p["summary"]["rows_used"] == 96
     assert p["readings_preview"][0]["original_ts"] == "2026-03-03T16:00:00" and p["provenance"] == "historical_measured"
     assert client.get("/api/meter/imports").json() == []
-    m = client.post("/api/meter/import", json={"csv": csv, "file_name": "demo.csv", "source": "bundled demo (synthetic)"})
+    m = client.post("/api/meter/import", json={"csv": csv, "file_name": "demo.csv", "source": "test meter export"})
     assert m.status_code == 201, m.text
     m = m.json()
     assert m["rows_used"] == 96 and m["timezone"] == "UTC" and m["reading_kind"] == "power"
-    assert client.post("/api/meter/import", json={"csv": csv, "file_name": "demo.csv"}).status_code == 409  # same file + options
-    assert client.post("/api/meter/import", json={"csv": csv, "file_name": "demo.csv", "force": True}).status_code == 201
+    assert client.post("/api/meter/import", json={"csv": csv, "file_name": "demo.csv", "source": "x"}).status_code == 409  # same file + options
+    assert client.post("/api/meter/import", json={"csv": csv, "file_name": "demo.csv", "source": "x", "force": True}).status_code == 201
     rd = client.get(f"/api/meter/imports/{m['import_id']}/readings", params={"limit": 10}).json()
     assert rd["count"] == 10 and rd["total"] == 96 and rd["readings"][0]["kw"] == pytest.approx(0.397)
     with create_db_engine(db_path).connect() as c:
@@ -147,14 +145,15 @@ def test_preview_stores_nothing_and_import_persists(client, db_path):
 
 
 def test_import_errors_are_422(client):
-    r = client.post("/api/meter/import/preview", json={"csv": "a,b\n1,2\n", "options": {}})
+    r = client.post("/api/meter/import/preview", json={"csv": "a,b\n1,2\n", "options": {}, "source": "x"})
     assert r.status_code == 422 and "timestamp" in r.json()["detail"][0]["message"]
-    r = client.post("/api/meter/import/preview", json={"csv": "timestamp,power_kw\n2026-01-01T00:00Z,1\n", "options": {"bogus": 1}})
+    assert client.post("/api/meter/import", json={"csv": _demo(client)}).status_code == 422  # where the file came from is required
+    r = client.post("/api/meter/import/preview", json={"csv": "timestamp,power_kw\n2026-01-01T00:00Z,1\n", "options": {"bogus": 1}, "source": "x"})
     assert r.status_code == 422 and "unknown import option" in r.json()["detail"][0]["message"]
 
 
 def test_existing_preview_and_run_attach_routes_unchanged(client):
-    r = client.post("/api/meter/preview", json={"csv": _demo(client), "unit": "kW"})
+    r = client.post("/api/meter/preview", json={"csv": _demo(client), "unit": "kW", "tariff_id": "time-of-use"})
     assert r.status_code == 200 and r.json()["reading_kind"] == "imported"
 
 
@@ -168,7 +167,7 @@ REGISTER_OPTS = {"timestamp_column": "Zeit", "value_column": "Zaehler", "reading
 def test_run_attachment_accepts_the_library_formats(client, make_experiment):
     d = make_experiment(design={"method": "full_factorial", "levels": 2})
     run = d["runs"][0]["run_id"]
-    p = client.post("/api/meter/preview", json={"csv": REGISTER, "options": REGISTER_OPTS})
+    p = client.post("/api/meter/preview", json={"csv": REGISTER, "options": REGISTER_OPTS, "tariff_id": "time-of-use"})
     assert p.status_code == 200, p.text
     q = p.json()["quality"]
     assert q["interpretation"]["reading_kind"] == "cumulative" and q["timezone"] == "Europe/Berlin"
@@ -187,7 +186,7 @@ def test_run_attachment_simple_format_is_unchanged(client, make_experiment):
     d = make_experiment(design={"method": "full_factorial", "levels": 2})
     run = d["runs"][0]["run_id"]
     r = client.post(f"/api/experiments/{d['id']}/runs/{run}/meter",
-                    json={"csv": client.get("/api/demo/meter.csv").text, "unit": "kW", "departure_charge_pct": 80})
+                    json={"csv": _demo(client), "unit": "kW", "departure_charge_pct": 80})
     assert r.status_code == 200 and r.json()["summary"]["readings"] == 96
     bad = client.post(f"/api/experiments/{d['id']}/runs/{d['runs'][1]['run_id']}/meter",
                       json={"csv": REGISTER, "options": {**REGISTER_OPTS, "timezone": "Nowhere/City"}, "departure_charge_pct": 80})

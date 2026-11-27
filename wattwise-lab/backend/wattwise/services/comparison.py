@@ -3,10 +3,10 @@
 Every number carries a provenance label:
   historical_measured          imported meter readings
   historical_measured_priced   those readings priced with the tariff (compare with a real bill before trusting)
-  synthetic                    the built-in synthetic household profile
+  owner_entered_base_load      the constant always-on load the owner entered (no meter baseline)
   projected                    a model estimate for a schedule (simulator output)
   measured_schedule            readings recorded after the household actually ran that schedule (imported to a run)
-Savings are 'projected' unless a measured schedule exists; an experiment on the synthetic profile never produces a
+Savings are 'projected' unless a measured schedule exists; an experiment without a meter baseline never produces a
 savings claim against the household's real usage.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _ev_pct(hh: dict[str, Any], value: float | None, prov: str) -> dict[str, Any
 LABELS = {
     "historical_measured": "MEASURED (your imported meter readings)",
     "historical_measured_priced": "MEASURED usage x selected tariff (check against your bill)",
-    "synthetic": "SYNTHETIC (built-in example household)",
+    "owner_entered_base_load": "OWNER-ENTERED constant always-on load (not measured)",
     "projected": "PROJECTED (model estimate)",
     "measured_schedule": "MEASURED SCHEDULE (readings after actually running it)",
 }
@@ -49,6 +49,9 @@ def _v(value: Any, provenance: str, unit: str = "", note: str | None = None) -> 
 def build(lab, import_id: str, exp_id: str) -> dict[str, Any]:
     res = lab._result(exp_id)
     hh = lab._hh(res)
+    if hh.get("legacy_inputs"):
+        from wattwise.services.lab import Conflict
+        raise Conflict(f"experiment {exp_id} was {lab.LEGACY_NOTICE}")
     tariff = hh["tariff"]
     calibrated_from = (hh.get("baseline_source") or {}).get("import_id")
     calibrated_here = calibrated_from == import_id
@@ -74,7 +77,7 @@ def build(lab, import_id: str, exp_id: str) -> dict[str, Any]:
     measured = [r for r in done if r["imported"]]
     best = min(projected, key=lambda r: r["outcomes"]["energy_cost"]) if projected else None
     best_sim = simulate(best["configuration"], hh)["metrics"] if best else None
-    profile_prov = "historical_measured" if hh.get("base_profile_kw") else "synthetic"
+    profile_prov = "historical_measured" if hh.get("base_profile_kw") else "owner_entered_base_load"
 
     savings: dict[str, Any] = {}
     if best_sim:
@@ -87,7 +90,7 @@ def build(lab, import_id: str, exp_id: str) -> dict[str, Any]:
         else:
             savings["projected_vs_measured_history"] = _v(None, "projected", "currency/day",
                                                           "not estimated: this experiment did not start from this import's measured baseline "
-                                                          f"({'synthetic household' if not calibrated_from else 'calibrated from ' + calibrated_from})")
+                                                          f"({'owner-entered constant base load' if not calibrated_from else 'calibrated from ' + calibrated_from})")
     if measured:
         mbest = min(measured, key=lambda r: r["outcomes"]["energy_cost"])
         savings["measured_vs_measured_history"] = _v(None if hist_daily_cost is None else hist_daily_cost - mbest["outcomes"]["energy_cost"],
@@ -102,7 +105,7 @@ def build(lab, import_id: str, exp_id: str) -> dict[str, Any]:
                  for k, v in cost["cost_by_period"].items()}  # fmt: skip
     peaks = [d["peak_kw"] for d in complete_days]
     out = {
-        "experiment": {"id": exp_id, "name": res.spec.name, "baseline": "calibrated" if hh.get("base_profile_kw") else "synthetic",
+        "experiment": {"id": exp_id, "name": res.spec.name, "baseline": "calibrated" if hh.get("base_profile_kw") else "owner_entered_base_load",
                        "calibrated_from_import": calibrated_from, "tariff": tariff.get("name")},
         "import": hist["import"], "labels": LABELS,
         "historical": {
@@ -130,12 +133,13 @@ def build(lab, import_id: str, exp_id: str) -> dict[str, Any]:
         },
         "cost_by_period": by_period,
         "savings": savings,
+        "input_sources": res.spec.metadata["lab"].get("input_sources"),
         "assumptions": [
             f"background load in the projections: {LABELS[profile_prov]}",
             *((hh.get("baseline_source") or {}).get("notes") or []),
             "projections are one simulated day; historical values are averages over the complete days of the import",
             "historical cost = your readings x the experiment's tariff; it is only as accurate as the tariff you entered",
-            "EV and appliance parameters are the values you entered, not measured",
+            "EV and appliance parameters are the values you entered with their sources (see input_sources), not measured",
             "a projected saving is not evidence of a real saving: only a measured schedule is",
         ],
     }  # fmt: skip

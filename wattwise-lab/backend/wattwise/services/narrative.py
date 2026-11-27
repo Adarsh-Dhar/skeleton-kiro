@@ -86,15 +86,22 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, household
                 "caveats": caveats, "effects": fx}  # fmt: skip
     best = next(r for r in result.runs if r.run_id == analysis.best_run_id)
     o = run_outcomes(best)
+    if household.get("legacy_inputs"):
+        from wattwise.services.lab import LabService
+        return {"status": "legacy", "headline": "Legacy experiment on example inputs: no recommendation for your household.",
+                "run_id": best.run_id, "setup": {k: round(v, 3) for k, v in best.configuration.items()},
+                "setup_text": schedule_text(best.configuration, catalog), "expected": {k: round(v, 3) for k, v in o.items()},
+                "reasons": [], "caveats": [f"This experiment was {LabService.LEGACY_NOTICE}", *caveats], "effects": fx}
     bs = baseline_setup(household)
     base = simulate(bs, household)["metrics"]
     saving = base["energy_cost"] - o["energy_cost"]
     plug_in = f"plug in at {clock(bs['charge_start'])}, {bs['charge_power_kw']:.1f} kW, " if has_ev else ""
+    usual = [f"{a['name']} at {clock(a['fixed_start'])}" for a in household.get("appliances") or []]
     reasons = [
         f"Cheapest feasible schedule: {o['energy_cost']:.2f} per day, {o['energy_kwh']:.1f} kWh, peak {o['peak_power_kw']:.1f} kW, "
         f"{o['departure_charge_pct']:.0f}% charge at departure" + (f" (required {desired:g}%)." if desired is not None else ".")
         if has_ev and "departure_charge_pct" in o else ".",
-        f"Baseline schedule ({plug_in}appliances at {clock(bs['appliance_start'])}) costs "
+        f"Current schedule ({plug_in}{', '.join(usual) or 'no appliances'}) costs "
         f"{base['energy_cost']:.2f}: saving {saving:.2f} per day ({100 * saving / base['energy_cost']:.0f}%) at "
         f"{base['peak_power_kw']:.1f} kW baseline peak vs {o['peak_power_kw']:.1f} kW.",
     ]  # fmt: skip
@@ -114,13 +121,14 @@ def recommendation(result: ExperimentResult, analysis: AnalysisResult, household
     for e in [x for x in fx["interactions"] if x["significant"]][:2]:
         reasons.append(f"Interaction {e['term'].replace(':', ' x ')} is significant (p={e['p_value']:.3g}): set those together.")
     if best.metadata.get("sequential_iteration"):
-        reasons.append("This schedule was proposed by the optimiser and then measured.")
+        reasons.append("This schedule was proposed by the optimiser and then projected by the household model.")
     if not [e for e in fx["effects"] if e["significant"]]:
         caveats.append("No factor reached significance at the chosen level: the recommendation rests on direct observation only.")
     if fx["residual_df"] is not None and fx["residual_df"] < 5:
         caveats.append(f"Only {int(fx['residual_df'])} residual degrees of freedom: inference is weak; add runs.")
     caveats.extend(analysis.warnings[:3])
-    caveats.append("Costs come from a simulated household and the tariff you entered; real savings depend on real usage and billing rules.")
+    caveats.append("These are projected costs from the inputs you configured (tariff, base load, appliances, EV), not measurements; "
+                   "a real saving is shown only by meter readings taken after running the schedule.")
     return {
         "status": "recommended",
         "headline": f"Cheapest feasible schedule: {o['energy_cost']:.2f} per day ({100 * saving / base['energy_cost']:.0f}% below baseline)",

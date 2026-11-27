@@ -28,7 +28,8 @@ from trialforge import (
 from trialforge import ValidationError as TFValidationError
 
 from wattwise import SIMULATED_NOTICE, __version__
-from wattwise.adapters.household_model import BASELINE, DEFAULT_APPLIANCES, DEFAULT_EV, FACTORS, METRIC_UNITS, validate_tariff
+from wattwise.adapters import provenance as PV
+from wattwise.adapters.household_model import FACTORS, METRIC_UNITS, MissingInput, baseline_setup, validate_tariff
 from wattwise.api.schemas import (
     METHODS,
     AnalysisRequest,
@@ -142,7 +143,8 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
 
         return handler
 
-    for _exc, _field in ((BaselineUnavailable, "baseline"), (ProvenanceError, "provenance"), (FactorConflict, "appliance_start"),
+    for _exc, _field in ((MissingInput, "household"), (PV.ExampleDataError, "source"),
+                         (BaselineUnavailable, "baseline"), (ProvenanceError, "provenance"), (FactorConflict, "appliance_start"),
                          (ChargerCapacityError, "charger_capacity_kw"), (MissingStartDate, "window_start_date"),
                          (NoCompleteDay, "baseline"), (InvalidDayType, "day_type")):
         app.add_exception_handler(_exc, _field_error(_field))
@@ -176,9 +178,11 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
     def meta():
         return {
             "notice": SIMULATED_NOTICE, "version": __version__, "trialforge_version": trialforge.__version__,
-            "factors": {k: {**v} for k, v in FACTORS.items()}, "baseline": dict(BASELINE),
-            "default_factors": {k: s.model_dump() for k, s in default_factors().items()},
-            "default_ev": dict(DEFAULT_EV), "default_appliances": [dict(a) for a in DEFAULT_APPLIANCES],
+            "factors": {k: {**v} for k, v in FACTORS.items()},
+            "default_factors": {k: s.model_dump() for k, s in default_factors().items()},  # search ranges for the designer, not household data
+            "data_policy": "zero fabricated input data: every input is yours or comes from a cited source; results are projections",
+            "source_types": {k: PV.SOURCE_TYPE_LABELS[k] for k in PV.SOURCE_TYPES if k != "example"},
+            "verification_levels": dict(PV.VERIFICATION_LABELS), "input_units": dict(PV.INPUT_UNITS),
             "metrics": dict(METRIC_UNITS), "tariffs": lab.tariffs.list(),
             "methods": [{"id": m, "description": METHOD_INFO[m]} for m in METHODS],
             "optimisers": available_optimisers(),
@@ -192,9 +196,12 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
         return lab.overview()
 
     @app.post("/api/simulate/day")
-    def simulate_day(req: DayRequest | None = None):
-        return lab.day(req or DayRequest())
+    def simulate_day(req: DayRequest):
+        return lab.day(req)
 
+    @app.get("/api/experiments/{exp_id}/baseline/profile")
+    def baseline_profile(exp_id: str):
+        return lab.baseline_profile(exp_id)
     @app.get("/api/experiments/{exp_id}/runs/{run_id}/profile")
     def run_profile(exp_id: str, run_id: str):
         return lab.run_profile(exp_id, run_id)
@@ -273,7 +280,10 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
 
     @app.post("/api/meter/import", status_code=201)
     def meter_import(req: MeterImportRequest):
-        return lab.meters.import_csv(req.csv, req.file_name, req.options, req.source, req.force, req.provenance)
+        if not (req.source or "").strip():
+            raise ValueError("source is required: say where the file came from (for example your utility's consumer portal)")
+        record = req.meter_source.model_dump(mode="json") if req.meter_source else None
+        return lab.meters.import_csv(req.csv, req.file_name, req.options, req.source.strip(), req.force, req.provenance, record)
 
     @app.get("/api/meter/imports")
     def meter_imports():
@@ -312,24 +322,67 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
         return comparison_html(comparison_build(lab, import_id, exp_id))
 
     # ------------------------------------------------------------ household settings (server-side; replaces browser storage)
+    def _household_state(state: dict) -> dict:
+        """Household state plus what is still missing and the current schedule derived from the owner's inputs."""
+        s = state["settings"]
+        hh = {"ev": s.get("ev"), "appliances": s.get("appliances") or [], "charger_capacity_kw": s.get("charger_power_kw")}
+        return {**state, "readiness": lab.readiness(s), "current_schedule": baseline_setup(hh)}
     @app.get("/api/household")
     def household_get():
-        return lab.households.get()
+        return _household_state(lab.households.get())
 
     @app.put("/api/household")
     def household_put(req: HouseholdPut):
         settings = HouseholdSettings(**req.model_dump(exclude={"migrated_from"}))
-        lab.resolve_tariff(settings.tariff_id, None)  # 404 for an unknown tariff
+        if settings.tariff_id:
+            try:
+                lab.tariffs.get(settings.tariff_id)  # 404 for an unknown tariff
+            except KeyError:
+                raise NotFound(f"tariff {settings.tariff_id}") from None
         if settings.baseline_import_id:
             lab.meters.get(settings.baseline_import_id)
         if req.migrated_from == "localStorage":
             state, applied = lab.households.migrate_once(settings, "migrated-localstorage")
-            return {**state, "migration_applied": applied}
-        return lab.households.put(settings)
+            return {**_household_state(state), "migration_applied": applied}
+        return _household_state(lab.households.put(settings))
 
     @app.post("/api/household/reset")
     def household_reset():
-        return lab.households.reset()
+        """Clear the configuration (it is kept as the backup). Nothing is filled in: the household is empty afterwards."""
+        return _household_state(lab.households.reset())
+    @app.post("/api/household/restore")
+    def household_restore():
+        try:
+            return _household_state(lab.households.restore())
+        except KeyError:
+            raise NotFound("household backup") from None
+    @app.get("/api/inputs/export.json")
+    def inputs_export():
+        """Every configured input with its source and status: household, tariffs and meter imports."""
+        state = _household_state(lab.households.get())
+        s = state["settings"]
+        rows = []
+        for t in lab.tariffs.list():
+            rows.append(PV.entry(f"tariff[{t['id']}]", t.get("source"), {k: t.get(k) for k in ("name", "utility", "consumer_category", "currency", "periods",
+                                                                                              "demand_charge_per_kw", "fixed_daily_charge", "fixed_monthly_charge",
+                                                                                              "tiers", "surcharge_per_kwh", "tax_pct", "export_credit_per_kwh")
+                                                                       if t.get(k) is not None}))
+        if s.get("ev"):
+            ev = s["ev"]
+            rows.append(PV.entry("ev", ev.get("source"), {k: ev.get(k) for k in ("battery_kwh", "efficiency", "initial_soc_pct", "desired_charge_pct",
+                                                                                 "departure_hour", "plug_in_hour")}))
+        if s.get("charger_power_kw") is not None:
+            rows.append(PV.entry("charger", s.get("charger_source"), {"charger_power_kw": s["charger_power_kw"]}))
+        for a in s.get("appliances") or []:
+            rows.append(PV.entry(f"appliances[{a['name']}]", a.get("source"), {k: a.get(k) for k in ("power_kw", "duration_h", "flexible", "fixed_start")}))
+        if s.get("base_load_kw") is not None:
+            rows.append(PV.entry("base_load", s.get("base_load_source"), {"base_load_kw": s["base_load_kw"]}))
+        for m in lab.meters.list():
+            rows.append({"input": f"meter_import[{m['import_id']}]", "values": {k: m[k] for k in ("file_name", "first_utc", "last_utc", "rows_used",
+                                                                                                  "interval_minutes", "total_import_kwh")},
+                         "units": {"total_import_kwh": "kWh", "interval_minutes": "min"}, "source": m["source_record"], "status": m["source_status"]})
+        return {"exported_at": date.today().isoformat(), "data_policy": "zero fabricated input data", "readiness": state["readiness"],
+                "household_saved": state["saved"], "inputs": rows}
 
     # ------------------------------------------------------------ analysis / optimisation
     @app.post("/api/experiments/{exp_id}/analysis")
@@ -374,16 +427,6 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
     def export(exp_id: str, kind: str):
         return PlainTextResponse(lab.csv_export(exp_id, kind), media_type="text/csv",
                                  headers={"Content-Disposition": f'attachment; filename="{exp_id}-{kind}.csv"'})  # fmt: skip
-
-    # ------------------------------------------------------------ bundled demo meter files
-    data = Path(data_dir or os.environ.get("WATTWISE_DATA_DIR", DEFAULT_ROOT / "data"))
-
-    @app.get("/api/demo/{name}.csv")
-    def demo(name: str):
-        """Bundled demo smart-meter files (synthetic; generated by this app's own household model)."""
-        if name not in ("meter", "meter_w") or not (data / f"demo_{name}.csv").exists():
-            raise NotFound(name)
-        return PlainTextResponse((data / f"demo_{name}.csv").read_text(), media_type="text/csv")
 
     # ------------------------------------------------------------ frontend
     fe = Path(frontend_dir or os.environ.get("WATTWISE_FRONTEND_DIR", DEFAULT_ROOT / "frontend"))

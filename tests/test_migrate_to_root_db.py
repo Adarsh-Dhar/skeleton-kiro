@@ -15,7 +15,13 @@ from fastapi.testclient import TestClient
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "migrate_to_root_db.py"
-BODY = {"name": "legacy experiment", "simulator": {"latency_seconds": 0.0}}
+# Test inputs (not real data). WATTWISE has no default household, so the experiment states every input with a source.
+SRC = {"source_type": "user_provided", "source_name": "automated test fixture", "verification": "user_supplied"}
+TARIFF = {"name": "Test tariff", "source": SRC, "periods": [{"label": "all", "start": 0, "end": 24, "price": 0.25}]}
+BODY = {"name": "legacy experiment", "simulator": {"latency_seconds": 0.0}, "tariff_id": "test-tariff", "base_load_kw": 0.35, "base_load_source": SRC,
+        "ev": {"battery_kwh": 60.0, "initial_soc_pct": 30.0, "desired_charge_pct": 80.0, "departure_hour": 7.5, "plug_in_hour": 19.0, "efficiency": 0.92, "source": SRC},
+        "charger_capacity_kw": 11.0, "charger_source": SRC,
+        "appliances": [{"name": "Dishwasher", "power_kw": 1.1, "duration_h": 2.0, "flexible": True, "fixed_start": 20.0, "source": SRC}]}
 
 
 def _wait(c, eid):
@@ -30,6 +36,7 @@ def _wait(c, eid):
 def _make_legacy_sdk_db(path: Path, create_app, ids: list[str]) -> None:
     """Run real experiments, then strip everything except the SDK tables (= what the old app stored)."""
     with TestClient(create_app(str(path))) as c:
+        assert c.post("/api/tariffs", json=TARIFF).status_code == 201
         for eid in ids:
             assert c.post("/api/experiments", json={**BODY, "experiment_id": eid}).status_code == 201
             c.post(f"/api/experiments/{eid}/execute")

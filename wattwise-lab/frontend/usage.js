@@ -1,12 +1,13 @@
 /* WATTWISE LAB: "My usage" = historical meter-data library, measured baseline, and actual-vs-optimised comparison.
    Loaded before app.js; uses its helpers (api, esc, fmt, money, kpi, errorsBox, toast, $, $$, view, HH, META, saveHousehold) at call time. */
 const PROV = {
-  historical_measured: ['MEASURED', 'prov-m'], historical_measured_priced: ['MEASURED × TARIFF', 'prov-mt'], synthetic: ['SYNTHETIC', 'prov-s'],
+  historical_measured: ['MEASURED', 'prov-m'], historical_measured_priced: ['MEASURED × TARIFF', 'prov-mt'], owner_entered_base_load: ['OWNER-ENTERED', 'prov-s'],
   projected: ['PROJECTED', 'prov-p'], measured_schedule: ['MEASURED SCHEDULE', 'prov-ms'],
 };
 const provChip = (p) => { const [t, c] = PROV[p] || [p, '']; return `<span class="chip ${c}" title="${esc(p)}">${esc(t)}</span>`; };
-// One badge per file label, from /api/meta (META.provenance_badges); MEASURED only for a real_meter file.
-const FALLBACK_BADGES = { real_meter: { text: 'MEASURED', css: 'prov-m' }, synthetic_demo: { text: 'SYNTHETIC DEMO', css: 'prov-s' }, unknown: { text: 'UNVERIFIED SOURCE', css: 'prov-u' } };
+// One badge per file label, from /api/meta (META.provenance_badges); MEASURED only for a real_meter file. A meter export is the
+// household's own data: it is never shown as independently verified.
+const FALLBACK_BADGES = { real_meter: { text: 'MEASURED · USER SUPPLIED', css: 'prov-m' }, synthetic_demo: { text: 'SYNTHETIC · NOT USABLE', css: 'prov-s' }, unknown: { text: 'UNVERIFIED SOURCE', css: 'prov-u' } };
 const labelBadge = (label) => {
   const l = label || 'unknown', b = ((typeof META !== 'undefined' && META && META.provenance_badges) || FALLBACK_BADGES)[l] || FALLBACK_BADGES.unknown;
   return `<span class="chip ${esc(b.css)}" title="${esc(l)}">${esc(b.text)}</span>`;
@@ -53,7 +54,8 @@ async function viewUsage() {
   <div class="grid g21"><div class="panel"><h2>Import a meter export</h2>
     <div class="field"><label for="u-file">File</label><input id="u-file" type="file" accept=".csv,.txt,text/csv"></div>
     <div class="field"><label for="u-csv">or paste CSV text</label><textarea id="u-csv" spellcheck="false" placeholder="timestamp,power_kw&#10;2026-03-03T16:00:00,0.40"></textarea></div>
-    <div class="row"><button class="btn" id="u-demo" type="button">Load demo file (synthetic)</button></div></div>
+    <p class="hint">Download your readings from your utility's consumer portal or smart-meter app (with your consent, they are your data). No demo data is provided.</p>
+    ${Sources.srcFields('msrc', null, 'meter')}</div>
   <div class="panel"><h2>How to read it</h2><div class="grid g2">
     <div class="field"><label for="u-tscol">Timestamp column</label><input id="u-tscol" placeholder="auto"></div>
     <div class="field"><label for="u-valcol">Value column</label><input id="u-valcol" placeholder="auto"></div>
@@ -66,14 +68,13 @@ async function viewUsage() {
     <div class="field"><label for="u-fmt">Timestamp format (if not ISO-8601)</label><input id="u-fmt" placeholder="e.g. %d/%m/%Y %H:%M"></div>
     <div class="field"><label for="u-resample">Resample to (minutes)</label><input id="u-resample" type="number" min="1" placeholder="keep"></div>
     <div class="field"><label for="u-roll">Register rollover (kWh)</label><input id="u-roll" type="number" min="1" placeholder="none"></div>
-    <div class="field"><label for="u-prov">Provenance of this file</label><select id="u-prov"><option value="">unspecified</option><option value="real_meter">real meter</option><option value="synthetic_demo">synthetic demo</option><option value="unknown">unknown</option></select></div>
-    <div class="field"><label for="u-src">Source</label><input id="u-src" value="csv upload"></div></div>
+    <div class="field"><label for="u-prov">Provenance of this file</label><select id="u-prov"><option value="real_meter">real meter export</option><option value="unknown">origin unknown (labelled unverified)</option></select></div>
+    <div class="field"><label for="u-src">Where the file came from</label><input id="u-src" maxlength="120" placeholder="e.g. DISCOM consumer portal, smart-meter app"></div></div>
     <button class="btn primary" id="u-prev" style="width:100%">Preview interpretation</button></div></div>
   <div id="u-res"></div>
   <div class="panel"><h2>Library</h2><div id="u-lib">Loading&hellip;</div></div><div id="u-detail"></div>`;
   let fileName = 'meter.csv';
   $('#u-file').addEventListener('change', async () => { const f = $('#u-file').files[0]; if (!f) return; fileName = f.name; try { $('#u-csv').value = await readFileText(f); } catch (e) { $('#err').innerHTML = errorsBox(e); } });
-  $('#u-demo').addEventListener('click', async () => { try { $('#u-csv').value = await api('GET', '/api/demo/meter.csv'); fileName = 'demo_meter.csv (synthetic)'; $('#u-src').value = 'bundled demo (synthetic, not measured)'; $('#u-prov').value = 'synthetic_demo'; } catch (e) { $('#err').innerHTML = errorsBox(e); } });
   $('#u-prev').addEventListener('click', async () => {
     $('#err').innerHTML = ''; $('#u-res').innerHTML = '';
     try {
@@ -81,7 +82,10 @@ async function viewUsage() {
       $('#u-res').innerHTML = previewHtml(p, $('#u-prov').value);
       $('#u-import').addEventListener('click', async () => {
         try {
-          const m = await api('POST', '/api/meter/import', { csv: $('#u-csv').value, file_name: fileName, source: $('#u-src').value || 'csv upload', provenance: $('#u-prov').value || null, options: importOptions() });
+          const src = $('#u-src').value.trim(), ms = Sources.readSrc('msrc');
+          if (ms && !ms.source_name) ms.source_name = src;
+          const m = await api('POST', '/api/meter/import', { csv: $('#u-csv').value, file_name: fileName, source: src, provenance: $('#u-prov').value || null,
+            meter_source: ms && ms.source_name ? ms : null, options: importOptions() });
           toast(`Imported ${m.rows_used} readings`, true); $('#u-res').innerHTML = ''; await lib(); await detail(m.import_id);
         } catch (e) { $('#err').innerHTML = errorsBox(e); window.scrollTo(0, 0); }
       });
@@ -90,7 +94,7 @@ async function viewUsage() {
   const lib = async () => {
     const list = await api('GET', '/api/meter/imports');
     $('#u-lib').innerHTML = list.length ? `<table><thead><tr><th>File</th><th>Period (UTC)</th><th class="num">Readings</th><th>Kind</th><th></th></tr></thead><tbody>${list.map((m) => `<tr>
-      <td><b>${esc(m.file_name)}</b><div class="dim">${esc(m.source)} &middot; ${esc(m.import_id)}${HH.baseline_import_id === m.import_id ? ' &middot; <b>baseline</b>' : ''}</div></td>
+      <td><b>${esc(m.file_name)}</b> ${Sources.badge(m.source_status)}<div class="dim">${esc(m.source)} &middot; ${esc(m.import_id)}${HH.baseline_import_id === m.import_id ? ' &middot; <b>baseline</b>' : ''}</div></td>
       <td class="mono">${esc((m.first_utc || '').slice(0, 16))} &rarr; ${esc((m.last_utc || '').slice(0, 16))}</td><td class="num">${m.rows_used}</td><td>${esc(m.reading_kind)} (${esc(m.unit)})</td>
       <td><button class="btn small" data-open="${esc(m.import_id)}">Open</button> <button class="btn small" data-del="${esc(m.import_id)}">Delete</button></td></tr>`).join('')}</tbody></table>`
       : '<div class="empty">No meter data imported yet.</div>';
@@ -101,7 +105,7 @@ async function viewUsage() {
     }));
   };
   const detail = async (id) => {
-    const s = await api('GET', `/api/meter/imports/${id}/summary?tariff_id=${encodeURIComponent(HH.tariff_id)}`);
+    const s = await api('GET', `/api/meter/imports/${id}/summary${HH.tariff_id ? `?tariff_id=${encodeURIComponent(HH.tariff_id)}` : ''}`);
     const exps = await api('GET', '/api/experiments');
     const c = s.baseline_cost, d = s.daily_energy_kwh;
     const hours = (s.hourly_profile_kw || []).map((v, h) => ({ hour: h, kw: v ?? 0 }));
@@ -112,7 +116,7 @@ async function viewUsage() {
       <h3>Average hourly load (complete days)</h3>${Charts.hourly({ profile: hours.map((x) => ({ hour: x.hour, kw: x.kw })), tariff: tariffOf(HH.tariff_id) })}
       <p class="hint">Weekdays: ${s.weekday_days} day(s), weekends: ${s.weekend_days} day(s).</p>
       <div class="row"><button class="btn" id="u-base">${HH.baseline_import_id === id ? 'Stop using as baseline' : 'Use as my household baseline'}</button>
-        <span class="dim">New experiments then start from this measured background load instead of the synthetic one.</span></div></div>
+        <span class="dim">New experiments then start from this measured background load instead of the always-on load you entered.</span></div></div>
       <div class="panel"><h2>My actual electricity usage vs optimised schedule</h2>
         <div class="field"><label for="u-exp">Experiment</label><select id="u-exp">${exps.map((e) => `<option value="${esc(e.id)}">${esc(e.name)} (${esc(e.id)})</option>`).join('') || '<option value="">no experiments yet</option>'}</select></div>
         <button class="btn primary" id="u-cmp">Compare</button><div id="u-cmpres"></div></div>`;
