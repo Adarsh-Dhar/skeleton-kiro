@@ -145,7 +145,23 @@ per-DISCOM integration (for example parsing one commission's tariff order, or a 
 portal) can be added once the specific utility and its access method are known. It would be built and tested against that
 utility's real documents, not guessed.
 
-## 7. What WATTWISE never invents any more
+## 7. Bill reconciliation and sign-off
+
+**Reconcile with my bill** (*My usage → open an import*, or `POST /api/reconcile`) prices one billing period of your meter export
+with your tariff, then compares the kWh and the amount with the figures printed on your bill. It passes only when the readings
+cover at least 99 % of the period and both differences are within the tolerance (default 2 %). Every attempt is stored
+(`GET /api/reconciliations`).
+
+**Sign-off** (`GET /api/audit` → `signoff`, also printed by `python -m wattwise.audit`) passes only when all of these hold:
+
+- no blocking finding, and no unconfirmed value from before source tracking;
+- a real tariff is selected;
+- a meter export declared real has no plausibility warning;
+- a billing period reconciles with the bill for the selected tariff and that export;
+- no experiment on example inputs is in use (retire it: `POST /api/experiments/{id}/retire`, which deletes nothing);
+- an experiment exists that was created from the confirmed inputs.
+
+## 8. What WATTWISE never invents any more
 
 - No seeded tariffs. The three example tariffs earlier versions installed are recognised in an existing database, labelled **EXAMPLE · NOT REAL**, and blocked from every calculation. Replace them with your own tariff and delete them.
 - No default household, EV, appliances, charger power or always-on load.

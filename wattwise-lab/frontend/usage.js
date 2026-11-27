@@ -119,9 +119,24 @@ async function viewUsage() {
         <span class="dim">New experiments then start from this measured background load instead of the always-on load you entered.</span></div></div>
       <div class="panel"><h2>My actual electricity usage vs optimised schedule</h2>
         <div class="field"><label for="u-exp">Experiment</label><select id="u-exp">${exps.map((e) => `<option value="${esc(e.id)}">${esc(e.name)} (${esc(e.id)})</option>`).join('') || '<option value="">no experiments yet</option>'}</select></div>
-        <button class="btn primary" id="u-cmp">Compare</button><div id="u-cmpres"></div></div>`;
+        <button class="btn primary" id="u-cmp">Compare</button><div id="u-cmpres"></div></div>
+      <div class="panel"><h2>Reconcile with my bill</h2><p class="hint">Copy one billing period from your real bill. WATTWISE prices this file's readings for that period with your tariff and compares the units and the amount. It passes only if the readings cover the whole period and both differ by at most the tolerance.</p>
+        <div class="grid g2"><div class="field"><label for="r-from">Billing period from</label><input id="r-from" type="date"></div><div class="field"><label for="r-to">to (inclusive)</label><input id="r-to" type="date"></div>
+          <div class="field"><label for="r-kwh">Units billed (kWh)</label><input id="r-kwh" type="number" step="0.01" min="0"></div><div class="field"><label for="r-amt">Amount for this period (before arrears)</label><input id="r-amt" type="number" step="0.01" min="0"></div>
+          <div class="field"><label for="r-tol">Tolerance (%)</label><input id="r-tol" type="number" step="0.1" min="0.1" max="20" value="2"></div></div>
+        ${Sources.srcFields('rsrc', { source_type: 'user_provided', source_name: 'household owner', verification: 'user_supplied' }, 'tariff')}
+        <button class="btn primary" id="r-go" ${HH.tariff_id ? '' : 'disabled'}>Reconcile</button>${HH.tariff_id ? '' : ' <span class="hint">Select your tariff in Household setup first.</span>'}<div id="r-res"></div></div>`;
     $('#u-base').addEventListener('click', async () => {
       try { await saveHousehold({ ...HH, baseline_import_id: HH.baseline_import_id === id ? null : id }); toast('Household baseline updated', true); await lib(); await detail(id); } catch (e) { toast(e.message); }
+    });
+    $('#r-go').addEventListener('click', async () => {
+      try {
+        const r = await api('POST', '/api/reconcile', { import_id: id, tariff_id: HH.tariff_id, period_start: $('#r-from').value, period_end: $('#r-to').value,
+          billed_kwh: parseFloat($('#r-kwh').value), billed_amount: parseFloat($('#r-amt').value), tolerance_pct: parseFloat($('#r-tol').value) || 2, bill_source: Sources.readSrc('rsrc') });
+        $('#r-res').innerHTML = `<div class="${r.passed ? 'note info' : 'errors'}"><b>${r.passed ? 'Reconciled' : 'Does not reconcile'}</b>: priced ${esc(fmt(r.computed.kwh, 2))} kWh / ${esc(money(r.computed.amount))}
+          vs bill ${esc(fmt(r.billed.kwh, 2))} kWh / ${esc(money(r.billed.amount))} (${esc(fmt(r.difference_pct.kwh, 2))}% / ${esc(fmt(r.difference_pct.amount, 2))}%), coverage ${esc(fmt(100 * r.coverage, 1))}%
+          ${r.reasons.length ? `<ul>${r.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}<div class="hint">energy ${esc(money(r.computed.energy_charge))} &middot; fixed ${esc(money(r.computed.fixed_charge))} &middot; demand ${esc(money(r.computed.demand_charge))} &middot; tax ${esc(money(r.computed.tax))}</div></div>`;
+      } catch (e) { $('#r-res').innerHTML = errorsBox(e); }
     });
     $('#u-cmp').addEventListener('click', async () => {
       const exp = $('#u-exp').value; if (!exp) return;

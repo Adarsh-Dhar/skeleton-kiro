@@ -382,8 +382,13 @@ async function viewDesign(id) {
     <p class="hint">Run order is randomised by the SDK, so the order above is the order they will be measured.</p></div>
   <div class="panel"><h2>Household</h2><p style="margin:0">Tariff: <b>${esc(d.tariff)}</b></p>${d.household.ev ? `<p style="margin:4px 0 0">Car needs <b>${fmt(d.desired_charge_pct, 0)}%</b> by ${esc(toTime(d.household.ev.departure_hour))}</p>` : '<p style="margin:4px 0 0">No EV in this household</p>'}<p class="hint">${d.baseline_cost === null ? 'No baseline cost: this experiment was built on example inputs.' : `Today's schedule (projected): ${money(d.baseline_cost)} per day.`}</p>${baselineCheckBox(d.baseline_check)}${(d.notes || []).length ? `<ul class="warnlist">${d.notes.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}</div>
   <div class="panel"><h2>Inputs and their sources</h2><p class="hint">Snapshot taken when this experiment was created. Every outcome below is projected from these inputs.</p>${Sources.table(d.input_sources)}</div>
-  <button class="btn primary" id="go" style="width:100%;padding:12px" ${queued && !d.legacy_inputs ? '' : 'disabled'}>${d.legacy_inputs ? 'Legacy experiment: cannot be run' : queued ? `Project ${queued} schedules` : 'All schedules projected'}</button></div></div>`;
+  <button class="btn primary" id="go" style="width:100%;padding:12px" ${queued && !d.legacy_inputs ? '' : 'disabled'}>${d.legacy_inputs ? 'Legacy experiment: cannot be run' : queued ? `Project ${queued} schedules` : 'All schedules projected'}</button>
+  <button class="btn" id="retire" style="width:100%;margin-top:8px">${d.legacy_inputs ? 'Retire this legacy experiment' : 'Retire experiment'}</button></div></div>`;
   $('#go').addEventListener('click', async () => { try { await api('POST', `/api/experiments/${encodeURIComponent(id)}/execute`); location.hash = `#/e/${id}/runs`; } catch (e) { $('#err').innerHTML = errorsBox(e); } });
+  $('#retire').addEventListener('click', async () => {
+    if (!confirm('Retire this experiment? It disappears from every list; nothing is deleted and it can be restored.')) return;
+    try { await api('POST', `/api/experiments/${encodeURIComponent(id)}/retire`); toast('Experiment retired', true); location.hash = '#/'; } catch (e) { $('#err').innerHTML = errorsBox(e); }
+  });
 }
 
 /* ------------------------------------------------------------ experiment: runs */

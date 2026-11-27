@@ -94,8 +94,8 @@ def test_duplicate_table_name_raises_at_import_and_names_the_table():
 
 
 def test_migration_list_ends_with_10_and_docstrings_are_updated():
-    assert [m.version for m in MIGRATIONS] == list(range(1, 13))
-    assert MIGRATIONS[-1].version == 12  # 12: wattwise source evidence archive
+    assert [m.version for m in MIGRATIONS] == list(range(1, 14))
+    assert MIGRATIONS[-1].version == 13  # 13: wattwise bill reconciliation
     assert "one-time cleanup" in inspect.getdoc(versions._m008_f1_openf1_only)
     assert "migration 9" in inspect.getdoc(versions._m004_f1_retired).lower()
 

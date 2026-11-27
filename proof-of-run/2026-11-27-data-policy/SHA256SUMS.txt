@@ -1,4 +1,6 @@
-7f7f6539cafdb86c6a46a919d35cd4decad5dadc1956002bd528e8ae43dcf5bd  ./PROOF_OF_RUN.md
+0b37af6f39d168bc8b5e27460b7af36b54942d86f325dbb36d516755f543d1da  ./PROOF_OF_RUN.md
+4a35de85a415ef3db768f6e9bf173c0e9f91a95f3a5736dbf944b5e4f4a2a8ec  ./live-audit-after-cleanup.json
+9c26abcaf431d3a789ed7a6ee4f8a361ed74d9f1383ebb634ed06c1c89d2a442  ./live-audit-before-cleanup.json
 8e32d5789c5a01b3c01c7a30bdfb73c2031ccc559e76158c5b49789a4de3fbff  ./live-database-audit.json
 b733485847a0fa9fc64b1739dd0b81867872c2c5291e89c575a5a99bea940094  ./release-check.log
 c5b930acacb7cd0bf6bb2d0586edc510eae685fb6d252591876b49761e7f8311  ./suite-logs/F1_SETUP_LAB_backend_tests_.log

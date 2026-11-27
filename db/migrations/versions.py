@@ -157,6 +157,9 @@ def _m011_ww_provenance_and_export(conn: Connection) -> None:
 def _m012_ww_source_evidence(conn: Connection) -> None:
     """Archive of source documents (retrieved by WATTWISE or attached by the owner) that back a source record. Additive only."""
     create_tables(conn, "ww_source_evidence")
+def _m013_ww_bill_reconciliation(conn: Connection) -> None:
+    """Bill reconciliations: a billing period priced from meter readings vs the real bill. Additive only."""
+    create_tables(conn, "ww_bill_reconciliation")
 MIGRATIONS: list[Migration] = [
     Migration(1, "experiment owner table", _m001_owner),
     Migration(2, "f1 historical sessions", _m002_f1_historical),
@@ -170,4 +173,5 @@ MIGRATIONS: list[Migration] = [
     Migration(10, "remove live simulator data: its experiments and the six game tables", _m010_remove_game_data),
     Migration(11, "wattwise meter provenance and solar export", _m011_ww_provenance_and_export),
     Migration(12, "wattwise source evidence archive", _m012_ww_source_evidence),
+    Migration(13, "wattwise bill reconciliation", _m013_ww_bill_reconciliation),
 ]

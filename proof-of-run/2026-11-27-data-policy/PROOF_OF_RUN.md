@@ -52,3 +52,18 @@ The xfail is the known, documented bug "`/api/comparison` does not expose the im
 
 **The installation does not yet contain any real input.** A backup of the database taken before the upgrade is in `data/`
 (`trialforge.db.bak-before-evidence-*`).
+
+## Cleanup of the running installation (after the release check)
+
+Database backup before the cleanup: `data/trialforge.db.bak-before-cleanup-20261127-145556`. Steps, all through the API:
+
+1. Retired experiment `ww-a2575a8c`, which was built on example inputs. It moved to `wattwise-lab:retired`, nothing was deleted, and `POST /api/experiments/ww-a2575a8c/unretire` restores it.
+2. Saved the household without the example copies (washing machine, tumble dryer, example EV) and without the example tariff selection.
+3. Deleted the three example tariffs.
+
+`live-audit-before-cleanup.json`: 8 blocking, 2 to confirm. `live-audit-after-cleanup.json`: **1 blocking (no tariff), 2 to confirm
+(dishwasher 1.2 kW, always-on load 0.4 kW), 0 example values left**. Sign-off: NOT PASSED. The remaining criteria need the
+household's real data (tariff, meter export, bill, confirmation of the two values) and were deliberately not filled in.
+
+The release check above ran before two later additions: bill reconciliation (`POST /api/reconcile`, migration 13) and
+retiring experiments. Their tests were run separately after it: WATTWISE 331 passed, 1 xfailed, plus 11 Chromium tests; root 116 passed, 1 skipped.

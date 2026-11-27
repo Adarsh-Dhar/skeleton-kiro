@@ -516,6 +516,35 @@ class LabService:
         return {**self._profile(simulate(run.configuration, hh)), "tariff": hh["tariff"], "setup": self._setup_view(with_baseline(hh, run.configuration), hh),
                 "run_id": run_id, "model_profile": True}
 
+    # ------------------------------------------------------------------ retiring experiments (nothing is deleted)
+    RETIRED_APP = "wattwise-lab:retired"
+    def retire(self, exp_id: str) -> dict:
+        """Take an experiment out of WATTWISE's lists without deleting it: its owner row moves to ``wattwise-lab:retired``."""
+        res = self._result(exp_id)
+        if any(r.status == RunStatus.RUNNING for r in res.runs):
+            raise Conflict("cancel the running schedules before retiring this experiment")
+        summary = self._summary(res)
+        from sqlalchemy import text
+        with self.engine.begin() as c:
+            c.execute(text("UPDATE app_experiment_owner SET app = :r WHERE experiment_id = :i AND app = :a"),
+                      {"r": self.RETIRED_APP, "i": exp_id, "a": "wattwise-lab"})
+        self.repo._owned.discard(exp_id)
+        if res.spec.adapter_name in self.registry:
+            self.registry.unregister(res.spec.adapter_name)
+        return {"retired": exp_id, "name": summary["name"], "legacy_inputs": summary["legacy_inputs"]}
+    def retired(self) -> list[dict]:
+        from sqlalchemy import text
+        with self.engine.connect() as c:
+            ids = [r[0] for r in c.execute(text("SELECT experiment_id FROM app_experiment_owner WHERE app = :r"), {"r": self.RETIRED_APP})]
+        return [{"id": i} for i in ids]
+    def unretire(self, exp_id: str) -> dict:
+        from sqlalchemy import text
+        with self.engine.begin() as c:
+            n = c.execute(text("UPDATE app_experiment_owner SET app = 'wattwise-lab' WHERE experiment_id = :i AND app = :r"),
+                          {"i": exp_id, "r": self.RETIRED_APP}).rowcount
+        if not n:
+            raise NotFound(f"retired experiment {exp_id}")
+        return {"restored": exp_id}
     def baseline_profile(self, exp_id: str) -> dict:
         """Today's schedule projected on the experiment's own stored inputs (including a measured baseline profile)."""
         res = self._result(exp_id)

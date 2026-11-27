@@ -25,6 +25,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"blocking {c['blocking']} · to confirm {c['confirm']} · warnings {c['warning']} · clean inputs {c['clean_inputs']}")
         for f in report["findings"]:
             print(f"  [{f['severity']:8}] {f['input']}: {f['message']} -> {f['action']}")
+        print(f"sign-off: {'PASSED' if report['signoff']['passed'] else 'NOT PASSED'}")
+        for crit in report["signoff"]["criteria"]:
+            print(f"  [{'x' if crit['passed'] else ' '}] {crit['criterion']}")
         for line in report["limits"]:
             print(f"  note: {line}")
     return 1 if report["counts"]["blocking"] else 0

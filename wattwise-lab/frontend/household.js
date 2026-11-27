@@ -14,12 +14,15 @@ function readinessBox(st) {
 }
 const SEV = { blocking: ['BLOCKING', 'prov-s'], confirm: ['TO CONFIRM', 'prov-mt'], warning: ['WARNING', 'prov-u'] };
 function auditBox(a) {
-  if (!a.findings.length) return `<div class="note info"><b>Data audit:</b> no findings; ${a.counts.clean_inputs} input(s) have a source and nothing is blocked.</div>`;
+  if (!a.findings.length) return `<div class="note info"><b>Data audit:</b> no findings; ${a.counts.clean_inputs} input(s) have a source and nothing is blocked.</div><details class="panel"><summary>Real-data sign-off</summary>${signoffBox(a)}</details>`;
   return `<details class="panel" id="auditbox" ${a.counts.blocking || a.counts.confirm ? 'open' : ''}><summary><b>Data audit</b>: ${a.counts.blocking} blocking &middot; ${a.counts.confirm} to confirm &middot; ${a.counts.warning} warning(s) &middot; ${a.counts.clean_inputs} clean</summary>
     <div class="scroll"><table><thead><tr><th></th><th>Input</th><th>Finding</th><th>What to do</th></tr></thead><tbody>${a.findings.map((f) => `<tr><td><span class="chip ${SEV[f.severity][1]}">${SEV[f.severity][0]}</span></td>
       <td class="mono">${esc(f.input)}</td><td>${esc(f.message)}</td><td class="dim">${esc(f.action)}</td></tr>`).join('')}</tbody></table></div>
-    <ul class="hint">${a.limits.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>`;
+    ${signoffBox(a)}<ul class="hint">${a.limits.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>`;
 }
+const signoffBox = (a) => `<h3>Real-data sign-off: ${a.signoff.passed ? '<span class="chip prov-m">PASSED</span>' : '<span class="chip prov-s">NOT PASSED</span>'}</h3>
+  <ul style="list-style:none;padding-left:0">${a.signoff.criteria.map((c) => `<li>${c.passed ? '&#9745;' : '&#9744;'} ${esc(c.criterion)}</li>`).join('')}</ul>
+  <p class="hint">Bill reconciliation is on <a href="#/usage">My usage</a> (open an import, then "Reconcile with my bill").</p>`;
 function examplesBox(list) {
   if (!list || !list.length) return '';
   return `<div class="errors"><b>Copies of the old built-in examples</b> (saved before source tracking; not used):<ul>${list.map((x, i) => `<li><code>${esc(x.input)}</code> ${esc(Object.entries(x.values).filter(([k, v]) => !['source', 'id', 'in_baseline', 'name'].includes(k) && v !== null && v !== undefined).map(([k, v]) => `${k} ${v}`).join(', '))}

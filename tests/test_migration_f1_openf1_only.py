@@ -74,5 +74,5 @@ def test_f1_experiments_and_retired_tables_go_while_wattwise_and_openf1_stay(tmp
 def test_a_fresh_database_reaches_the_latest_version_without_the_retired_tables(tmp_path):
     e = create_db_engine(tmp_path / "fresh.db")
     migrate(e)
-    assert current_version(e) == 12 and not set(RETIRED) & _tables(e)  # migration 9 recreates them, migration 10 drops them
+    assert current_version(e) == 13 and not set(RETIRED) & _tables(e)  # migration 9 recreates them, migration 10 drops them
     assert migrate(e) == []  # idempotent

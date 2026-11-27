@@ -81,7 +81,23 @@ def run(lab) -> dict[str, Any]:
     order = {"blocking": 0, "confirm": 1, "warning": 2}
     findings.sort(key=lambda f: order[f["severity"]])
     counts = {k: sum(f["severity"] == k for f in findings) for k in order}
+    # sign-off: the real-data-only acceptance, criterion by criterion (all must pass)
+    from wattwise.services.reconciliation import list_all
+    meters = [m for m in lab.meters.list() if m["source_label"] == "real_meter" and not (m.get("source_record") or {}).get("plausibility")]
+    recs = [r for r in list_all(lab) if r["passed"] and r["tariff_id"] == s.get("tariff_id") and any(m["import_id"] == r["import_id"] for m in meters)]
+    new_exps = [e for e in lab.list() if not e.get("legacy_inputs")]
+    signoff = [
+        {"criterion": "no blocking findings (no example, synthetic or missing input)", "passed": counts["blocking"] == 0},
+        {"criterion": "no unconfirmed values saved before source tracking", "passed": counts["confirm"] == 0},
+        {"criterion": "a real tariff is selected", "passed": bool(s.get("tariff_id")) and ready["ready"]},
+        {"criterion": "at least one meter export declared real, with no plausibility warning", "passed": bool(meters)},
+        {"criterion": "a billing period reconciles with the real bill (selected tariff, that meter export)", "passed": bool(recs),
+         "evidence": [r["reconciliation_id"] for r in recs]},
+        {"criterion": "no experiment on example inputs remains in use", "passed": not any(e.get("legacy_inputs") for e in lab.list())},
+        {"criterion": "an experiment created from the confirmed inputs", "passed": bool(new_exps), "evidence": [e["id"] for e in new_exps]},
+    ]
     return {"ready": ready["ready"], "counts": {**counts, "clean_inputs": clean}, "findings": findings,
+            "signoff": {"passed": all(c["passed"] for c in signoff), "criteria": signoff},
             "limits": ["WATTWISE records where each value comes from; it cannot prove that a file or a typed value is genuine.",
                        "A document retrieved by WATTWISE shows which document a value was taken from, not that it was copied correctly.",
                        "Meter files are checked for implausible patterns only; a careful forgery would pass."]}

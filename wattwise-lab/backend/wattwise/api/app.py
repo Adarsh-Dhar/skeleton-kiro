@@ -41,6 +41,7 @@ from wattwise.api.schemas import (
     MeterImportRequest,
     MeterRequest,
     OptimiseRequest,
+    ReconcileRequest,
     TariffIn,
     default_factors,
 )
@@ -256,6 +257,16 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
     async def execute(exp_id: str):  # async: the SDK's background runner needs the running event loop
         return lab.execute(exp_id)
 
+    @app.post("/api/experiments/{exp_id}/retire")
+    def retire(exp_id: str):
+        """Remove an experiment from every list without deleting it (reversible with /unretire)."""
+        return lab.retire(exp_id)
+    @app.get("/api/experiments-retired")
+    def retired():
+        return lab.retired()
+    @app.post("/api/experiments/{exp_id}/unretire")
+    def unretire(exp_id: str):
+        return lab.unretire(exp_id)
     @app.post("/api/experiments/{exp_id}/cancel")
     async def cancel(exp_id: str):
         return await lab.cancel(exp_id)
@@ -382,6 +393,15 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
             raise NotFound(f"evidence {evidence_id}") from None
         return Response(body, media_type=ctype or "application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{name}"',
                                                                                      "X-Content-Type-Options": "nosniff"})
+    @app.post("/api/reconcile", status_code=201)
+    def reconcile(req: ReconcileRequest):
+        """Price one billing period from your meter readings with your tariff and compare it with your real bill."""
+        from wattwise.services.reconciliation import reconcile as run
+        return run(lab, req)
+    @app.get("/api/reconciliations")
+    def reconciliations():
+        from wattwise.services.reconciliation import list_all
+        return list_all(lab)
     @app.get("/api/audit")
     def audit():
         """Every stored input checked against the data policy: what is blocked, what still needs confirming, what is unverified."""

@@ -95,3 +95,22 @@ class SourceEvidence(Base):
     sha256: Mapped[str] = mapped_column(String(64), index=True)
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     content: Mapped[bytes] = mapped_column(LargeBinary)
+
+
+class BillReconciliation(Base):
+    """One billing period priced from imported meter readings and compared with the amount and kWh on the real bill."""
+
+    __tablename__ = "ww_bill_reconciliation"
+    reconciliation_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    import_id: Mapped[str] = mapped_column(String(40), index=True)
+    tariff_id: Mapped[str] = mapped_column(String(60))
+    period_start: Mapped[str] = mapped_column(String(10))
+    period_end: Mapped[str] = mapped_column(String(10))
+    billed_kwh: Mapped[float] = mapped_column(Float)
+    billed_amount: Mapped[float] = mapped_column(Float)
+    computed_kwh: Mapped[float] = mapped_column(Float)
+    computed_amount: Mapped[float] = mapped_column(Float)
+    coverage: Mapped[float] = mapped_column(Float)
+    passed: Mapped[int] = mapped_column(Integer)
+    result_json: Mapped[str] = mapped_column(Text)

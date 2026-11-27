@@ -369,6 +369,16 @@ class MeterAttachRequest(MeterRequest):
     departure_charge_pct: float = Field(ge=0, le=100, description="State of charge when the car left (from the vehicle)")
 
 
+class ReconcileRequest(BaseModel):
+    """One billing period of your real bill, to compare with your meter readings priced by your tariff."""
+    import_id: str = Field(min_length=1, max_length=40)
+    tariff_id: str = Field(min_length=1, max_length=60)
+    period_start: date = Field(description="First day of the billing period, as printed on the bill")
+    period_end: date = Field(description="Last day of the billing period (inclusive)")
+    billed_kwh: float = Field(gt=0, le=1_000_000, description="Units (kWh) billed for the period")
+    billed_amount: float = Field(gt=0, le=10_000_000, description="Amount billed for the period, before arrears and payments")
+    bill_source: SourceRef = Field(description="The bill: e.g. user_provided, 'household owner', document 'bill no. ...'")
+    tolerance_pct: float = Field(2.0, gt=0, le=20, description="Largest accepted difference in kWh and in amount (%)")
 class AnalysisRequest(BaseModel):
     alpha: float = Field(0.05, gt=0, lt=0.5)
     bootstrap: bool = False

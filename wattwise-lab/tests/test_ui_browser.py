@@ -289,6 +289,14 @@ def test_my_usage_library_baseline_and_comparison(page):
     page.wait_for_selector("text=Estimated savings")
     out = page.inner_text("#u-cmpres")
     assert "PROJECTED" in out and "MEASURED" in out
+    # bill reconciliation: the test file covers only part of 3 March, so it must NOT reconcile (coverage is reported)
+    page.fill("#r-from", "2026-03-03")
+    page.fill("#r-to", "2026-03-03")
+    page.fill("#r-kwh", "10")
+    page.fill("#r-amt", "100")
+    page.click("#r-go")
+    page.wait_for_selector("#r-res .errors")
+    assert "Does not reconcile" in page.inner_text("#r-res") and "cover" in page.inner_text("#r-res")
     shot(page, "11-my-usage")
     page.click("#u-base")  # stop using it again, so later tests use the always-on load
     page.wait_for_selector("text=Use as my household baseline")
