@@ -46,6 +46,7 @@ from wattwise.api.schemas import (
 )
 from wattwise.services.comparison import build as comparison_build
 from wattwise.services.comparison_report import render as comparison_html
+from wattwise.services.evidence import EvidenceError
 from wattwise.services.lab import (
     BaselineOverlap,
     BaselineUnavailable,
@@ -143,7 +144,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
 
         return handler
 
-    for _exc, _field in ((MissingInput, "household"), (PV.ExampleDataError, "source"),
+    for _exc, _field in ((MissingInput, "household"), (PV.ExampleDataError, "source"), (EvidenceError, "evidence"),
                          (BaselineUnavailable, "baseline"), (ProvenanceError, "provenance"), (FactorConflict, "appliance_start"),
                          (ChargerCapacityError, "charger_capacity_kw"), (MissingStartDate, "window_start_date"),
                          (NoCompleteDay, "baseline"), (InvalidDayType, "day_type")):
@@ -218,12 +219,11 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
 
     @app.post("/api/tariffs", status_code=201)
     def create_tariff(req: TariffIn):
-        return lab.tariffs.save(req.model_dump())
-
+        return lab.tariffs.save(lab.evidence.bind_all(req.model_dump(mode="json")))
     @app.put("/api/tariffs/{tariff_id}")
     def update_tariff(tariff_id: str, req: TariffIn):
         try:
-            return lab.tariffs.save(req.model_dump(), tariff_id)
+            return lab.tariffs.save(lab.evidence.bind_all(req.model_dump(mode="json")), tariff_id)
         except KeyError:
             raise NotFound(f"tariff {tariff_id}") from None
 
@@ -282,7 +282,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
     def meter_import(req: MeterImportRequest):
         if not (req.source or "").strip():
             raise ValueError("source is required: say where the file came from (for example your utility's consumer portal)")
-        record = req.meter_source.model_dump(mode="json") if req.meter_source else None
+        record = lab.evidence.bind(req.meter_source.model_dump(mode="json")) if req.meter_source else None
         return lab.meters.import_csv(req.csv, req.file_name, req.options, req.source.strip(), req.force, req.provenance, record)
 
     @app.get("/api/meter/imports")
@@ -333,7 +333,7 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
 
     @app.put("/api/household")
     def household_put(req: HouseholdPut):
-        settings = HouseholdSettings(**req.model_dump(exclude={"migrated_from"}))
+        settings = HouseholdSettings(**lab.evidence.bind_all(req.model_dump(mode="json", exclude={"migrated_from"})))
         if settings.tariff_id:
             try:
                 lab.tariffs.get(settings.tariff_id)  # 404 for an unknown tariff
@@ -356,6 +356,37 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, data
             return _household_state(lab.households.restore())
         except KeyError:
             raise NotFound("household backup") from None
+    # ------------------------------------------------------------ source evidence (documents WATTWISE retrieved or you attached)
+    @app.post("/api/evidence/retrieve", status_code=201)
+    def evidence_retrieve(body: dict):
+        """WATTWISE downloads a public https document (tariff order, spec sheet) and archives it with its SHA-256."""
+        return lab.evidence.retrieve(str(body.get("url") or ""))
+    @app.post("/api/evidence/attach", status_code=201)
+    def evidence_attach(body: dict):
+        """Archive a file you supply (for example a PDF of your bill), base64-encoded. It backs user-supplied sources only."""
+        return lab.evidence.attach(str(body.get("file_name") or ""), str(body.get("content_b64") or ""), body.get("content_type"))
+    @app.get("/api/evidence")
+    def evidence_list():
+        return lab.evidence.list()
+    @app.get("/api/evidence/{evidence_id}")
+    def evidence_get(evidence_id: str):
+        try:
+            return lab.evidence.get(evidence_id)
+        except KeyError:
+            raise NotFound(f"evidence {evidence_id}") from None
+    @app.get("/api/evidence/{evidence_id}/content")
+    def evidence_content(evidence_id: str):
+        try:
+            body, ctype, name = lab.evidence.content(evidence_id)
+        except KeyError:
+            raise NotFound(f"evidence {evidence_id}") from None
+        return Response(body, media_type=ctype or "application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{name}"',
+                                                                                     "X-Content-Type-Options": "nosniff"})
+    @app.get("/api/audit")
+    def audit():
+        """Every stored input checked against the data policy: what is blocked, what still needs confirming, what is unverified."""
+        from wattwise.services.audit import run as audit_run
+        return audit_run(lab)
     @app.get("/api/inputs/export.json")
     def inputs_export():
         """Every configured input with its source and status: household, tariffs and meter imports."""

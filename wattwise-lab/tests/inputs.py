@@ -74,3 +74,14 @@ TEST_SETUP = {"charge_start": 19.0, "charge_power_kw": 7.4, "appliance_start": 1
 # (0.35 kW plus 1.0 kW 18:00-21:00 and 0.6 kW 06:30-08:30). The app no longer uses it; regression tests pass it explicitly so
 # their pinned costs still check the pricing code.
 TEST_PROFILE = [0.35 + (1.0 if 18 <= (16 + i * 0.25) % 24 < 21 else 0.0) + (0.6 if 6.5 <= (16 + i * 0.25) % 24 < 8.5 else 0.0) for i in range(96)]
+# Evidence retrieval in tests never touches the network: the store's fetcher is replaced by this stub.
+FAKE_DOCUMENT = b"%PDF-1.4 test tariff order (automated test fixture, not a real document)"
+def fake_fetch(url: str) -> dict:
+    return {"final_url": url, "status": 200, "content_type": "application/pdf", "body": FAKE_DOCUMENT}
+def retrieved_source(client, url: str = "https://regulator.example/tariff-order.pdf", **over) -> dict:
+    """An official source backed by a document WATTWISE 'retrieved' (via the stub)."""
+    client.app.state.lab.evidence.fetch = fake_fetch
+    ev = client.post("/api/evidence/retrieve", json={"url": url})
+    assert ev.status_code == 201, ev.text
+    return {"source_type": "official", "source_name": "State electricity regulatory commission", "document": url, "collected_on": "2026-11-01",
+            "effective_from": "2025-04-01", "effective_to": "2099-03-31", "verification": "verified", "evidence_id": ev.json()["evidence_id"], **over}

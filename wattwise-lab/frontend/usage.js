@@ -7,7 +7,7 @@ const PROV = {
 const provChip = (p) => { const [t, c] = PROV[p] || [p, '']; return `<span class="chip ${c}" title="${esc(p)}">${esc(t)}</span>`; };
 // One badge per file label, from /api/meta (META.provenance_badges); MEASURED only for a real_meter file. A meter export is the
 // household's own data: it is never shown as independently verified.
-const FALLBACK_BADGES = { real_meter: { text: 'MEASURED · USER SUPPLIED', css: 'prov-m' }, synthetic_demo: { text: 'SYNTHETIC · NOT USABLE', css: 'prov-s' }, unknown: { text: 'UNVERIFIED SOURCE', css: 'prov-u' } };
+const FALLBACK_BADGES = { real_meter: { text: 'METER EXPORT · DECLARED BY YOU', css: 'prov-m' }, synthetic_demo: { text: 'SYNTHETIC · NOT USABLE', css: 'prov-s' }, unknown: { text: 'UNVERIFIED SOURCE', css: 'prov-u' } };
 const labelBadge = (label) => {
   const l = label || 'unknown', b = ((typeof META !== 'undefined' && META && META.provenance_badges) || FALLBACK_BADGES)[l] || FALLBACK_BADGES.unknown;
   return `<span class="chip ${esc(b.css)}" title="${esc(l)}">${esc(b.text)}</span>`;

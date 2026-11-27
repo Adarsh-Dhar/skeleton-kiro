@@ -24,12 +24,32 @@ PROVENANCE = "historical_measured"  # fixed quantity-kind key (clarification C1)
 PROVENANCE_LABELS = ("real_meter", "synthetic_demo", "unknown")  # every label a stored import may carry
 IMPORT_LABELS = ("real_meter", "unknown")  # labels a NEW import may claim: synthetic data is not accepted (zero fabricated input data)
 # A meter export is measured by the meter but supplied by the household: it is never shown as independently verified.
-_BADGES = {"real_meter": ("MEASURED · USER SUPPLIED", "prov-m"), "synthetic_demo": ("SYNTHETIC · NOT USABLE", "prov-s"),
+# "real_meter" is the owner's declaration about the file: WATTWISE cannot prove a CSV came from a meter, so the badge says so.
+_BADGES = {"real_meter": ("METER EXPORT · DECLARED BY YOU", "prov-m"), "synthetic_demo": ("SYNTHETIC · NOT USABLE", "prov-s"),
            "unknown": ("UNVERIFIED SOURCE", "prov-u")}
 
 
 class ProvenanceError(ValueError):
     """The supplied provenance label is not one of PROVENANCE_LABELS."""
+def plausibility(readings: list[Reading]) -> list[str]:
+    """Patterns real meters practically never produce. A warning, not a proof either way: a careful forgery passes."""
+    out: list[str] = []
+    kws = [round(r.kw, 6) for r in readings]
+    if len(kws) >= 8 and len(set(kws)) == 1:
+        out.append(f"all {len(kws)} readings have the same value ({kws[0]} kW)")
+    elif len(kws) >= 96:
+        same = sum(a == b for a, b in zip(kws, kws[1:])) / (len(kws) - 1)
+        if same > 0.9:
+            out.append(f"{same:.0%} of consecutive readings are identical")
+    days: dict[str, list[float]] = {}
+    for r, kw in zip(readings, kws, strict=True):
+        days.setdefault(r.start_utc.date().isoformat(), []).append(kw)
+    full = [v for v in days.values() if len(v) >= 24]
+    if len(full) >= 2 and all(v == full[0] for v in full[1:]):
+        out.append(f"{len(full)} days repeat exactly the same readings")
+    if len(kws) >= 96 and all(abs(k * 10 - round(k * 10)) < 1e-9 for k in kws):
+        out.append("every reading is a round number (one decimal place or fewer)")
+    return out
 def _source_record(source: str, label: str, record: dict[str, Any] | None, legacy: bool = False) -> dict[str, Any]:
     """The import's source record. A meter export is the household's own data: at most ``user_supplied``, never ``verified``."""
     if record:
@@ -125,7 +145,9 @@ class MeterLibrary:
                 reading_kind=res.options["resolved"]["reading_kind"], unit=res.options["resolved"]["unit"], interval_minutes=res.interval_minutes,
                 resample_minutes=opt.resample_minutes, first_ts_utc=first, last_ts_utc=last, rows_total=res.rows_total, rows_used=len(res.readings),
                 rows_skipped=res.rows_skipped, content_sha256=digest,
-                options_json=json.dumps({**res.options, "source_record": _source_record(source, label, source_record)}), warnings_json=json.dumps(res.warnings),
+                options_json=json.dumps({**res.options, "source_record": {**_source_record(source, label, source_record),
+                                                                           "plausibility": plausibility(res.readings),
+                                                                           "file_sha256": hashlib.sha256(text.encode()).hexdigest()}}), warnings_json=json.dumps(res.warnings),
                 row_log_json=json.dumps(res.row_log), gaps_json=json.dumps(res.gaps), provenance=label,
                 total_import_kwh=sum(r.kwh for r in res.readings), total_export_kwh=sum(r.export_kwh for r in res.readings)))
             c.exec_driver_sql(
@@ -145,7 +167,7 @@ class MeterLibrary:
                "first_utc": m.first_ts_utc, "last_utc": m.last_ts_utc, "rows_total": m.rows_total, "rows_used": m.rows_used,
                "rows_skipped": m.rows_skipped, "warnings": json.loads(m.warnings_json), "provenance": PROVENANCE,
                "source_label": m.provenance or "unknown", "total_import_kwh": m.total_import_kwh, "total_export_kwh": m.total_export_kwh or 0.0,
-               "source_record": record, "source_status": PV.status(record)}  # fmt: skip
+               "source_record": record, "source_status": PV.status(record), "file_sha256": record.get("file_sha256")}  # fmt: skip
         if full:
             out.update(options=opts, row_log=json.loads(m.row_log_json), gaps=json.loads(m.gaps_json))
         return out

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from fastapi.testclient import TestClient
-from inputs import SRC, appliance, ev, household, seed_tariffs
+from inputs import SRC, appliance, ev, household, retrieved_source, seed_tariffs
 from sqlalchemy import text
 
 from db import create_db_engine
@@ -77,9 +77,12 @@ def test_owner_data_cannot_claim_to_be_verified(client):
     official = {"source_type": "manufacturer", "source_name": "Maker", "verification": "verified"}  # no document, no date
     r = client.put("/api/household", json={**MINE, "ev": {**MINE["ev"], "source": official}})
     assert r.status_code == 422 and "collected" in r.json()["detail"][0]["message"] and "document" in r.json()["detail"][0]["message"]
-    ok = {**official, "document": "https://maker.example/spec.pdf", "collected_on": "2026-11-01"}
+    cited = {**official, "document": "https://maker.example/spec.pdf", "collected_on": "2026-11-01"}
+    r = client.put("/api/household", json={**MINE, "ev": {**MINE["ev"], "source": cited}})  # cited, but never retrieved by WATTWISE
+    assert r.status_code == 422 and "retrieved by WATTWISE" in r.json()["detail"][0]["message"]
+    ok = retrieved_source(client, "https://maker.example/spec.pdf", source_type="manufacturer", source_name="Maker")
     got = client.put("/api/household", json={**MINE, "ev": {**MINE["ev"], "source": ok}}).json()
-    assert got["settings"]["ev"]["source"]["verification"] == "verified"
+    assert got["settings"]["ev"]["source"]["verification"] == "verified" and got["settings"]["ev"]["source"]["evidence"]["kind"] == "retrieved_url"
 
 
 def test_clear_keeps_a_backup_that_can_be_restored(client):
@@ -108,7 +111,7 @@ def test_localstorage_migration_applies_only_once(client):
 def test_settings_saved_before_source_tracking_are_kept_and_labelled_not_completed(client):
     old = {"tariff_id": "flat-rate", "base_load_kw": 0.4, "charger_power_kw": None,
            "appliances": [{"name": "Dishwasher", "power_kw": 1.2, "duration_h": 2.0, "flexible": True, "fixed_start": 20.0}],
-           "ev": {"battery_kwh": 60.0, "initial_soc_pct": 30.0, "desired_charge_pct": 80.0, "departure_hour": 7.5, "efficiency": 0.92}}
+           "ev": {"battery_kwh": 77.0, "initial_soc_pct": 30.0, "desired_charge_pct": 80.0, "departure_hour": 7.5, "efficiency": 0.92}}
     with client.app.state.lab.engine.begin() as c:
         c.execute(text("INSERT INTO ww_household (id, settings_json, source, updated_at) VALUES (1, :j, 'user', CURRENT_TIMESTAMP)"), {"j": json.dumps(old)})
     r = client.get("/api/household").json()
@@ -116,10 +119,29 @@ def test_settings_saved_before_source_tracking_are_kept_and_labelled_not_complet
     assert s["appliances"][0]["power_kw"] == 1.2 and s["appliances"][0]["source"]["legacy"] is True
     assert s["base_load_kw"] == 0.4 and s["base_load_source"]["verification"] == "user_supplied"
     # the old EV has no usual plug-in time: it is NOT completed with an invented one, it becomes a draft
-    assert s["ev"] is None and r["ev_draft"]["battery_kwh"] == 60.0 and r["ev_draft"]["missing"] == ["plug_in_hour"]
+    assert s["ev"] is None and r["ev_draft"]["battery_kwh"] == 77.0 and r["ev_draft"]["missing"] == ["plug_in_hour"]
     assert "plug_in_hour" in r["notice"]
 
 
+def test_exact_copies_of_the_old_example_household_are_not_credited_to_the_owner(client):
+    """Values identical to the example household earlier versions filled in are examples, not the owner's data."""
+    old = {"tariff_id": "flat-rate", "base_load_kw": 0.35, "charger_power_kw": None,
+           "appliances": [{"name": "Dishwasher", "power_kw": 1.2, "duration_h": 2.0, "flexible": True, "fixed_start": 20.0},  # edited: the owner's
+                          {"name": "Washing machine", "power_kw": 0.5, "duration_h": 1.5, "flexible": True, "fixed_start": 19.0},  # untouched example
+                          {"name": "Tumble dryer", "power_kw": 2.0, "duration_h": 1.5, "flexible": False, "fixed_start": 18.0}],  # untouched example
+           "ev": {"battery_kwh": 60.0, "initial_soc_pct": 30.0, "desired_charge_pct": 80.0, "departure_hour": 7.5, "efficiency": 0.92}}  # example EV
+    with client.app.state.lab.engine.begin() as c:
+        c.execute(text("INSERT INTO ww_household (id, settings_json, source, updated_at) VALUES (1, :j, 'user', CURRENT_TIMESTAMP)"), {"j": json.dumps(old)})
+    r = client.get("/api/household").json()
+    s = r["settings"]
+    assert [a["name"] for a in s["appliances"]] == ["Dishwasher"] and s["appliances"][0]["source"]["legacy"] is True
+    assert s["base_load_kw"] is None  # 0.35 kW was the example always-on load
+    assert {x["input"] for x in r["example_values"]} == {"appliances[Washing machine]", "appliances[Tumble dryer]", "base_load", "ev"}
+    assert s["ev"] is None and r["ev_draft"]["example"] is True and r["ev_draft"]["source"]["source_type"] == "example"
+    audit = client.get("/api/audit").json()
+    blocking = {f["input"] for f in audit["findings"] if f["severity"] == "blocking"}
+    assert {"appliances[Washing machine]", "appliances[Tumble dryer]", "base_load", "ev"} <= blocking
+    assert any(f["severity"] == "confirm" and f["input"] == "appliances[Dishwasher]" for f in audit["findings"])
 def test_frontend_no_longer_writes_localstorage():
     from pathlib import Path
     js = (Path(__file__).resolve().parents[1] / "frontend" / "app.js").read_text()

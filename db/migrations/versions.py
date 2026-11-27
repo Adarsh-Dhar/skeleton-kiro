@@ -154,6 +154,9 @@ def _m011_ww_provenance_and_export(conn: Connection) -> None:
     conn.execute(text("UPDATE ww_meter_import SET total_export_kwh = 0 WHERE total_export_kwh IS NULL"))
 
 
+def _m012_ww_source_evidence(conn: Connection) -> None:
+    """Archive of source documents (retrieved by WATTWISE or attached by the owner) that back a source record. Additive only."""
+    create_tables(conn, "ww_source_evidence")
 MIGRATIONS: list[Migration] = [
     Migration(1, "experiment owner table", _m001_owner),
     Migration(2, "f1 historical sessions", _m002_f1_historical),
@@ -166,4 +169,5 @@ MIGRATIONS: list[Migration] = [
     Migration(9, "f1 setup lab restored: owner table and six setup-engineering tables", _m009_f1_setup_restored),
     Migration(10, "remove live simulator data: its experiments and the six game tables", _m010_remove_game_data),
     Migration(11, "wattwise meter provenance and solar export", _m011_ww_provenance_and_export),
+    Migration(12, "wattwise source evidence archive", _m012_ww_source_evidence),
 ]

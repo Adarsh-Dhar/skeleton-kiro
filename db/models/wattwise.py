@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from db.base import Base, utcnow
@@ -77,3 +77,21 @@ class MeterReading(Base):
     flags: Mapped[str | None] = mapped_column(String(200), nullable=True)
     export_kwh: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     export_kw: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+
+
+class SourceEvidence(Base):
+    """A source document WATTWISE itself retrieved (``retrieved_url``) or the owner attached (``uploaded_file``), with its SHA-256
+    and an archived copy. A source record may only claim ``verified`` when it points at a ``retrieved_url`` record."""
+
+    __tablename__ = "ww_source_evidence"
+    evidence_id: Mapped[str] = mapped_column(String(40), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))  # retrieved_url | uploaded_file
+    url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    final_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    file_name: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    content: Mapped[bytes] = mapped_column(LargeBinary)

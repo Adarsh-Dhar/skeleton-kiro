@@ -8,7 +8,10 @@ optimiser look for the cheapest schedule that **still leaves the car charged by 
 > **ZERO FABRICATED INPUT DATA.** A fresh installation is empty: no example tariff, household, appliance, EV or meter file. Every input is
 > yours (bill, meter export, appliance labels, vehicle documents) or comes from a cited real-world source, and carries a source record
 > (type, name, document, collection and effective dates, verification). Missing data stays missing: projections are refused until it is
-> entered. Schedule costs are **projections** from those inputs, never measurements. What to collect and where: [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
+> entered. Schedule costs are **projections** from those inputs, never measurements. `verified` needs the publisher's document
+> retrieved and archived by WATTWISE itself, and everything else is labelled as your own claim. `GET /api/audit` (or
+> `python -m wattwise.audit`) audits a database. What to collect and where, and what WATTWISE can and cannot prove:
+> [docs/DATA_SOURCES.md](docs/DATA_SOURCES.md).
 
 ## Run it
 

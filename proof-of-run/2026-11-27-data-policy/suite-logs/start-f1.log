@@ -1,0 +1,4 @@
+trialforge-core 0.2.2 OK
+Starting F1 SETUP LAB on http://127.0.0.1:18001  (database: /var/folders/pb/d0ngpzts0gn8tts09wczfwzh0000gn/T/tmp.5FdS3JRkCX/startup-smoke/trialforge.db)
+trialforge loaded from /Users/adarsh/Documents/skeleton-kiro-main/f1-setup-lab/.venv/lib/python3.13/site-packages/trialforge
+HTTP 200, f1-setup-lab, trialforge 0.2.2

@@ -67,6 +67,7 @@ from wattwise.services.baseline import (  # noqa: F401  (re-exported: the API la
     InvalidDayType,
     NoCompleteDay,
 )
+from wattwise.services.evidence import EvidenceStore
 from wattwise.services.household import HouseholdStore
 from wattwise.services.meter_library import MeterLibrary, options_from, usable_as_baseline
 from wattwise.services.tariffs import TariffError, TariffStore  # noqa: F401  (TariffError re-exported)
@@ -106,6 +107,7 @@ class LabService:
         self.tariffs = TariffStore(self.engine)
         self.households = HouseholdStore(self.engine)
         self.meters = MeterLibrary(self.engine)
+        self.evidence = EvidenceStore(self.engine)
 
     # ------------------------------------------------------------------ lifecycle
     async def startup(self) -> list[dict]:
@@ -127,7 +129,7 @@ class LabService:
     def resolve_tariff(self, tariff_id: str | None, inline: Any) -> dict[str, Any]:
         """The tariff to price with: an inline tariff (from the bill) or one from the library. There is no default tariff."""
         if inline is not None:
-            data = inline.model_dump(mode="json", exclude_none=True)
+            data = self.evidence.bind_all(inline.model_dump(mode="json", exclude_none=True))
             from wattwise.adapters.household_model import validate_tariff
             issues = validate_tariff(data)
             if issues:
@@ -197,14 +199,15 @@ class LabService:
         return out
 
     def household(self, req: Any) -> dict[str, Any]:
-        hh = {"ev": req.ev.model_dump(mode="json") if req.ev is not None else None, "tariff": self.resolve_tariff(req.tariff_id, req.tariff),
-              "base_load_kw": req.base_load_kw, "appliances": [a.model_dump(mode="json") for a in req.appliances]}  # fmt: skip
+        bind = self.evidence.bind_all  # evidence comes from the archive, never from the request
+        hh = {"ev": bind(req.ev.model_dump(mode="json")) if req.ev is not None else None, "tariff": self.resolve_tariff(req.tariff_id, req.tariff),
+              "base_load_kw": req.base_load_kw, "appliances": [bind(a.model_dump(mode="json")) for a in req.appliances]}  # fmt: skip
         if req.base_load_source is not None:
-            hh["base_load_source"] = req.base_load_source.model_dump(mode="json")
+            hh["base_load_source"] = bind(req.base_load_source.model_dump(mode="json"))
         if getattr(req, "charger_capacity_kw", None) is not None:
             hh["charger_capacity_kw"] = float(req.charger_capacity_kw)
             if req.charger_source is not None:
-                hh["charger_source"] = req.charger_source.model_dump(mode="json")
+                hh["charger_source"] = bind(req.charger_source.model_dump(mode="json"))
         start = getattr(req, "window_start_date", None)
         if start is not None:  # ISO string so the household stays JSON-serialisable; absent = derived reference date (old behaviour)
             hh["window_start_date"] = start.isoformat() if hasattr(start, "isoformat") else str(start)

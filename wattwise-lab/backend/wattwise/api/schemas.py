@@ -84,6 +84,8 @@ class SourceRef(BaseModel):
     verification: Literal["verified", "user_supplied", "unverified"]
     notes: str | None = Field(None, max_length=500)
     legacy: bool = Field(False, description="Set by the server for values saved before source tracking (to be confirmed by the owner)")
+    evidence_id: str | None = Field(None, max_length=40, description="Archived document (POST /api/evidence/retrieve or /attach) backing this source")
+    evidence: dict | None = Field(None, description="Filled in by the server from evidence_id; a value sent by a client is discarded")
     @model_validator(mode="after")
     def _policy(self):
         issues = PV.source_issues(self.model_dump())

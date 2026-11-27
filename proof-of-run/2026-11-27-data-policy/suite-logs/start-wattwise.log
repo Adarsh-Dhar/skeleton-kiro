@@ -1,0 +1,4 @@
+trialforge-core 0.2.2 OK
+Starting WATTWISE LAB on http://127.0.0.1:18002  (database: /var/folders/pb/d0ngpzts0gn8tts09wczfwzh0000gn/T/tmp.5FdS3JRkCX/startup-smoke/trialforge.db)
+trialforge loaded from /Users/adarsh/Documents/skeleton-kiro-main/wattwise-lab/.venv/lib/python3.13/site-packages/trialforge
+HTTP 200, wattwise-lab, trialforge 0.2.2

@@ -12,6 +12,20 @@ function readinessBox(st) {
   const warn = r.warnings.length ? `<ul class="warnlist">${r.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul>` : '';
   return `${miss}${warn}${st.notice ? `<div class="note">${esc(st.notice)}</div>` : ''}`;
 }
+const SEV = { blocking: ['BLOCKING', 'prov-s'], confirm: ['TO CONFIRM', 'prov-mt'], warning: ['WARNING', 'prov-u'] };
+function auditBox(a) {
+  if (!a.findings.length) return `<div class="note info"><b>Data audit:</b> no findings; ${a.counts.clean_inputs} input(s) have a source and nothing is blocked.</div>`;
+  return `<details class="panel" id="auditbox" ${a.counts.blocking || a.counts.confirm ? 'open' : ''}><summary><b>Data audit</b>: ${a.counts.blocking} blocking &middot; ${a.counts.confirm} to confirm &middot; ${a.counts.warning} warning(s) &middot; ${a.counts.clean_inputs} clean</summary>
+    <div class="scroll"><table><thead><tr><th></th><th>Input</th><th>Finding</th><th>What to do</th></tr></thead><tbody>${a.findings.map((f) => `<tr><td><span class="chip ${SEV[f.severity][1]}">${SEV[f.severity][0]}</span></td>
+      <td class="mono">${esc(f.input)}</td><td>${esc(f.message)}</td><td class="dim">${esc(f.action)}</td></tr>`).join('')}</tbody></table></div>
+    <ul class="hint">${a.limits.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>`;
+}
+function examplesBox(list) {
+  if (!list || !list.length) return '';
+  return `<div class="errors"><b>Copies of the old built-in examples</b> (saved before source tracking; not used):<ul>${list.map((x, i) => `<li><code>${esc(x.input)}</code> ${esc(Object.entries(x.values).filter(([k, v]) => !['source', 'id', 'in_baseline', 'name'].includes(k) && v !== null && v !== undefined).map(([k, v]) => `${k} ${v}`).join(', '))}
+    ${x.input.startsWith('appliances[') || x.input === 'base_load' ? ` <button type="button" class="btn small" data-adopt="${i}">This is my real value</button>` : ''}</li>`).join('')}</ul>
+    <span class="hint">Only adopt a value you have checked yourself; you then have to say where it comes from. Saving the household removes the rest.</span></div>`;
+}
 async function viewHousehold() {
   const st = HSTATE || {};
   const blankTariff = () => ({ name: '', periods: [{ label: '', start: 0, end: 24, price: null }], demand_charge_per_kw: 0 });
@@ -70,7 +84,7 @@ async function viewHousehold() {
   const apps = () => appList.map(appRow).join('') || '<tr><td colspan="6" class="dim">No appliances yet. Add the ones you can schedule, with the power from their rating plate.</td></tr>';
   const example = current && current.source_status && !current.source_status.usable;
   view().innerHTML = `<h1>Household setup</h1><p class="sub">Enter your own data: the tariff from your bill, your appliances, your car and your meter readings. Every value needs its source. Nothing is filled in for you, and results are projections from these inputs.</p><div id="err"></div>
-  <div id="ready">${readinessBox(st)}</div>
+  <div id="ready">${readinessBox(st)}</div>${examplesBox(st.example_values)}<div id="audit"></div>
   <div class="grid g2"><div>
     <div class="panel"><h2>Electricity tariff</h2>
       ${META.tariffs.length ? '' : '<div class="note info">No tariff yet. Enter your tariff from your latest electricity bill or your DISCOM\u2019s current tariff order, then press <b>Save tariff</b>.</div>'}
@@ -108,8 +122,9 @@ async function viewHousehold() {
       <div class="row">${creating ? '<button type="button" class="btn primary" id="tnew">Save tariff</button>' : '<button type="button" class="btn primary" id="tsave">Save changes</button><button type="button" class="btn" id="tnew">Save as new tariff</button><button type="button" class="btn danger" id="tdel">Delete</button>'}</div></div>
   </div><div>
     <div class="panel" id="evpanel"><h2>Electric vehicle</h2>
-      <div class="field"><label class="inline"><input type="checkbox" id="noev" ${evSeed ? '' : 'checked'}> No EV (schedule appliances only)</label></div>
-      ${st.ev_draft && !HH.ev ? `<div class="note">Your saved EV is missing ${esc((st.ev_draft.missing || []).join(', '))}. Fill it in and save to use the EV.</div>` : ''}
+      <div class="field"><label class="inline"><input type="checkbox" id="noev" ${evSeed && !st.ev_draft?.example ? '' : 'checked'}> No EV (schedule appliances only)</label></div>
+      ${st.ev_draft && !HH.ev ? (st.ev_draft.example ? '<div class="errors">The saved EV is a copy of the example EV earlier versions filled in. Untick "No EV" only if these are your car\u2019s real values, and choose their source.</div>'
+        : `<div class="note">Your saved EV is missing ${esc((st.ev_draft.missing || []).join(', '))}. Fill it in and save to use the EV.</div>`) : ''}
       <fieldset id="evfields" style="border:0;padding:0;margin:0"><div class="grid g2">
       <div class="field"><label for="ev-bat">Usable battery capacity (kWh)</label><input id="ev-bat" type="number" step="0.1" min="10" max="200" value="${val(evSeed?.battery_kwh)}" placeholder="vehicle specification"></div>
       <div class="field"><label for="ev-eff">Charging efficiency, grid to battery (0.5&ndash;1)</label><input id="ev-eff" type="number" step="0.01" min="0.51" max="1" value="${val(evSeed?.efficiency)}" placeholder="manual or measured"></div>
@@ -126,13 +141,14 @@ async function viewHousehold() {
     <div class="panel" id="basepanel"><h2>Background load</h2>
       ${HH.baseline_import_id ? `<div class="note info">Using the measured profile of meter import <b>${esc(HH.baseline_import_id)}</b> (set on <a href="#/usage">My usage</a>). The value below is only used without it.</div>` : '<p class="hint">Best: import your meter readings on <a href="#/usage">My usage</a> and use them as the baseline. Otherwise enter your measured always-on load.</p>'}
       <div class="field"><label for="base">Always-on load (kW)</label><input id="base" type="number" step="0.01" min="0" max="5" value="${val(HH.base_load_kw)}" placeholder="measured, e.g. night-time meter reading"></div>
-      ${Sources.srcFields('bsrc', HH.base_load_source || null, 'base_load')}</div>
+      <div id="bsrcwrap">${Sources.srcFields('bsrc', HH.base_load_source || null, 'base_load')}</div></div>
     <div class="note" id="hdirty" role="status" hidden>Unsaved changes: press <b>Save household settings</b> or they are lost on reload.</div>
     <button type="button" class="btn primary" id="hsave" style="width:100%;padding:12px">Save household settings</button>
     <div class="row" style="margin-top:8px"><button type="button" class="btn" id="hreset" style="flex:1">Clear configuration</button>
       <button type="button" class="btn" id="hrestore" style="flex:1" ${st.backup?.available ? '' : 'disabled'}>Restore backup${st.backup?.updated_at ? ` (${esc(String(st.backup.updated_at).slice(0, 16))})` : ''}</button></div>
     <p class="hint">Saved on the server (available in every browser on this installation). Clearing keeps a backup you can restore. <a href="/api/inputs/export.json" download>Export all inputs with their sources</a></p></div></div>`;
   renderPeriods(); renderTiers(); validate();
+  api('GET', '/api/audit').then((a) => { if ($('#audit')) $('#audit').innerHTML = auditBox(a); }).catch(() => { /* the audit is advisory */ });
   const showEv = () => { const off = $('#noev').checked; $('#evfields').disabled = off; $('#evfields').style.opacity = off ? '.45' : '1'; };
   $('#noev').addEventListener('change', showEv); showEv();
   $('#addtier').addEventListener('click', () => { editing = { ...editing, ...readTariff(), tiers: [...readTiers(), { up_to_kwh: null, adder_per_kwh: null }] }; renderTiers(); validate(); });
@@ -181,6 +197,13 @@ async function viewHousehold() {
     appList.push({ name: '', power_kw: null, duration_h: null, flexible: true, fixed_start: null, source: null });
     $('#apps').innerHTML = apps(); markDirty(true);
   });
+  // adopting an example copy: the value comes back into the form with NO source, so the owner must say where it comes from
+  $$('[data-adopt]').forEach((b) => b.addEventListener('click', () => {
+    const x = st.example_values[+b.dataset.adopt], blank = { source_type: 'example' };
+    if (x.input === 'base_load') { $('#base').value = x.values.base_load_kw; $('#bsrcwrap').innerHTML = Sources.srcFields('bsrc', blank, 'base_load'); }
+    else { appList = readApps(); appList.push({ ...x.values, source: blank }); $('#apps').innerHTML = apps(); }
+    b.disabled = true; markDirty(true);
+  }));
   $('#apps').addEventListener('click', (e) => { const b = e.target.closest('[data-adel]'); if (!b) return; appList = readApps(); appList.splice(+b.dataset.adel, 1); $('#apps').innerHTML = apps(); markDirty(true); });
   const saveAll = async () => {
     $('#err').innerHTML = '';

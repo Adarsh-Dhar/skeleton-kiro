@@ -80,14 +80,14 @@ def _rows(e, sql):
 
 
 def test_migration_10_is_the_latest_and_follows_9():
-    assert latest_version() == 11
+    assert latest_version() == 12  # 11: meter provenance, 12: source evidence archive
 
 
 def test_game_experiments_rows_and_tables_are_removed_everything_else_stays(tmp_path):
     e = _v9_database(tmp_path / "t.db")
     assert current_version(e) == 9 and set(GAME_TABLES) <= _tables(e)
     migrate(e)
-    assert current_version(e) == 11
+    assert current_version(e) == 12
     assert not set(GAME_TABLES) & _tables(e)
     # the game experiment is gone from every SDK table and from the owner table; the synthetic and WATTWISE ones are complete
     for t in SDK:
@@ -126,7 +126,7 @@ def test_experiments_with_stint_evidence_are_removed_even_without_a_mode_in_the_
 def test_a_fresh_database_and_one_without_sdk_tables_migrate(tmp_path):
     e = create_db_engine(tmp_path / "fresh.db")
     migrate(e)
-    assert current_version(e) == 11 and not set(GAME_TABLES) & _tables(e)
+    assert current_version(e) == 12 and not set(GAME_TABLES) & _tables(e)
     assert LAST_REMOVAL["experiments_removed"] == 0
 
 
@@ -145,7 +145,7 @@ def test_the_database_is_backed_up_before_migration_10(tmp_path):
     assert b.execute("SELECT COUNT(*) FROM f1_udp_packet").fetchone()[0] == 2
     assert b.execute("SELECT experiment_id FROM experiments WHERE experiment_id = 'live-1'").fetchall() == [("live-1",)]
     b.close()
-    assert current_version(e) == 11
+    assert current_version(e) == 12
 
 
 def test_a_failing_removal_rolls_back_and_keeps_version_9(tmp_path):

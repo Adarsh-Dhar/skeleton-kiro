@@ -19,7 +19,13 @@ This guide lists every input, its unit, what to read, and where to read it for a
 
 Rules the server enforces:
 
-- `verified` requires an official, manufacturer or research source, plus a `document` and a `collected_on` date that is not in the future.
+- `verified` requires an official, manufacturer or research source, a `document`, a `collected_on` date that is not in the future,
+  **and the document retrieved by WATTWISE itself**. Paste the publisher's `https://` URL into *Document or URL* and press
+  **Retrieve document**: WATTWISE downloads it, archives a copy and records its SHA-256 and the date (`POST /api/evidence/retrieve`).
+  Only then can the source be `verified`, labelled **VERIFIED · DOCUMENT RETRIEVED**. A `verified` claim without that is rejected.
+  If one was stored earlier, it shows as **CITED · NOT RETRIEVED**.
+- Evidence is bound by the server from its own archive (`evidence_id`). An `evidence` block sent by a client is discarded, so it cannot be forged through the API.
+- **Attach a file** (for example a PDF of your bill, `POST /api/evidence/attach`) archives and hashes it, but you supplied it, so it backs `user_supplied` only (**USER SUPPLIED · DOCUMENT ATTACHED**).
 - Your own data (bill, meter export, a label you read, your own measurement) is `user_supplied`. It is never shown as independently verified.
 - A value without a traceable source is accepted only as `unverified`, and it is labelled that way everywhere it appears.
 - A tariff whose `effective_to` date has passed is flagged **EXPIRED** on the household page, in readiness warnings and in reports.
@@ -109,7 +115,37 @@ One modelling assumption remains in the EV model: charging power tapers above 80
 not an input. If your vehicle's charging curve is published, compare projected charge at departure against your car's real
 behaviour before relying on it.
 
-## 6. What WATTWISE never invents any more
+## 6. What WATTWISE can and cannot prove
+
+| Claim | What WATTWISE checks | What remains your responsibility |
+|---|---|---|
+| A tariff or spec sheet is official | It retrieved the document from the URL itself, archived it, recorded its hash and date, and refused private or non-https addresses | That the numbers you typed match the document. WATTWISE does not read tariff orders or spec sheets. |
+| A CSV is a real meter export | It hashes the file and flags patterns real meters practically never produce: every reading identical, over 90 % of consecutive readings identical, whole days repeated exactly, only round numbers | That the file is an unedited export. A careful forgery passes the checks, so the badge reads **METER EXPORT · DECLARED BY YOU**. |
+| A value is your own | It records it as `user_supplied` with the date and notes you give | Its accuracy |
+
+**Data audit.** `GET /api/audit`, the *Data audit* panel on the household page, or `python -m wattwise.audit [--db PATH]`
+(exits 1 when anything is blocking) checks every stored input. Severities:
+
+- **blocking:** an example or synthetic value, or a missing required input. It is never used.
+- **to confirm:** your value, saved before source tracking. It is still used, but it stays marked until you tick *I have checked this value* and save.
+- **warning:** unverified, cited but not retrieved, expired, or implausible meter readings.
+
+Values saved before source tracking that are **exact copies of the old built-in examples** are not credited to you. That covers
+the appliances 1.1 kW / 0.5 kW / 2.0 kW, the 0.35 kW always-on load and the 60 kWh EV. They are listed as example copies and kept
+out of every calculation. Re-adopt one only if you have checked it, and you then have to name its source.
+
+**Automatic data feeds.** WATTWISE does not fetch tariffs, meter readings or appliance or EV specifications on its own, because:
+
+- India has no public machine-readable API for DISCOM tariffs. Tariffs are published as tariff-order PDFs by each state commission.
+- Smart-meter data access is per DISCOM, needs the consumer's login and consent, and has no common public API.
+- The BEE star-label portal has no documented public API.
+
+The integration WATTWISE provides is document retrieval and archiving, which ties each value to the document it came from. A
+per-DISCOM integration (for example parsing one commission's tariff order, or a consented meter-data download from one utility's
+portal) can be added once the specific utility and its access method are known. It would be built and tested against that
+utility's real documents, not guessed.
+
+## 7. What WATTWISE never invents any more
 
 - No seeded tariffs. The three example tariffs earlier versions installed are recognised in an existing database, labelled **EXAMPLE · NOT REAL**, and blocked from every calculation. Replace them with your own tariff and delete them.
 - No default household, EV, appliances, charger power or always-on load.

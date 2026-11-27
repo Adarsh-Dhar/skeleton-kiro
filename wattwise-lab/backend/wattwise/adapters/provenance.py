@@ -5,7 +5,9 @@ dataset) or the household owner (their bill, meter export, appliance labels, veh
 ``source``; this module holds the policy that decides what a source may claim. Pure Python, no I/O.
 
 Rules
-  * ``verified`` needs an official/manufacturer/research source, a document (URL or reference) and the date it was collected.
+  * ``verified`` needs an official/manufacturer/research source, a document (URL or reference), the date it was collected, AND the
+    document retrieved by WATTWISE itself (``evidence`` of kind ``retrieved_url``, see wattwise.services.evidence). A stored claim
+    without that evidence is shown as CITED · NOT RETRIEVED. Even with it, the values are the owner's transcription of the document.
   * the owner's own data (``user_provided``, ``meter_export``) is never ``verified``: it is ``user_supplied`` (or ``unverified``).
   * ``unverified`` sources stay usable but are labelled as such everywhere they appear.
   * ``example`` marks the values the app used to ship (not a real tariff or household). They are never used for a calculation.
@@ -29,7 +31,7 @@ SOURCE_TYPE_LABELS = {
     "unverified": "Unverified source",
     "example": "Built-in example (not real data)",
 }
-VERIFICATION_LABELS = {"verified": "VERIFIED", "user_supplied": "USER SUPPLIED", "unverified": "UNVERIFIED"}
+VERIFICATION_LABELS = {"verified": "VERIFIED", "user_supplied": "USER SUPPLIED", "unverified": "UNVERIFIED", "cited": "CITED · NOT RETRIEVED"}
 # Unit of every configurable input (the stored value is always in this unit).
 INPUT_UNITS = {
     "tariff.periods.price": "currency/kWh", "tariff.demand_charge_per_kw": "currency/kW", "tariff.fixed_daily_charge": "currency/day",
@@ -87,6 +89,17 @@ def status(src: dict[str, Any] | None, today: date | None = None) -> dict[str, A
                 "warnings": ["no source recorded for this input"]}
     ver = src.get("verification") if src.get("verification") in VERIFICATION_LEVELS else "unverified"
     warnings: list[str] = []
+    ev = src.get("evidence") or None
+    retrieved = bool(ev and ev.get("kind") == "retrieved_url")
+    if ver == "verified" and not retrieved:
+        ver = "cited"  # a claim WATTWISE has not checked
+        warnings.append("the cited document was not retrieved by WATTWISE, so the 'verified' claim is not checked")
+    elif retrieved:
+        warnings.append(f"document retrieved and archived by WATTWISE on {str(ev.get('retrieved_at', ''))[:10]} (sha256 {str(ev.get('sha256', ''))[:12]}); "
+                        "the values were transcribed by you and are not read from it")
+    elif ev:
+        warnings.append(f"you attached {ev.get('file_name') or 'a document'} (sha256 {str(ev.get('sha256', ''))[:12]}); it is archived but supplied by you")
+    warnings += [f"plausibility: {p}" for p in src.get("plausibility") or []]
     end = _d(src.get("effective_to"))
     expired = bool(end and end < today)
     if expired:
@@ -102,10 +115,12 @@ def status(src: dict[str, Any] | None, today: date | None = None) -> dict[str, A
         warnings.append("supplied by the household owner; not independently verified")
     if src.get("legacy") and src.get("source_type") != "example":
         warnings.append("recorded before source tracking: confirm the value and add its source")
-    label = VERIFICATION_LABELS[ver] + (" · EXPIRED" if expired else "")
+    label = VERIFICATION_LABELS[ver] + (" · DOCUMENT RETRIEVED" if retrieved and ver == "verified" else "")
+    label += " · DOCUMENT ATTACHED" if ev and not retrieved and ver != "cited" else ""
+    label += " · EXPIRED" if expired else ""
     if src.get("source_type") == "example":
         label = "EXAMPLE · NOT REAL"
-    return {"verification": ver, "label": label, "expired": expired, "usable": src.get("source_type") != "example", "warnings": warnings}
+    return {"verification": ver, "label": label, "evidence": bool(ev), "document_retrieved": retrieved, "expired": expired, "usable": src.get("source_type") != "example", "warnings": warnings}
 def legacy_source(what: str) -> dict[str, Any]:
     """Source for a value the owner saved before source tracking existed: theirs, but to be confirmed."""
     return {"source_type": "user_provided", "source_name": "household owner", "document": None, "collected_on": None,

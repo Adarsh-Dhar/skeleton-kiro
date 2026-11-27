@@ -1,0 +1,140 @@
+* Creating isolated environment: venv+pip...
+* Installing packages in isolated environment:
+  - setuptools>=68
+  - wheel
+* Getting build dependencies for wheel...
+running egg_info
+writing src/trialforge_core.egg-info/PKG-INFO
+writing dependency_links to src/trialforge_core.egg-info/dependency_links.txt
+writing requirements to src/trialforge_core.egg-info/requires.txt
+writing top-level names to src/trialforge_core.egg-info/top_level.txt
+reading manifest file 'src/trialforge_core.egg-info/SOURCES.txt'
+adding license file 'LICENSE'
+writing manifest file 'src/trialforge_core.egg-info/SOURCES.txt'
+WARNING `project.license` as a TOML table is deprecated
+!!
+
+        ********************************************************************************
+        Please use a simple string containing a SPDX expression for `project.license`. You can also use `project.license-files`. (Both options available on setuptools>=77.0.0).
+
+        By 2027-Feb-18, you need to update your project and remove deprecated calls
+        or your builds will no longer be supported.
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+* Installed build dependency versions:
+  - setuptools==84.2.1
+  - wheel==0.48.0
+* Building wheel...
+running bdist_wheel
+running build
+running build_py
+running egg_info
+writing src/trialforge_core.egg-info/PKG-INFO
+writing dependency_links to src/trialforge_core.egg-info/dependency_links.txt
+writing requirements to src/trialforge_core.egg-info/requires.txt
+writing top-level names to src/trialforge_core.egg-info/top_level.txt
+reading manifest file 'src/trialforge_core.egg-info/SOURCES.txt'
+adding license file 'LICENSE'
+writing manifest file 'src/trialforge_core.egg-info/SOURCES.txt'
+installing to build/bdist.macosx-15.0-arm64/wheel
+running install
+running install_lib
+creating build/bdist.macosx-15.0-arm64/wheel
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/reporting
+copying build/lib/trialforge/reporting/engine.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/reporting
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/analysis
+copying build/lib/trialforge/analysis/engine.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/analysis
+copying build/lib/trialforge/analysis/stats.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/analysis
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/optimization
+copying build/lib/trialforge/optimization/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/optimization
+copying build/lib/trialforge/optimization/engine.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/optimization
+copying build/lib/trialforge/optimization/surrogate.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/optimization
+copying build/lib/trialforge/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/models
+copying build/lib/trialforge/models/core.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/models
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/utilities
+copying build/lib/trialforge/utilities/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/utilities
+copying build/lib/trialforge/utilities/safe_expr.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/utilities
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/adapters
+copying build/lib/trialforge/adapters/contracts.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/adapters
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/execution
+copying build/lib/trialforge/execution/service.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/execution
+copying build/lib/trialforge/execution/background.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/execution
+copying build/lib/trialforge/execution/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/execution
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/persistence
+copying build/lib/trialforge/persistence/repository.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/persistence
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/history
+copying build/lib/trialforge/history/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/history
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/designer
+copying build/lib/trialforge/designer/engine.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/designer
+copying build/lib/trialforge/designer/classical.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/designer
+copying build/lib/trialforge/py.typed -> build/bdist.macosx-15.0-arm64/wheel/./trialforge
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/evaluation
+copying build/lib/trialforge/evaluation/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/evaluation
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/errors
+copying build/lib/trialforge/errors/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/errors
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/events
+copying build/lib/trialforge/events/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/events
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/definitions
+copying build/lib/trialforge/definitions/registry.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/definitions
+copying build/lib/trialforge/definitions/__init__.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/definitions
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge/measurements
+copying build/lib/trialforge/measurements/units.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/measurements
+copying build/lib/trialforge/measurements/engine.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/measurements
+copying build/lib/trialforge/measurements/quality.py -> build/bdist.macosx-15.0-arm64/wheel/./trialforge/measurements
+running install_egg_info
+Copying src/trialforge_core.egg-info to build/bdist.macosx-15.0-arm64/wheel/./trialforge_core-0.2.2-py3.13.egg-info
+running install_scripts
+creating build/bdist.macosx-15.0-arm64/wheel/trialforge_core-0.2.2.dist-info/WHEEL
+creating '/Users/adarsh/Documents/skeleton-kiro-main/skeleton/dist/.tmp-68v8v6ze/trialforge_core-0.2.2-py3-none-any.whl' and adding 'build/bdist.macosx-15.0-arm64/wheel' to it
+adding 'trialforge/__init__.py'
+adding 'trialforge/py.typed'
+adding 'trialforge/adapters/contracts.py'
+adding 'trialforge/analysis/engine.py'
+adding 'trialforge/analysis/stats.py'
+adding 'trialforge/definitions/__init__.py'
+adding 'trialforge/definitions/registry.py'
+adding 'trialforge/designer/classical.py'
+adding 'trialforge/designer/engine.py'
+adding 'trialforge/errors/__init__.py'
+adding 'trialforge/evaluation/__init__.py'
+adding 'trialforge/events/__init__.py'
+adding 'trialforge/execution/__init__.py'
+adding 'trialforge/execution/background.py'
+adding 'trialforge/execution/service.py'
+adding 'trialforge/history/__init__.py'
+adding 'trialforge/measurements/engine.py'
+adding 'trialforge/measurements/quality.py'
+adding 'trialforge/measurements/units.py'
+adding 'trialforge/models/core.py'
+adding 'trialforge/optimization/__init__.py'
+adding 'trialforge/optimization/engine.py'
+adding 'trialforge/optimization/surrogate.py'
+adding 'trialforge/persistence/repository.py'
+adding 'trialforge/reporting/engine.py'
+adding 'trialforge/utilities/__init__.py'
+adding 'trialforge/utilities/safe_expr.py'
+adding 'trialforge_core-0.2.2.dist-info/licenses/LICENSE'
+adding 'trialforge_core-0.2.2.dist-info/METADATA'
+adding 'trialforge_core-0.2.2.dist-info/WHEEL'
+adding 'trialforge_core-0.2.2.dist-info/top_level.txt'
+adding 'trialforge_core-0.2.2.dist-info/RECORD'
+removing build/bdist.macosx-15.0-arm64/wheel
+WARNING `project.license` as a TOML table is deprecated
+!!
+
+        ********************************************************************************
+        Please use a simple string containing a SPDX expression for `project.license`. You can also use `project.license-files`. (Both options available on setuptools>=77.0.0).
+
+        By 2027-Feb-18, you need to update your project and remove deprecated calls
+        or your builds will no longer be supported.
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+Successfully built trialforge_core-0.2.2-py3-none-any.whl

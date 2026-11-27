@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime, timedelta
 
 from conftest import wait_done
 from fastapi.testclient import TestClient
-from inputs import SRC, TARIFFS, appliance, household, inputs, meter_csv, seed_tariffs, tariff
+from inputs import SRC, TARIFFS, appliance, household, inputs, meter_csv, retrieved_source, seed_tariffs, tariff
 from sqlalchemy import text
 
 from wattwise.api.app import create_app
@@ -106,14 +106,15 @@ def test_missing_source_date_cannot_claim_verified(client):
     assert r.status_code == 422 and "collected_on" in r.json()["detail"][0]["message"]
     future = {**OFFICIAL, "collected_on": (date.today() + timedelta(days=3)).isoformat()}
     assert client.post("/api/tariffs", json=tariff("Order", [{"start": 0, "end": 24, "price": 5.5}], source=future)).status_code == 422
-    ok = client.post("/api/tariffs", json=tariff("Order", [{"start": 0, "end": 24, "price": 5.5}], source={**OFFICIAL, "effective_to": "2099-03-31"})).json()
-    assert ok["source_status"]["label"] == "VERIFIED"
+    ok = client.post("/api/tariffs", json=tariff("Order", [{"start": 0, "end": 24, "price": 5.5}], source=retrieved_source(client))).json()
+    assert ok["source_status"]["label"] == "VERIFIED · DOCUMENT RETRIEVED"
 
 
 def test_expired_tariff_is_flagged(client):
-    t = client.post("/api/tariffs", json=tariff("Last year's order", [{"start": 0, "end": 24, "price": 5.5}], source=OFFICIAL)).json()
+    src = retrieved_source(client, effective_to="2026-03-31")
+    t = client.post("/api/tariffs", json=tariff("Last year's order", [{"start": 0, "end": 24, "price": 5.5}], source=src)).json()
     st = t["source_status"]
-    assert st["expired"] is True and st["label"] == "VERIFIED · EXPIRED" and any("expired" in w for w in st["warnings"])
+    assert st["expired"] is True and st["label"] == "VERIFIED · DOCUMENT RETRIEVED · EXPIRED" and any("expired" in w for w in st["warnings"])
     client.put("/api/household", json=household(tariff_id=t["id"]))
     warnings = client.get("/api/household").json()["readiness"]["warnings"]
     assert any("expired" in w for w in warnings)
@@ -180,7 +181,7 @@ def test_every_experiment_keeps_a_snapshot_of_its_input_sources(client):
     tariff_row = next(i for i in snap if i["input"] == "tariff")
     assert tariff_row["source"]["source_name"] == SRC["source_name"]
     # changing the tariff later does not change the stored snapshot
-    client.put("/api/tariffs/time-of-use", json=tariff("Time-of-use", [{"start": 0, "end": 24, "price": 9.0}], source=OFFICIAL))
+    client.put("/api/tariffs/time-of-use", json=tariff("Time-of-use", [{"start": 0, "end": 24, "price": 9.0}], source=retrieved_source(client)))
     again = client.get(f"/api/experiments/{d['id']}").json()["input_sources"]
     assert again == snap
 
@@ -223,7 +224,7 @@ def test_clear_configuration_keeps_a_restorable_backup(client):
 
 
 def test_tariff_fields_for_an_official_record_round_trip(client):
-    body = tariff("LT-1 Domestic", [{"label": "all", "start": 0, "end": 24, "price": 5.9}], source={**OFFICIAL, "effective_to": "2099-03-31"},
+    body = tariff("LT-1 Domestic", [{"label": "all", "start": 0, "end": 24, "price": 5.9}], source=retrieved_source(client, document=OFFICIAL["document"]),
                   utility="Example DISCOM", consumer_category="LT-1 Domestic", currency="INR", fixed_monthly_charge=110.0, tax_pct=9)
     t = client.post("/api/tariffs", json=body).json()
     assert (t["utility"], t["consumer_category"], t["currency"]) == ("Example DISCOM", "LT-1 Domestic", "INR")

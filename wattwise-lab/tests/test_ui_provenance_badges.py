@@ -9,7 +9,7 @@ import pytest
 pw = pytest.importorskip("playwright.sync_api")
 
 CASES = [
-    ("real_meter", "MEASURED · USER SUPPLIED", "prov-m", "2026-03-03"),
+    ("real_meter", "METER EXPORT · DECLARED BY YOU", "prov-m", "2026-03-03"),
     ("unknown", "UNVERIFIED SOURCE", "prov-u", "2026-03-17"),
 ]  # synthetic_demo can no longer be imported
 

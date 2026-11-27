@@ -90,8 +90,8 @@ def configure_household(page):
     page.wait_for_selector("#toast.ok")
     page.wait_for_selector("#ready .note.info")
     assert "Ready" in page.inner_text("#ready")
-
-
+    page.wait_for_selector("#audit .note.info")  # the data audit has nothing to report
+    assert "no findings" in page.inner_text("#audit")
 def test_fresh_installation_has_no_example_data(page):
     page.goto(page.base + "/")
     page.wait_for_selector("#day .empty")
@@ -226,6 +226,28 @@ def test_clear_and_restore_the_household(page):
     assert page.errors == [], page.errors
 
 
+def test_legacy_values_need_an_explicit_confirmation(page):
+    """A value saved before source tracking stays marked "to confirm" until the owner ticks that they checked it."""
+    fresh(page, "#/")
+    page.wait_for_selector("#kpis")
+    page.evaluate("""() => fetch('/api/household').then(r => r.json()).then(s => {
+        const a = s.settings.appliances.map((x) => ({...x, source: {...x.source, legacy: true}}));
+        return fetch('/api/household', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...s.settings, appliances: a})}); })""")
+    fresh(page, "#/household")
+    page.wait_for_selector("#audit details")
+    assert "TO CONFIRM" in page.inner_text("#audit")
+    page.click("#hsave")  # saving without ticking the box keeps the mark
+    page.wait_for_selector("#toast.ok")
+    hh = page.evaluate("fetch('/api/household').then(r => r.json())")
+    assert hh["settings"]["appliances"][0]["source"]["legacy"] is True
+    page.check("#asrc-0-ok")
+    page.click("#hsave")
+    page.wait_for_selector("#toast.ok")
+    hh = page.evaluate("fetch('/api/household').then(r => r.json())")
+    assert hh["settings"]["appliances"][0]["source"]["legacy"] is False
+    assert page.errors == [], page.errors
+
+
 def test_user_text_is_escaped_in_the_browser(page):
     fresh(page, "#/new")
     page.wait_for_selector("#f")
@@ -258,7 +280,7 @@ def test_my_usage_library_baseline_and_comparison(page):
     page.wait_for_selector("[data-open]")
     page.wait_for_selector("#u-base")
     assert "mean daily energy" in page.inner_text("#u-detail").lower()
-    assert "MEASURED · USER SUPPLIED" in page.inner_text("#u-detail h2")  # measured by the meter, supplied by the owner: not "verified"
+    assert "METER EXPORT · DECLARED BY YOU" in page.inner_text("#u-detail h2")  # measured by the meter, supplied by the owner: not "verified"
     page.click("#u-base")  # use as household baseline (stored on the server)
     page.wait_for_selector("text=Stop using as baseline")
     hh = page.evaluate("fetch('/api/household').then(r => r.json())")
@@ -345,14 +367,14 @@ def _import_with_label(page, value):
     return preview, detail
 
 
-@pytest.mark.parametrize("value,text,css", [("real_meter", "MEASURED · USER SUPPLIED", "prov-m"), ("unknown", "UNVERIFIED SOURCE", "prov-u")])
+@pytest.mark.parametrize("value,text,css", [("real_meter", "METER EXPORT · DECLARED BY YOU", "prov-m"), ("unknown", "UNVERIFIED SOURCE", "prov-u")])
 def test_provenance_badge_matches_label_on_preview_and_detail(page, value, text, css):
     """Exactly one badge per screen, with the label's text and class; only a real_meter file reads MEASURED."""
     preview, detail = _import_with_label(page, value)
     for chips in (preview, detail):
         assert len(chips) == 1, chips
         assert chips[0][0] == text and css in chips[0][1].split(), chips
-    if not text.startswith("MEASURED"):
+    if not text.startswith("METER EXPORT"):
         assert "MEASURED" not in page.inner_text("#u-detail h2")
     assert page.errors == [], page.errors
 
