@@ -95,3 +95,13 @@ def test_sign_off_passes_only_when_every_criterion_holds(client):
     assert audit["signoff"]["passed"] is True, audit["signoff"]
     from wattwise.audit import main
     assert main(["--db", str(client.app.state.lab.engine.url.database)]) == 0
+
+
+def test_an_unverified_tariff_never_satisfies_the_sign_off(client):
+    """A fictional or untraceable tariff can be used for a demo, but it can never count as the household's real tariff."""
+    loose = {"source_type": "unverified", "source_name": "demo pack (fictional)", "verification": "unverified"}
+    t = client.post("/api/tariffs", json=tariff("Fictional", [{"label": "all", "start": 0, "end": 24, "price": 3.0}], source=loose)).json()
+    client.put("/api/household", json=household(tariff_id=t["id"]))
+    crit = {c["criterion"]: c["passed"] for c in client.get("/api/audit").json()["signoff"]["criteria"]}
+    assert crit["the selected tariff is from your bill (user supplied) or a retrieved official document, and not expired"] is False
+    assert crit["no input is unverified or cites a document WATTWISE never retrieved"] is False

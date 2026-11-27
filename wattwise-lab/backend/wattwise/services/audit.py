@@ -86,10 +86,14 @@ def run(lab) -> dict[str, Any]:
     meters = [m for m in lab.meters.list() if m["source_label"] == "real_meter" and not (m.get("source_record") or {}).get("plausibility")]
     recs = [r for r in list_all(lab) if r["passed"] and r["tariff_id"] == s.get("tariff_id") and any(m["import_id"] == r["import_id"] for m in meters)]
     new_exps = [e for e in lab.list() if not e.get("legacy_inputs")]
+    sel = next((t for t in lab.tariffs.list() if t["id"] == s.get("tariff_id")), None)
+    sel_ok = bool(sel) and sel["source_status"]["verification"] in ("user_supplied", "verified") and not sel["source_status"]["expired"] and ready["ready"]
+    untraced = [f for f in findings if f["severity"] == "warning" and ("unverified" in f["message"] or "never retrieved" in f["message"])]
     signoff = [
         {"criterion": "no blocking findings (no example, synthetic or missing input)", "passed": counts["blocking"] == 0},
         {"criterion": "no unconfirmed values saved before source tracking", "passed": counts["confirm"] == 0},
-        {"criterion": "a real tariff is selected", "passed": bool(s.get("tariff_id")) and ready["ready"]},
+        {"criterion": "the selected tariff is from your bill (user supplied) or a retrieved official document, and not expired", "passed": sel_ok},
+        {"criterion": "no input is unverified or cites a document WATTWISE never retrieved", "passed": not untraced},
         {"criterion": "at least one meter export declared real, with no plausibility warning", "passed": bool(meters)},
         {"criterion": "a billing period reconciles with the real bill (selected tariff, that meter export)", "passed": bool(recs),
          "evidence": [r["reconciliation_id"] for r in recs]},
