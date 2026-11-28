@@ -34,7 +34,7 @@ def test_database_stopped_at_version_has_no_version_11_columns(tmp_path, version
 def fresh_schema(tmp_path):
     e = create_db_engine(tmp_path / "fresh.db")
     migrate(e)
-    assert current_version(e) == 13
+    assert current_version(e) == 15
     return _schema(e)
 def test_fresh_install_has_version_11_columns(fresh_schema):
     assert IMPORT_V11 <= {r[0] for r in fresh_schema["ww_meter_import"]}
@@ -45,7 +45,7 @@ def test_upgrade_adds_columns_keeps_rows_and_matches_fresh_schema(tmp_path, vers
     migrate(e, target=version)
     _seed(e)
     applied = migrate(e)
-    assert [m.version for m in applied] == list(range(version + 1, 14))  # through 13 (bill reconciliation)
+    assert [m.version for m in applied] == list(range(version + 1, 16))  # through 15 (f1 hist csv metadata)
     assert _schema(e) == fresh_schema
     with e.connect() as c:
         imp = c.execute(text("SELECT provenance, total_import_kwh, total_export_kwh FROM ww_meter_import")).one()

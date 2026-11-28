@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import threading
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -18,6 +20,8 @@ TERMINAL = ("COMPLETED", "FAILED", "CANCELLED")
 
 
 def dedupe_key(payload: dict) -> str:
+    if (payload.get("provider") or "openf1") == "csv_upload":  # one active import per staged file
+        return f"csv_upload|{str((payload.get('csv') or {}).get('file_hash') or '').lower()}"
     drivers = ",".join(sorted({d.strip().upper() for d in payload.get("drivers") or []})) or "*"
     flags = "".join("1" if payload.get(k, True) else "0" for k in ("include_telemetry", "include_position", "include_weather"))
     prefix = f"{payload.get('provider') or 'openf1'}|"
@@ -27,6 +31,11 @@ def dedupe_key(payload: dict) -> str:
     return f"{prefix}{int(payload['year'])}|{str(payload['event']).strip().lower()}|{str(payload['session']).strip().upper()}|{drivers}|{flags}"
 
 
+_ROWS_RE = re.compile(r"\((\d+)/(\d+) rows\)")
+def parse_row_progress(detail: str | None) -> tuple[int, int] | None:
+    """(processed, total) from a CSV progress detail such as ``35% (1400/4000 rows)``; None for any other detail."""
+    m = _ROWS_RE.search(detail or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
 def _now() -> datetime:
     return datetime.now(UTC)
 
@@ -42,10 +51,12 @@ def _iso(v: datetime | None) -> str | None:
 class ImportJobStore:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
-
-    @staticmethod
-    def _view(j: ImportJob) -> dict[str, Any]:
-        return {"import_id": j.import_id, "state": j.state, "detail": j.detail, "error": j.error, "error_code": j.error_code,
+        self._rows: dict[str, tuple[int, int]] = {}  # import_id -> (processed_rows, total_rows); only CSV imports report rows
+        self._rows_lock = threading.Lock()
+    def _view(self, j: ImportJob) -> dict[str, Any]:
+        with self._rows_lock:
+            processed, total = self._rows.get(j.import_id, (0, 0))  # 0/0 when unknown (OpenF1 jobs, queued jobs)
+        return {"processed_rows": processed, "total_rows": total, "import_id": j.import_id, "state": j.state, "detail": j.detail, "error": j.error, "error_code": j.error_code,
                 "session_id": j.session_id, "attempts": j.attempts, "retry_of": j.retry_of, "cancel_requested": bool(j.cancel_requested),
                 "created_at": _iso(j.created_at), "updated_at": _iso(j.updated_at), "finished_at": _iso(j.finished_at),
                 "request": json.loads(j.request_json)}  # fmt: skip
@@ -81,16 +92,27 @@ class ImportJobStore:
             return self._view(j) if j else None
 
     def update(self, import_id: str, **values: Any) -> None:
+        """Update a job. A state change is applied only while the job is active: a COMPLETED, FAILED or CANCELLED job
+        never changes state again (Req 9.3)."""
         values["updated_at"] = _now()
         if values.get("state") in TERMINAL:
             values.setdefault("finished_at", _now())
+        cond = [ImportJob.import_id == import_id]
+        if "state" in values:
+            cond.append(ImportJob.state.in_(ACTIVE))
         with immediate_transaction(self.engine) as c:
-            c.execute(update(ImportJob).where(ImportJob.import_id == import_id).values(**values))
+            c.execute(update(ImportJob).where(*cond).values(**values))
 
     def progress(self, import_id: str, state: str, detail: str) -> None:
-        """Progress update that never overwrites a terminal state (e.g. a cancel that already finished the job)."""
+        rows = parse_row_progress(detail)
+        if rows is not None:
+            with self._rows_lock:
+                self._rows[import_id] = rows
+        """Progress update that never overwrites a terminal state (e.g. a cancel that already finished the job) and never
+        moves an active job backwards (QUEUED -> PROCESSING -> SAVING only, Req 9.3)."""
+        allowed = [s for s in ACTIVE if ACTIVE.index(s) <= ACTIVE.index(state)] if state in ACTIVE else []
         with immediate_transaction(self.engine) as c:
-            c.execute(update(ImportJob).where(ImportJob.import_id == import_id, ImportJob.state.in_(ACTIVE))
+            c.execute(update(ImportJob).where(ImportJob.import_id == import_id, ImportJob.state.in_(allowed))
                       .values(state=state, detail=detail, updated_at=_now()))
 
     def cancel_requested(self, import_id: str) -> bool:
@@ -104,5 +126,12 @@ class ImportJobStore:
         """Called at startup: jobs that were running when the process stopped can never finish."""
         with immediate_transaction(self.engine) as c:
             return c.execute(update(ImportJob).where(ImportJob.state.in_(ACTIVE)).values(
-                state="FAILED", error_code="INTERRUPTED", error="the application stopped while this import was running; nothing was stored. Retry it.",
-                detail="interrupted by a restart", updated_at=_now(), finished_at=_now())).rowcount
+                state="FAILED", error_code="INTERRUPTED",
+                error="interrupted: the application stopped while this import was running; nothing was stored. Retry it.",
+                detail="interrupted", updated_at=_now(), finished_at=_now())).rowcount
+
+    def running(self) -> list[dict]:
+        """Jobs in PROCESSING or SAVING (their target session must not be deleted, Req 10.10)."""
+        with Session(self.engine) as s:
+            rows = s.scalars(select(ImportJob).where(ImportJob.state.in_(("PROCESSING", "SAVING")))).all()
+            return [self._view(j) for j in rows]

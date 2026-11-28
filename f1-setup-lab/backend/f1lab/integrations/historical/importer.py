@@ -23,14 +23,23 @@ NETWORK_ERROR = "NETWORK_ERROR"
 CANCELLED = "CANCELLED"
 INTERRUPTED = "INTERRUPTED"
 INTERNAL = "INTERNAL"
+# CSV Upload provider error codes
+INVALID_CSV_STRUCTURE = "INVALID_CSV_STRUCTURE"
+ROW_VALIDATION_FAILED = "ROW_VALIDATION_FAILED"
+UPLOAD_NOT_FOUND = "UPLOAD_NOT_FOUND"
+DUPLICATE_SESSION = "DUPLICATE_SESSION"
+DUPLICATE_KEY_CONFLICT = "DUPLICATE_KEY_CONFLICT"
+UNIT_NOT_SUPPORTED = "UNIT_NOT_SUPPORTED"
+METADATA_INVALID = "METADATA_INVALID"
 
 
 class HistoricalImportError(ValueError):
     """An import failure with a stable ``code`` (see the constants above)."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, details: dict | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.details = details or {}
 
 
 class ImportCancelled(Exception):

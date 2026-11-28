@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import hashlib
 import io
 import uuid
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import text
 from trialforge import (
     AdapterRegistry,
     Constraint,
@@ -23,6 +25,7 @@ from trialforge import (
     ExperimentStatus,
     Factor,
     LocalBackgroundRunner,
+    Measurement,
     MeasurementDefinition,
     MeasurementEngine,
     Objective,
@@ -35,14 +38,15 @@ from db.models.common import APP_F1
 from db.scoped import ScopedExperimentRepository
 from f1lab import LABEL_IMPORTED, LABEL_MIXED, LABEL_SYNTHETIC, notice_for, provenance_notice
 from f1lab.adapters.sim_adapter import F1SimulatorAdapter
-from f1lab.adapters.telemetry import parse_telemetry_csv, to_measurements
+from f1lab.adapters.telemetry import _CANON, EXTRA, SECTORS, UNAVAILABLE_TIMESTAMP, parse_telemetry_csv, to_measurements
 from f1lab.adapters.vehicle_model import BASELINE, FACTORS, METRIC_UNITS
 from f1lab.api.schemas import ExperimentRequest
+from f1lab.integrations.historical.providers import PROVENANCE_DEMO, PROVENANCE_USER
 from f1lab.services import narrative, report_html
 
 ADAPTER_PREFIX = "f1-sim/"
 GENERATORS = {4: ["D=ABC"], 3: ["C=AB"]}  # half fractions of the enabled factors (resolution IV and III)
-NOTABLE = {"unit_converted": "unit converted", "statistical_outlier": "outlier", "sensor_warning": "sensor warning", "import_time_assumed": "time = import time"}
+NOTABLE = {"unit_converted": "unit converted", "statistical_outlier": "outlier", "sensor_warning": "sensor warning", "timestamp_unavailable": "no timestamp"}
 
 
 def mode_of(spec: ExperimentSpec) -> str:
@@ -67,6 +71,46 @@ class NotFound(KeyError):
 
 class Conflict(RuntimeError):
     pass
+
+
+class MissingSourceField(ValueError):
+    """A measurement cannot be created because a source-file fact is unavailable (Req 13.8). ``field`` names it."""
+
+    def __init__(self, field: str) -> None:
+        super().__init__(f"cannot create measurements: {field} is unavailable")
+        self.field = field
+
+
+class SetupLinkError(ValueError):
+    """A Setup_Link submission was rejected before anything was written. ``missing`` names factors without a value or statement."""
+
+    def __init__(self, message: str, missing: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.missing = missing or []
+
+
+SETUP_LINK_MAX_LAPS, SETUP_LINK_MAX_METRICS = 100, 50
+SETUP_LINK_LAP_METRICS = {"lap_time": "lap_time_s", "sector_1": "sector_1_s", "sector_2": "sector_2_s", "sector_3": "sector_3_s"}
+SETUP_LINK_METRICS = (*SETUP_LINK_LAP_METRICS, "top_speed")
+UNVERIFIED_FLAG = "unverified_setup"
+
+
+def source_facts(csv_text: str, time_unit: str, filename: str | None) -> dict[str, Any]:
+    """Original filename, file hash, Column_Mapping and units of a CSV (Req 13.7). Unavailable values are None/empty."""
+    header = next(csv.reader(io.StringIO(csv_text.lstrip("\ufeff"))), [])
+    names = {h.strip().lower(): h.strip() for h in header if h and h.strip()}
+    mapping = {k: names[k] for k in (*_CANON, "timestamp", *EXTRA) if k in names}
+    return {
+        "original_filename": (filename or "").strip() or None,
+        "file_hash": hashlib.sha256(csv_text.encode()).hexdigest() if csv_text else None,
+        "column_mapping": mapping, "units": {"time": "ms" if time_unit == "ms" else "seconds"} if time_unit else {},
+    }
+
+
+def require_source_facts(facts: dict[str, Any]) -> None:
+    for name in ("original_filename", "file_hash", "column_mapping", "units"):
+        if not facts.get(name):
+            raise MissingSourceField(name)
 
 
 def measurement_definitions() -> list[MeasurementDefinition]:
@@ -200,6 +244,8 @@ class LabService:
             "point_kind": r.metadata.get("point_kind") or ("center" if r.metadata.get("center_point") else None),
             "iteration": r.metadata.get("sequential_iteration"), "imported": imported,
             "source_label": LABEL_IMPORTED if imported else LABEL_SYNTHETIC,
+            "lap_count": len({m.metadata["lap"] for m in r.measurements if "lap" in m.metadata}),
+            "sector_count": sum(1 for m in r.measurements if m.metric in SECTORS),
             "quality_warnings": r.metadata.get("quality_warnings", [])[:5],
         }  # fmt: skip
 
@@ -317,20 +363,20 @@ class LabService:
         return {"retried": len(failed)}
 
     # ------------------------------------------------------------------ telemetry
-    def telemetry_preview(self, csv_text: str, time_unit: str = "s") -> dict:
+    def telemetry_preview(self, csv_text: str, time_unit: str = "s", provenance_status: str = PROVENANCE_USER) -> dict:
         """Parse a CSV and use the SDK's MeasurementEngine to convert units and flag outlier laps (nothing is deleted)."""
         parsed = parse_telemetry_csv(csv_text, time_unit)
         out: dict[str, Any] = {"errors": parsed.errors, "laps": [], "summary": None, "time_unit": time_unit}
         if not parsed.laps:
             return out
-        ms = to_measurements("preview", parsed, "preview")
+        ms = to_measurements("preview", parsed, "preview", provenance_status)
         eng = MeasurementEngine(measurement_definitions())
         _, assessed, warnings = eng.assess(ms, "preview")
         by_lap: dict[int, dict] = {}
         for m in assessed:
             lap = by_lap.setdefault(m.metadata["lap"], {"lap": m.metadata["lap"], "flags": {}})
             lap[m.metric] = round(float(m.value), 4)
-            notable = [NOTABLE.get(f, f) for f in m.quality_flags if f not in ("run_id_bound", "timestamp_assumed_utc", "import_time_assumed")]
+            notable = [NOTABLE.get(f, f) for f in m.quality_flags if f not in ("run_id_bound", "timestamp_assumed_utc", "timestamp_unavailable")]
             if notable:
                 lap["flags"][m.metric] = notable
         laps = [by_lap[k] for k in sorted(by_lap)]
@@ -346,7 +392,19 @@ class LabService:
         })  # fmt: skip
         return out
 
-    async def attach_telemetry(self, exp_id: str, run_id: str, csv_text: str, time_unit: str, filename: str) -> dict:
+    def import_session(self, csv_text: str, time_unit: str, filename: str, provenance_status: str = PROVENANCE_USER) -> dict:
+        """Session import: parse and validate a CSV and describe the session. Creates no experiment attachment (Req 14.5)."""
+        parsed = parse_telemetry_csv(csv_text, time_unit)
+        if not parsed.laps:
+            raise ValueError("; ".join(parsed.errors) or "no usable laps in the file")
+        facts = source_facts(csv_text, time_unit, filename)
+        require_source_facts(facts)
+        return {**facts, "provenance_status": provenance_status, "synthetic": provenance_status == PROVENANCE_DEMO,
+                "lap_count": len(parsed.laps), "sector_count": len(parsed.laps) * len(SECTORS), "row_errors": parsed.errors}
+
+    async def attach_telemetry(self, exp_id: str, run_id: str, csv_text: str, time_unit: str, filename: str,
+                               provenance_status: str = PROVENANCE_USER) -> dict:
+        """Explicit attach of a CSV's laps and sectors to one run. Nothing is stored unless every source fact is available (Req 13.8)."""
         res = self._result(exp_id)
         run = next((r for r in res.runs if r.run_id == run_id), None)
         if run is None:
@@ -354,8 +412,14 @@ class LabService:
         parsed = parse_telemetry_csv(csv_text, time_unit)
         if not parsed.laps:
             raise ValueError("; ".join(parsed.errors) or "no usable laps in the file")
-        updated = await self.svc.ingest_measurements(exp_id, run_id, to_measurements(run_id, parsed, f"csv:{filename}"))
-        return {"run": self._run_row(updated), "row_errors": parsed.errors}
+        facts = source_facts(csv_text, time_unit, filename)
+        require_source_facts(facts)
+        ms = to_measurements(run_id, parsed, f"csv:{filename}", provenance_status)
+        for m in ms:
+            m.metadata.update(facts)
+        updated = await self.svc.ingest_measurements(exp_id, run_id, ms)
+        return {"run": self._run_row(updated), "row_errors": parsed.errors,
+                "lap_count": len(parsed.laps), "sector_count": len(parsed.laps) * len(SECTORS)}
 
     def telemetry(self, exp_id: str) -> list[dict]:
         """Per-run laps/sectors from stored measurements, with the SDK's quality flags."""
@@ -369,7 +433,7 @@ class LabService:
                     continue
                 lap = laps.setdefault(m.metadata["lap"], {"lap": m.metadata["lap"], "flags": {}})
                 lap[m.metric] = round(float(m.value), 4) if isinstance(m.value, (int, float)) else m.value
-                notable = [NOTABLE.get(f, f) for f in m.quality_flags if f not in ("run_id_bound", "timestamp_assumed_utc", "import_time_assumed")]
+                notable = [NOTABLE.get(f, f) for f in m.quality_flags if f not in ("run_id_bound", "timestamp_assumed_utc", "timestamp_unavailable")]
                 if notable:
                     lap["flags"][m.metric] = notable
             rows = [laps[k] for k in sorted(laps)]
@@ -487,6 +551,171 @@ class LabService:
     def csv_notice(self, exp_id: str) -> str:
         """The data-source notice for a CSV download (sent as a response header, so the CSV itself stays machine-readable)."""
         return provenance_notice(self._provenance(self._result(exp_id)))
+
+    # ------------------------------------------------------------------ Setup_Link (imported session -> experiment)
+    @staticmethod
+    def _finite(v: Any) -> float | None:
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if f == f and f not in (float("inf"), float("-inf")) else None
+
+    def session_lap_values(self, hist, session_id: str, driver: str) -> dict[str, dict[int, float]]:
+        """``{metric: {lap_number: value}}`` the session holds for one driver. Metrics without any value are absent."""
+        out: dict[str, dict[int, float]] = {}
+        for rec in hist.laps(session_id, driver):
+            lap = rec.get("lap_number")
+            if lap is None or self._finite(lap) is None:
+                continue
+            for metric, col in SETUP_LINK_LAP_METRICS.items():
+                v = self._finite(rec.get(col))
+                if v is not None and v > 0:
+                    out.setdefault(metric, {})[int(lap)] = v
+        tel = hist.repo.telemetry(session_id, hist._driver_code(session_id, driver))
+        if not tel.empty and {"lap_number", "speed_kph"} <= set(tel.columns):
+            top = tel.dropna(subset=["lap_number", "speed_kph"]).groupby("lap_number")["speed_kph"].max()
+            for lap, v in top.items():
+                if self._finite(v) is not None and v >= 0:
+                    out.setdefault("top_speed", {})[int(lap)] = float(v)
+        return out
+
+    def setup_link_options(self, hist, session_id: str, driver: str, laps: list[int] | None = None) -> dict:
+        """Metrics the Setup_Link can offer: ``available`` False (not selectable) when the session has no value for the driver and laps."""
+        values = self.session_lap_values(hist, session_id, driver)
+        wanted = set(laps) if laps else None
+        metrics = [{"metric": m, "unit": METRIC_UNITS[m],
+                    "available": any(wanted is None or lap in wanted for lap in values.get(m, {}))} for m in SETUP_LINK_METRICS]
+        return {"driver": driver, "laps": sorted({lap for v in values.values() for lap in v}), "metrics": metrics}
+
+    @staticmethod
+    def _check_mapping(spec: ExperimentSpec, mapping: Any) -> tuple[dict[str, Any], bool]:
+        """Validate the Setup_Configuration against the experiment's factors. Returns (configuration, verified)."""
+        names = [f.name for f in spec.factors]
+        mapping = mapping if isinstance(mapping, dict) else {}
+        missing, config, verified = [], {}, True
+        for f in spec.factors:
+            entry = mapping.get(f.name)
+            entry = entry if isinstance(entry, dict) else {}
+            value, flag = entry.get("value"), entry.get("verified")
+            if value is None or (isinstance(value, str) and not value.strip()) or not isinstance(flag, bool):
+                missing.append(f.name)
+                continue
+            if f.factor_type == "continuous":
+                try:
+                    value = float(value)
+                except (TypeError, ValueError):
+                    raise SetupLinkError(f"factor '{f.name}' needs a numeric value, got {value!r}") from None
+            config[f.name] = value
+            verified = verified and flag
+        if missing:
+            raise SetupLinkError("the Setup_Configuration is unknown or incomplete; missing a value or a verified/unverified statement for factor(s): "
+                                 + ", ".join(missing), missing)
+        unknown = sorted(set(mapping) - set(names))
+        if unknown:
+            raise SetupLinkError(f"unknown factor(s) for this experiment: {', '.join(unknown)}")
+        return config, verified
+
+    def _purge_run(self, exp_id: str, run_id: str, plan, status) -> None:
+        """Remove everything one failed Setup_Link import wrote (run, measurements, queue rows) and restore the plan and status."""
+        engine = self.repo.db_engine
+        with engine.begin() as c:
+            for table in ("measurements", "processed_measurements", "jobs", "state_log", "runs"):
+                c.execute(text(f"DELETE FROM {table} WHERE run_id = :r"), {"r": run_id})
+        self.repo.save_plan(plan)
+        self.repo.set_status(exp_id, status, "setup link rolled back")
+
+    async def setup_link(self, hist, session_id: str, req: dict) -> dict:
+        """Send selected imported measurements to a TRIALFORGE experiment (Req 15.2-15.8, 15.10).
+
+        ``req``: ``driver``, ``laps`` (1-100), ``metrics`` (1-50), ``experiment_id`` or ``new_experiment`` (an ExperimentRequest body),
+        and ``factors`` = ``{factor: {"value": v, "verified": bool}}``. Everything is validated before anything is written.
+        One run is added to the experiment holding one measurement per selected lap and metric, each with the session's
+        Provenance_Status and ``source_session_id``. An unverified mapping flags them ``unverified_setup`` (excluded from analysis and training).
+        Any failure after validation removes the run and its measurements again."""
+        driver = str(req.get("driver") or "").strip()
+        laps_in, metrics_in = req.get("laps"), req.get("metrics")
+        if not driver or not isinstance(req.get("driver"), str):
+            raise SetupLinkError("select exactly one driver")
+        if not isinstance(laps_in, list) or not 1 <= len(set(laps_in)) <= SETUP_LINK_MAX_LAPS:
+            raise SetupLinkError(f"select between 1 and {SETUP_LINK_MAX_LAPS} laps")
+        if not isinstance(metrics_in, list) or not 1 <= len(set(metrics_in)) <= SETUP_LINK_MAX_METRICS:
+            raise SetupLinkError(f"select between 1 and {SETUP_LINK_MAX_METRICS} metrics")
+        if not all(isinstance(x, int) and not isinstance(x, bool) for x in laps_in):
+            raise SetupLinkError("laps must be whole lap numbers")
+        laps, metrics = sorted(set(laps_in)), list(dict.fromkeys(metrics_in))
+        exp_id, new = req.get("experiment_id"), req.get("new_experiment")
+        if bool(exp_id) == bool(new):
+            raise SetupLinkError("select exactly one target experiment: an existing experiment_id or a new_experiment")
+        session = hist.get_session(session_id)
+        values = self.session_lap_values(hist, session_id, driver)
+        absent = [lap for lap in laps if not any(lap in v for v in values.values())]
+        if absent:
+            raise SetupLinkError(f"laps not found for driver {driver} in this session: {', '.join(map(str, absent))}")
+        unavailable = [m for m in metrics if m not in SETUP_LINK_METRICS or not any(lap in values.get(m, {}) for lap in laps)]
+        if unavailable:
+            raise SetupLinkError(f"metric(s) unavailable for driver {driver} and the selected laps: {', '.join(map(str, unavailable))}")
+        if exp_id:
+            spec = self._result(exp_id).spec if exp_id in self.repo.list_ids() else None
+            if spec is None:
+                raise NotFound(exp_id)
+        else:
+            spec = self.build_spec(ExperimentRequest(**new), new.get("experiment_id") or "f1-" + uuid.uuid4().hex[:8])
+        config, verified = self._check_mapping(spec, req.get("factors"))
+        if not exp_id:
+            exp_id = self.create(ExperimentRequest(**new))["id"]
+            spec = self._result(exp_id).spec
+        status_before, plan_before = self.repo.get_status(exp_id), self.repo.get_plan(exp_id).model_copy(deep=True)
+        provenance = session.get("provenance_status")
+        synthetic = bool(session.get("synthetic")) or provenance == PROVENANCE_DEMO
+        flags = [] if verified else [UNVERIFIED_FLAG]
+        run = None
+        try:
+            run = self.svc.add_runs(exp_id, [config], iteration=len(plan_before.design_info.get("sequential_extensions", [])) + 1,
+                                    source="setup_link")[0]
+            ms = []
+            for lap in laps:
+                for metric in metrics:
+                    if lap not in values.get(metric, {}):
+                        continue
+                    meta = {"synthetic": synthetic, "imported": not synthetic, "provenance_status": provenance, "lap": lap,
+                            "source_session_id": session_id, "driver": driver, "setup_verified": verified, "timestamp_unavailable": True}
+                    ms.append(Measurement(run_id=run.run_id, metric=metric, value=values[metric][lap], unit=METRIC_UNITS[metric],
+                                          timestamp=UNAVAILABLE_TIMESTAMP, source=f"setup_link:{session_id}", metadata=meta, channel=f"lap_{lap}",
+                                          quality_flags=[*flags, "timestamp_unavailable"]))
+            strict, self.svc.strict_required_metrics = self.svc.strict_required_metrics, False  # the user chooses which metrics to send
+            try:
+                done = await self.svc.ingest_measurements(exp_id, run.run_id, ms)
+            finally:
+                self.svc.strict_required_metrics = strict
+            if not verified and done.status == RunStatus.FAILED:  # every measurement is excluded, so the SDK has no valid data to complete the run
+                done.error = "setup mapping is unverified: measurements are kept but excluded from analysis and training"
+                self.repo.save_run(done)
+            stored = self.repo.get_run(run.run_id)
+            if len(stored.measurements) != len(ms):
+                raise RuntimeError("stored measurement count differs from the import")
+        except Exception:
+            if run is not None:
+                self._purge_run(exp_id, run.run_id, plan_before, status_before)
+            raise
+        return {"experiment_id": exp_id, "run_id": run.run_id, "measurements_created": len(ms), "verified": verified,
+                "excluded_from_training": not verified, "provenance_status": provenance, "source_session_id": session_id}
+
+    def linked_experiments(self, session_id: str) -> list[dict]:
+        """Experiments holding measurements imported from ``session_id`` (installed as the historical service's link lookup)."""
+        import json
+
+        with self.repo.db_engine.connect() as c:
+            rows = c.execute(text("SELECT DISTINCT experiment_id, payload_json FROM measurements WHERE payload_json LIKE :p"),
+                             {"p": f"%{session_id}%"}).all()
+        ids = sorted({r[0] for r in rows if json.loads(r[1]).get("metadata", {}).get("source_session_id") == session_id})
+        out = []
+        for i in ids:
+            try:
+                out.append({"experiment_id": i, "name": self.repo.get_spec(i).name})
+            except KeyError:
+                continue
+        return out
 
     def delete_supported(self) -> bool:
         return False

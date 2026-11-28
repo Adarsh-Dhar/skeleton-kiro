@@ -6,7 +6,11 @@ Historical sessions and import jobs live in the root database (``f1_hist_*``, ``
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import os
+import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -15,10 +19,12 @@ import pandas as pd
 from sqlalchemy import Engine
 
 from f1lab.errors import Conflict, NotFound
-from f1lab.integrations.historical import analysis, openf1_importer, openf1_normalizer
+from f1lab.integrations.historical import analysis, csv_importer, csv_normalizer, openf1_importer, openf1_normalizer
 from f1lab.integrations.historical.importer import (
     CANCELLED,
+    DUPLICATE_KEY_CONFLICT,
     NETWORK_TIMEOUT,
+    HistoricalImportError,
     ImportCancelled,
     _session_code,
     classify,
@@ -26,7 +32,7 @@ from f1lab.integrations.historical.importer import (
 from f1lab.integrations.historical.jobs import ACTIVE, ImportJobStore, dedupe_key
 from f1lab.integrations.historical.openf1_client import OpenF1Client
 from f1lab.integrations.historical.openf1_client import cache_stats as openf1_cache_stats
-from f1lab.integrations.historical.openf1_importer import import_session_openf1
+from f1lab.integrations.historical.providers import PROVIDERS, describe_session
 from f1lab.integrations.historical.repository import HistoricalRepository
 from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest, SeasonCompareRequest
 
@@ -47,6 +53,10 @@ EXPORT_HEADERS = {  # used only when a table is empty, so the CSV still has a he
                          "slope_s_per_lap", "r_squared", "reason"),
     "mini_sectors": ("index", "start_frac", "end_frac", "time_s", "ref_time_s", "delta_s", "cum_delta_s"),
 }
+UPLOAD_CHUNK_BYTES = 1 << 20  # staging reads the upload in 1 MiB pieces
+CSV_VALIDATE_ROW_CAP = 100_000  # preview/validate check at most this many rows of a sampled file
+REPLACE_DECISION_TIMEOUT_S = 300.0  # a paused duplicate-key import is discarded after 5 minutes without a choice (Req 10.4)
+REPLACE_OPTIONS = ("replace", "cancel")
 POSITION_CHANNELS = ("distance_m", "session_time_s", "x_m", "y_m", "z_m", "speed_kph")
 
 
@@ -68,13 +78,24 @@ def _records(df: pd.DataFrame, limit: int | None = None, channels: tuple[str, ..
     return HistoricalRepository.records(df)
 
 
+class StorageError(RuntimeError):
+    """A storage operation (session deletion) failed and was rolled back; the message is shown to the user (HTTP 500)."""
+
+
 class HistoricalService:
-    """``engine`` is the root database; ``cache_dir`` holds the cached OpenF1 answers (reused by every import)."""
+    """``engine`` is the root database; ``cache_dir`` holds the cached OpenF1 answers (reused by every import).
+
+    Setup_Link hook (Task 6.3): ``experiment_link_lookup`` is an optional callable ``(session_id) -> list[dict]`` returning
+    one entry per TRIALFORGE experiment that holds measurements imported from that session. Each entry needs
+    ``experiment_id`` and may carry ``name``. It is read by ``delete_session`` only, to warn and require confirmation. Task 6.3
+    installs it with ``set_experiment_link_lookup``; until then no session is considered linked. Deleting a session never
+    touches experiments: measurements and their provenance live in the Setup tables, with no foreign key to ``f1_hist_*``."""
 
     def __init__(self, engine: Engine, cache_dir: str | Path, openf1_client_factory: Callable[[], Any] | None = None,
                  job_timeout_s: float = 1800.0) -> None:
         self.repo = HistoricalRepository(engine)
         self.openf1_cache_dir = Path(cache_dir)
+        self.upload_dir = self.openf1_cache_dir.parent / "csv-uploads"  # staged CSV uploads, content-addressed
         self.jobs = ImportJobStore(engine)
         self._openf1: OpenF1Client | None = None
         self._openf1_factory = openf1_client_factory
@@ -82,10 +103,20 @@ class HistoricalService:
         self._tasks: dict[str, asyncio.Task] = {}
         self._gate = asyncio.Semaphore(1)  # one import at a time: they share OpenF1's request budget
         self.job_timeout_s = job_timeout_s
+        self.replace_timeout_s = REPLACE_DECISION_TIMEOUT_S
+        self._pending: dict[str, dict] = {}  # import_id -> paused duplicate-key decision (in memory: a restart fails such jobs)
+        self.experiment_link_lookup: Callable[[str], list[dict]] | None = None
+
+    def set_experiment_link_lookup(self, lookup: Callable[[str], list[dict]] | None) -> None:
+        """Install the Setup_Link lookup described in the class docstring (None removes it)."""
+        self.experiment_link_lookup = lookup
 
     def recover(self) -> int:
-        """Mark imports interrupted by a previous shutdown/crash as FAILED (code INTERRUPTED). Returns how many."""
-        return self.jobs.mark_interrupted()
+        """Startup recovery: QUEUED, PROCESSING and SAVING jobs become FAILED with reason ``interrupted`` and any session
+        left in a non-complete status is removed, so no partial session is ever exposed (Req 8.6, 8.7). Returns the job count."""
+        n = self.jobs.mark_interrupted()
+        self.repo.purge_incomplete()
+        return n
 
     async def shutdown(self) -> None:
         for jid, task in list(self._tasks.items()):
@@ -130,7 +161,7 @@ class HistoricalService:
         active = self.jobs.find_active(key)
         if active is not None:
             return {**active, "duplicate": True}
-        if not force:
+        if not force and payload.get("provider") != "csv_upload":  # a repeated CSV import is judged by the importer (Req 10.1-10.3)
             done = self.jobs.find_completed(key)
             if done is not None and done.get("session_id") and self.repo.exists(done["session_id"]):
                 return {**done, "duplicate": True}
@@ -144,13 +175,47 @@ class HistoricalService:
         task.add_done_callback(lambda _t, i=import_id: self._tasks.pop(i, None))
 
     async def _run_import(self, import_id: str, payload: dict, force: bool) -> None:
+        """Run a job. A CSV import whose Session_Metadata key matches a stored session pauses OUTSIDE the import gate until the
+        user chooses ``replace`` or ``cancel``; no choice within ``replace_timeout_s`` discards the import (Req 10.3-10.6)."""
+        conflict = await self._run_import_once(import_id, payload, force, replacing=False)
+        if conflict is None:
+            return
+        jobs = self.jobs
+        existing = conflict.details.get("session_id")
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+        expires = datetime.now(UTC) + timedelta(seconds=self.replace_timeout_s)
+        self._pending[import_id] = {"future": fut, "loop": loop, "existing_session_id": existing, "expires_at": expires,
+                                    "options": list(REPLACE_OPTIONS)}
+        jobs.progress(import_id, "PROCESSING", f"paused: session {existing} has the same provider, event, session type, driver and year; "
+                                               "replace it or cancel (no answer within 5 minutes cancels this import)")
+        try:
+            choice = await asyncio.wait_for(fut, timeout=self.replace_timeout_s)
+        except TimeoutError:
+            choice = "expired"
+        except asyncio.CancelledError:
+            jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="the application shut down", detail="cancelled")
+            raise
+        finally:
+            self._pending.pop(import_id, None)
+        if choice != "replace":
+            why = ("replacement was not confirmed within 5 minutes" if choice == "expired" else "cancelled by the user")
+            jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error=f"{why}; the existing session was left unchanged",
+                        detail="cancelled")
+            return
+        replaced = {**payload, "csv": {**(payload.get("csv") or {}), "replace_existing": True}}
+        jobs.progress(import_id, "PROCESSING", f"replacing session {existing}")
+        await self._run_import_once(import_id, replaced, force, replacing=True)
+
+    async def _run_import_once(self, import_id: str, payload: dict, force: bool, replacing: bool) -> HistoricalImportError | None:
+        """One attempt. Returns the duplicate-key conflict when the job must pause for a decision, otherwise None."""
         jobs = self.jobs
         if self._gate.locked():
             jobs.progress(import_id, "QUEUED", "waiting for another import to finish")
         async with self._gate:
             if jobs.cancel_requested(import_id):
                 jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="cancelled before it started", detail="cancelled")
-                return
+                return None
             timed_out = False
 
             def progress(state: str, detail: str) -> None:
@@ -160,7 +225,8 @@ class HistoricalService:
                 return timed_out or jobs.cancel_requested(import_id)
 
             before = openf1_cache_stats(self.openf1_cache_dir)
-            work = asyncio.to_thread(import_session_openf1, self.openf1, self.repo, payload, progress, should_cancel=should_cancel, force=force)
+            work = asyncio.to_thread(PROVIDERS[payload.get("provider") or "openf1"].run, self.repo, payload, progress, should_cancel,
+                                    client=self.openf1, force=force, upload_dir=self.upload_dir)
             try:
                 manifest = await asyncio.wait_for(asyncio.shield(work), timeout=self.job_timeout_s)
             except TimeoutError:
@@ -168,16 +234,22 @@ class HistoricalService:
                 jobs.update(import_id, state="FAILED", error_code=NETWORK_TIMEOUT,
                             error=f"the import did not finish within {int(self.job_timeout_s)} s; nothing was stored. Retry it.",
                             detail="timed out")
-                return
+                return None
             except asyncio.CancelledError:
                 jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="the application shut down", detail="cancelled")
                 raise
             except ImportCancelled:
                 jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="cancelled by the user; nothing was stored", detail="cancelled")
-                return
+                return None
             except Exception as exc:  # network errors, missing data, bad driver codes
-                jobs.update(import_id, state="FAILED", error_code=classify(exc), error=str(exc) or type(exc).__name__, detail="failed")
-                return
+                if (not replacing and isinstance(exc, HistoricalImportError) and exc.code == DUPLICATE_KEY_CONFLICT
+                        and payload.get("provider") == "csv_upload"):
+                    return exc
+                msg = str(exc) or type(exc).__name__
+                if replacing:  # the one-transaction replacement rolled back: the stored session is intact (Req 10.6)
+                    msg = f"replacement failed; the existing session was kept unchanged: {msg}"
+                jobs.update(import_id, state="FAILED", error_code=classify(exc), error=msg[:500], detail="failed")
+                return None
             after = openf1_cache_stats(self.openf1_cache_dir)
             if manifest.get("reused"):
                 note = "already stored; reused without downloading"
@@ -188,22 +260,56 @@ class HistoricalService:
             if manifest.get("warnings"):
                 note += "; warnings: " + "; ".join(manifest["warnings"][:5])
             jobs.update(import_id, state="COMPLETED", detail=note, session_id=manifest["session_id"], error=None, error_code=None)
+            return None
+
+    def _with_decision(self, job: dict) -> dict:
+        """Add ``awaiting_decision`` (existing session, options, expiry) to a job paused on a duplicate-key conflict."""
+        p = self._pending.get(job["import_id"])
+        if p is None or job["state"] not in ACTIVE:
+            return job
+        return {**job, "awaiting_decision": {"existing_session_id": p["existing_session_id"], "options": p["options"],
+                                             "expires_at": p["expires_at"].isoformat()}}
 
     def import_status(self, import_id: str) -> dict:
         job = self.jobs.get(import_id)
         if job is None:
             raise NotFound(import_id)
-        return job
+        return self._with_decision(job)
 
     def list_imports(self, limit: int = 50) -> list[dict]:
-        return self.jobs.list(limit)
+        return [self._with_decision(j) for j in self.jobs.list(limit)]
+
+    def _resolve_pending(self, import_id: str, choice: str) -> bool:
+        p = self._pending.get(import_id)
+        if p is None:
+            return False
+        p["loop"].call_soon_threadsafe(lambda: p["future"].done() or p["future"].set_result(choice))
+        return True
+
+    def decide_duplicate(self, import_id: str, choice: str) -> dict:
+        """Answer a paused duplicate-key import: ``replace`` the existing session or ``cancel`` (Req 10.3-10.5).
+        404 for an unknown job; 409 when the job is not waiting for a choice or the 5 minutes have passed."""
+        self.import_status(import_id)
+        if choice not in REPLACE_OPTIONS:
+            raise ValueError(f"choice must be one of {', '.join(REPLACE_OPTIONS)}")
+        p = self._pending.get(import_id)
+        if p is None or p["expires_at"] <= datetime.now(UTC):
+            raise Conflict(f"import {import_id} is not waiting for a replace-or-cancel choice (it may have expired)")
+        if choice == "cancel":
+            return self.cancel_import(import_id)
+        self._resolve_pending(import_id, "replace")
+        return self.import_status(import_id)
 
     def cancel_import(self, import_id: str) -> dict:
         job = self.import_status(import_id)
         if job["state"] not in ACTIVE:
             raise Conflict(f"import {import_id} is {job['state']}; only queued or running imports can be cancelled")
         self.jobs.request_cancel(import_id)
-        if import_id not in self._tasks:  # not running in this process (should not happen after recover())
+        if import_id in self._pending:  # paused on a duplicate: finish it now, leave the existing session unchanged
+            self.jobs.update(import_id, state="CANCELLED", error_code=CANCELLED,
+                             error="cancelled by the user; the existing session was left unchanged", detail="cancelled")
+            self._resolve_pending(import_id, "cancel")
+        elif import_id not in self._tasks:  # not running in this process (should not happen after recover())
             self.jobs.update(import_id, state="CANCELLED", error_code=CANCELLED, error="cancelled", detail="cancelled")
         else:
             self.jobs.progress(import_id, job["state"], "cancelling: stops at the next step (an in-flight download finishes first)")
@@ -213,8 +319,13 @@ class HistoricalService:
         job = self.import_status(import_id)
         if job["state"] not in ("FAILED", "CANCELLED"):
             raise Conflict(f"import {import_id} is {job['state']}; only failed or cancelled imports can be retried")
-        if (job["request"].get("provider") or "openf1") != "openf1":
-            raise Conflict(f"import {import_id} used a data provider this app no longer supports; start a new OpenF1 import instead")
+        if (job["request"].get("provider") or "openf1") not in PROVIDERS:
+            raise Conflict(f"import {import_id} used a data provider this app no longer supports; start a new import instead")
+        if (job["request"].get("provider") or "openf1") == "csv_upload":
+            h = str((job["request"].get("csv") or {}).get("file_hash") or "").lower()
+            if not (self.upload_dir / f"{h}.csv").is_file():  # reject the request itself; no new job is created (Req 9.10)
+                raise Conflict(f"import {import_id} cannot be retried because its uploaded file is no longer stored; "
+                               "upload the file again and start a new import")
         active = self.jobs.find_active(dedupe_key(job["request"]))
         if active is not None:
             return {**active, "duplicate": True}
@@ -222,10 +333,225 @@ class HistoricalService:
         self._spawn(new["import_id"], job["request"], False)
         return {**new, "duplicate": False}
 
-    def delete_session(self, sid: str) -> dict:
-        if not self.repo.delete_session(sid):
+    def _importing_jobs(self, sid: str, manifest: dict) -> list[dict]:
+        """PROCESSING or SAVING jobs that are writing (or replacing) this session. A CSV job matches by file hash or
+        Session_Metadata key; an OpenF1 job by year, event and session type (the resolved event name may differ from the
+        request, so matching is by containment and errs towards blocking)."""
+        meta = manifest.get("metadata") or {}
+        hits = []
+        for j in self.jobs.running():
+            req = j["request"]
+            if j.get("session_id") == sid:
+                hits.append(j)
+            elif (req.get("provider") or "openf1") == "csv_upload":
+                c = req.get("csv") or {}
+                m = c.get("metadata") or {}
+                same_file = bool(manifest.get("file_hash")) and str(c.get("file_hash") or "").lower() == manifest["file_hash"]
+                same_key = all(m.get(k) is not None and m.get(k) == meta.get(k) for k in ("event", "session_type", "driver", "year"))
+                if same_file or same_key:
+                    hits.append(j)
+            else:
+                ev = str(req.get("event") or "").strip().lower()
+                stored = f"{manifest.get('event') or ''} {manifest.get('circuit') or ''}".lower()
+                code = str(req.get("session") or "").strip().upper()
+                kinds = {str(manifest.get(k) or "").upper() for k in ("session", "session_type")}
+                if req.get("year") == manifest.get("year") and ev and ev in stored and (not code or code in kinds or not kinds - {""}):
+                    hits.append(j)
+        return hits
+
+    def delete_session(self, sid: str, confirm_linked: bool = False) -> dict:
+        """Delete a session and all its ``f1_hist_*`` rows in one transaction.
+
+        404 for an unknown id. 409 while an import for it is PROCESSING or SAVING (Req 10.10), and 409 naming the linked
+        TRIALFORGE experiments until ``confirm_linked`` is true (Req 10.9; the experiments' measurements are never touched).
+        A storage failure rolls back, keeps the session and raises ``StorageError`` (Req 10.8)."""
+        manifest = self.repo.manifest(sid)
+        if manifest is None:
             raise NotFound(sid)
-        return {"deleted": sid}
+        if self._importing_jobs(sid, manifest):
+            raise Conflict(f"session {sid} cannot be deleted: an import is in progress for it; wait for it to finish or cancel it")
+        links = list(self.experiment_link_lookup(sid) or []) if self.experiment_link_lookup else []
+        if links and not confirm_linked:
+            names = ", ".join(f"{(x.get('name') or x.get('experiment_id'))} ({x.get('experiment_id')})" for x in links)
+            raise Conflict(f"session {sid} is linked to TRIALFORGE experiment(s) {names}. Deleting it keeps those experiments' "
+                           "measurements and their provenance. Repeat the request with confirm_linked=true to delete the session")
+        try:
+            deleted = self.repo.delete_session(sid)
+        except Exception as exc:
+            raise StorageError(f"deleting session {sid} failed and was rolled back; the session is unchanged ({type(exc).__name__})") from exc
+        if not deleted:
+            raise NotFound(sid)
+        return {"deleted": sid, "linked_experiments": [x.get("experiment_id") for x in links]}
+
+    # ------------------------------------------------------------- CSV upload workflow (preview, validate, session-exists)
+    async def stage_csv_upload(self, source: Any, filename: str | None) -> dict:
+        """Stream ``source`` (an object with ``async read(n)``) into ``{upload_dir}/{sha256}.csv`` without holding it in memory.
+
+        The file is content-addressed, so uploading the same bytes again reuses the staged file. An upload larger than the
+        configured maximum raises ``CsvLimitError(FILE_TOO_LARGE)`` and nothing is kept (Req 11.13, 12.4)."""
+        limit = csv_importer.CSV_MAX_UPLOAD_BYTES
+        self.upload_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.upload_dir / f".part-{uuid.uuid4().hex}"
+        digest, size = hashlib.sha256(), 0
+        try:
+            with open(tmp, "wb") as fh:
+                while chunk := await source.read(UPLOAD_CHUNK_BYTES):
+                    size += len(chunk)
+                    if size > limit:
+                        raise csv_importer.CsvLimitError(csv_importer.CsvLimitError.FILE_TOO_LARGE, "maximum file size (bytes)", limit)
+                    digest.update(chunk)
+                    fh.write(chunk)
+            if size == 0:
+                raise ValueError("the uploaded file is empty")
+            file_hash = digest.hexdigest()
+            final = self.upload_dir / f"{file_hash}.csv"
+            created = not final.exists()
+            os.replace(tmp, final)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        name = Path((filename or "").replace("\\", "/")).name or "upload.csv"
+        return {"file_hash": file_hash, "path": final, "created": created, "size_bytes": size, "original_filename": name[:255]}
+
+    def csv_file(self, file_hash: str) -> Path:
+        """Path of a staged upload; NotFound (HTTP 404) when it was never uploaded or has been removed."""
+        path = self.upload_dir / f"{file_hash.lower()}.csv"
+        if not path.is_file():
+            raise NotFound(f"uploaded file {file_hash}; upload it again with the preview endpoint")
+        return path
+
+    async def csv_preview(self, source: Any, filename: str | None) -> dict:
+        """Stage an upload and inspect it. Creates no session and no import job (Req 11.1)."""
+        staged = await self.stage_csv_upload(source, filename)
+        try:
+            out = await asyncio.to_thread(self._csv_preview, staged["path"])
+        except BaseException:
+            if staged["created"]:
+                staged["path"].unlink(missing_ok=True)  # an unreadable new file is not kept
+            raise
+        rec = self.repo.record_upload(staged["file_hash"], staged["original_filename"], staged["size_bytes"])
+        return {"file_hash": rec["file_hash"], "original_filename": rec["original_filename"], "size_bytes": rec["size_bytes"], **out}
+
+    @staticmethod
+    def _csv_preview(path: Path) -> dict:
+        ins = csv_importer.inspect(path)
+        if not ins.columns:
+            raise ValueError("the file has no header row")
+        if ins.row_count == 0:
+            raise ValueError("the file has no data rows")
+        kind = csv_importer.classify(ins.columns)
+        suggested = csv_importer.suggest_mapping(ins.columns)
+        report = HistoricalService._csv_report(path, ins.columns, kind, suggested, {}, "reject", "reject", None, None, None)
+        return {"columns": ins.columns, "column_count": len(ins.columns), "row_count": ins.row_count, "sample_rows": ins.sample_rows,
+                "suggested_mapping": suggested, "detected_type": kind,
+                "data_type_choices": {"lap_summary": ["lap_summary"], "sampled_telemetry": ["sampled_telemetry"],
+                                      "ambiguous": ["lap_summary", "sampled_telemetry"]}.get(kind, []),
+                "validation_report": report}
+
+    @staticmethod
+    def _csv_report(path: Path, columns: list[str], kind: str | None, mapping: dict, units: dict, dup: str, order: str,
+                    driver: str | None, tz_offset: str | None, timezone: str | None) -> dict:
+        """Row validation of the file (the first ``CSV_VALIDATE_ROW_CAP`` rows of a sampled file) as a plain dict."""
+        base = {"ok": False, "data_type": kind, "total_rows": 0, "errors": [], "error_count": 0, "warnings": [], "warning_count": 0}
+        if kind == csv_importer.LAP_SUMMARY:
+            v = csv_importer.validate_lap_summary(path)
+            errs = []
+            if v.missing_columns:
+                errs.append({"row": 0, "column": ", ".join(v.missing_columns), "value": None, "reason": "missing_required_column", "severity": "error"})
+            if v.first_error:
+                e = v.first_error
+                errs.append({"row": e.row, "column": e.column, "value": e.value, "reason": e.reason, "severity": "error"})
+            return {**base, "ok": v.ok, "total_rows": v.row_count, "errors": errs, "error_count": len(errs), "missing_columns": v.missing_columns}
+        if kind != csv_importer.SAMPLED_TELEMETRY:
+            reason = "choose_data_type" if kind == csv_importer.AMBIGUOUS else "unrecognized_columns"
+            return {**base, "errors": [{"row": 0, "column": "", "value": None, "reason": reason, "severity": "error"}], "error_count": 1}
+        cols = list(dict.fromkeys(mapping.values()))
+        if not ({"session_time_s", "timestamp"} & set(mapping)):
+            err = {"row": 0, "column": "", "value": None, "reason": "no_time_column_mapped", "severity": "error"}
+            return {**base, "errors": [err], "error_count": 1}
+        driver_col = mapping.get("driver")
+        pieces: list[pd.DataFrame] = []
+        rows = 0
+        truncated = False
+        try:
+            for chunk in csv_importer.read_chunks(path, csv_importer.CHUNK_ROWS):
+                if driver_col and driver:
+                    chunk = chunk[chunk[driver_col] == driver]
+                pieces.append(chunk[cols])
+                rows += len(chunk)
+                if rows >= CSV_VALIDATE_ROW_CAP:
+                    truncated = True
+                    break
+        except csv_importer.CsvLimitError as exc:
+            err = {"row": 0, "column": "", "value": exc.limit, "reason": f"{exc.code}: {exc}", "severity": "error"}
+            return {**base, "errors": [err], "error_count": 1}
+        frame = pd.concat(pieces, ignore_index=True) if pieces else pd.DataFrame(columns=cols)
+        frame = frame.iloc[:CSV_VALIDATE_ROW_CAP]
+        policy = {"duplicate_policy": dup, "order_policy": order, "data_type": csv_importer.SAMPLED_TELEMETRY,
+                  "tz_offset": tz_offset, "timezone": timezone}
+        groups = {driver or "": frame}
+        if driver_col and not driver:
+            keys = frame[driver_col].map(lambda v: v.strip() or csv_importer.UNKNOWN_DRIVER)
+            groups = {str(k): frame[keys == k].reset_index(drop=True) for k in dict.fromkeys(keys)}
+        reports = {k: csv_importer.validate_rows(g, mapping, units, policy).to_dict()
+                   for k, g in groups.items()}
+        if len(reports) == 1:
+            out = dict(next(iter(reports.values())))
+            out["per_driver"] = False
+        else:
+            out = {"per_driver": True, "ok": all(r["ok"] for r in reports.values()), "coverage": {k: r["coverage"] for k, r in reports.items()}}
+            for key in ("total_rows", "samples", "duplicates_dropped", "duplicate_group_count", "duplicate_rows_affected", "out_of_order_count",
+                        "rows_moved", "skipped_time_rows", "error_count", "warning_count"):
+                out[key] = sum(r.get(key, 0) for r in reports.values())
+            for key in ("errors", "warnings"):
+                out[key] = [{**e, "driver": k} for k, r in reports.items() for e in r[key]][:csv_importer.MAX_REPORTED_ERRORS]
+        return {**base, **out, "data_type": kind, "truncated": truncated, "rows_checked": len(frame)}
+
+    def csv_validate(self, req: Any) -> dict:
+        """Validate a staged file against a mapping, units, policies and Session_Metadata. Imports nothing (Req 6.11, 11.1)."""
+        path = self.csv_file(req.file_hash)
+        columns = [c.strip() for c in csv_importer.read_header(path)]
+        detected = csv_importer.classify(columns)
+        kind = req.data_type or detected
+        requested = req.mapping.root if req.mapping is not None else csv_importer.suggest_mapping(columns)
+        mres = csv_importer.validate_mapping(requested, columns)
+        upload = self.repo.upload(req.file_hash)
+        meta_in = req.metadata.model_dump()
+        meta_out: dict[str, Any]
+        try:
+            units, supplied = csv_importer._resolve_units({"units": req.units.model_dump()}, meta_in)
+            meta_out = {"ok": True, "values": csv_importer.validate_session_metadata(meta_in, (upload or {}).get("original_filename"), supplied),
+                        "missing": [], "invalid": []}
+        except HistoricalImportError as exc:
+            units = {}
+            meta_out = {"ok": False, "values": None, "missing": exc.details.get("missing", []), "invalid": exc.details.get("invalid", []),
+                        "message": str(exc)}
+        driver = meta_in.get("driver")
+        report = None
+        if mres.ok and kind in (csv_importer.LAP_SUMMARY, csv_importer.SAMPLED_TELEMETRY):
+            report = self._csv_report(path, columns, kind, csv_normalizer._canonical_mapping(mres.mapping), units, req.duplicate_policy,
+                                      req.order_policy, driver.strip() if isinstance(driver, str) and driver.strip() else None,
+                                      req.tz_offset, meta_in.get("timezone"))
+        elif mres.ok:
+            report = self._csv_report(path, columns, kind, {}, units, req.duplicate_policy, req.order_policy, None, None, None)
+        existing = self.repo.find_by_file_hash(req.file_hash)
+        return {"file_hash": req.file_hash, "original_filename": (upload or {}).get("original_filename"), "detected_type": detected,
+                "data_type": kind, "ok": bool(mres.ok and meta_out["ok"] and report and report["ok"] and not existing),
+                "mapping": {"ok": mres.ok, "errors": mres.errors, "accepted": mres.mapping if mres.ok else {}},
+                "metadata": meta_out, "report": report, "existing_session_id": existing}
+
+    def csv_session_exists(self, q: Any) -> dict:
+        """Does a stored session match a file hash or a Session_Metadata key? (Req 10.1, 10.2, 11.8)"""
+        if q.file_hash:
+            sid = self.repo.find_by_file_hash(q.file_hash.lower())
+            if sid:
+                return {"exists": True, "session_id": sid, "matched_by": "file_hash"}
+        if q.event is not None:
+            sid = self.repo.find_by_key({"provider": csv_normalizer.PROVIDER_LABEL, "event": q.event, "session_type": q.session_type,
+                                         "driver": q.driver, "year": q.year})
+            if sid:
+                return {"exists": True, "session_id": sid, "matched_by": "session_key"}
+        return {"exists": False, "session_id": None, "matched_by": None}
 
     # ------------------------------------------------------------- stored sessions
     def _manifest(self, sid: str) -> dict:
@@ -235,10 +561,12 @@ class HistoricalService:
         return m
 
     def list_sessions(self) -> list[dict]:
-        return self.repo.list_sessions()
+        keys = ("session_id", "year", "event", "circuit", "session", "session_type", "session_date", "imported_at", "drivers", "channels")
+        return [{**{k: m.get(k) for k in keys}, **describe_session(m)} for m in self.repo.list_manifests()]
 
     def get_session(self, sid: str) -> dict:
-        return self._manifest(sid)
+        m = self._manifest(sid)
+        return {**m, **describe_session(m)}
 
     def dataset(self, sid: str, name: str, driver: str | None = None, limit: int = 4000) -> dict:
         """One stored per-session dataset (running order, results, grid, gaps, overtakes, radio, championships, pit stops, race control)

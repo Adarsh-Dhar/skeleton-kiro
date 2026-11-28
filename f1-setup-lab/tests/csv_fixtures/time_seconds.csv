@@ -1,0 +1,5 @@
+session_time_s,speed_kph,throttle_pct
+0,100,50
+1,105,60
+2,110,70
+3,115,80

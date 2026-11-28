@@ -16,7 +16,7 @@ def api(tmp_path):
     app = create_app(str(tmp_path / "trialforge.db"))
     with TestClient(app) as c:
         svc = app.state.historical
-        manifest = {"session_id": "s1", "provider": "openf1", "year": 2024, "event": "Test <GP>", "session_type": "R",
+        manifest = {"session_id": "s1", "provider": "openf1", "source_type": "external_provider", "verification": "verified", "year": 2024, "event": "Test <GP>", "session_type": "R",
                     "session_date": "2024-03-01", "drivers": [{"code": "VER", "number": "1", "team": "RB"}], "channels": {}}
         laps = pd.DataFrame({"driver": ["1", "1"], "lap_number": [1, 2], "lap_time_s": [90.0, None]})
         weather = pd.DataFrame({"air_temp_c": [20.0, 22.0], "wind_direction_deg": [350.0, 10.0]})

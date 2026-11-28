@@ -24,7 +24,7 @@ def test_validation_and_404_and_values(tmp_path):
     migrate(engine)
     svc = HistoricalService(engine, tmp_path / "cache")
     for sid, date, valid in (("a", "2024-03-01", None), ("b", "2024-04-01", True)):
-        manifest = {"session_id": sid, "provider": "openf1", "year": 2024, "event": sid.upper(), "session_type": "R",
+        manifest = {"session_id": sid, "provider": "openf1", "source_type": "external_provider", "verification": "verified", "year": 2024, "event": sid.upper(), "session_type": "R",
                     "session_date": date, "drivers": [{"code": "VER", "number": "1"}], "channels": {}}
         laps = pd.DataFrame({"driver": ["1", "1", "1"], "lap_number": [1, 2, 3], "lap_time_s": [90.0, 80.0, 85.0],
                              "is_valid": [valid] * 3, "pits": [True, False, False]})

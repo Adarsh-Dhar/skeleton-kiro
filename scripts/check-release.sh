@@ -270,7 +270,21 @@ run "startup scripts: bash syntax" bash -c 'bash -n scripts/start-f1.sh && bash 
 pytest_run "SDK tests (trialforge-core)" skeleton/packages/trialforge-core
 pytest_run "SDK workspace tests (skeleton/tests)" skeleton tests
 pytest_run "root tests (db, scoping, start scripts, migration)" . tests
-pytest_run "F1 SETUP LAB backend tests" f1-setup-lab --ignore=tests/test_ui_openf1.py
+# CSV import suites (named, so a failure is attributable). The property tests fix max_examples=100 in their own settings.
+# Browser tests below write screenshots to F1_TEST_RESULTS_DIR, next to the release results.
+export F1_TEST_RESULTS_DIR="${F1_TEST_RESULTS_DIR:-$ROOT/f1-setup-lab/test-results/release}"
+mkdir -p "$F1_TEST_RESULTS_DIR"
+pytest_run "F1 CSV import property tests (hypothesis, 100 examples)" f1-setup-lab tests/test_prop_csv_units.py \
+    tests/test_prop_csv_timestamps.py tests/test_prop_csv_channels.py tests/test_prop_csv_lap_summary.py \
+    tests/test_prop_csv_validation.py tests/test_prop_csv_import.py tests/test_prop_csv_api.py \
+    tests/test_prop_csv_adapter.py tests/test_prop_csv_provenance.py tests/test_prop_setup_link.py
+pytest_run "F1 CSV lifecycle and regression tests" f1-setup-lab tests/test_csv_foundation.py tests/test_csv_import_cases.py \
+    tests/test_csv_import_session.py tests/test_csv_row_validation.py tests/test_csv_endpoints_basic.py \
+    tests/test_csv_lifecycle_basic.py tests/test_csv_api_lifecycle.py tests/test_csv_setup_lab.py \
+    tests/test_csv_attach_split.py tests/test_setup_link_basic.py tests/test_frontend_csv_import.py \
+    tests/test_frontend_hist_analysis_node.py tests/test_frontend_setup_link_node.py
+pytest_run "F1 SETUP LAB backend tests" f1-setup-lab --ignore=tests/test_ui_openf1.py \
+    --ignore=tests/test_ui_csv_import.py --ignore=tests/test_ui_openf1_independent.py
 pytest_run "WATTWISE LAB backend tests" wattwise-lab --ignore=tests/test_ui_browser.py
 chromium_ok() { "$PY" -c "from playwright.sync_api import sync_playwright as s
 with s() as p: p.chromium.launch().close()" >/dev/null 2>&1; }
@@ -279,6 +293,8 @@ if ! chromium_ok && [[ -n "${INSTALL_CHROMIUM:-}" ]]; then
 fi
 if chromium_ok; then
     pytest_run "F1 SETUP LAB browser tests (Chromium)" f1-setup-lab tests/test_ui_openf1.py
+    pytest_run "F1 CSV import browser test (Chromium)" f1-setup-lab tests/test_ui_csv_import.py
+    pytest_run "F1 OpenF1-independent browser test (Chromium)" f1-setup-lab tests/test_ui_openf1_independent.py
     pytest_run "WATTWISE LAB browser tests (Chromium)" wattwise-lab tests/test_ui_browser.py
 else
     unavailable "browser tests (both apps)" "Chromium for this Playwright version is not installed; rerun with INSTALL_CHROMIUM=1"

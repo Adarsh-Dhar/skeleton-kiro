@@ -518,23 +518,6 @@
     ]
   },
   "f1_hist_session": {
-    "foreign_key_list": [],
-    "index_list": [
-      [
-        0,
-        "ix_f1_hist_session_status",
-        0,
-        "c",
-        0
-      ],
-      [
-        1,
-        "sqlite_autoindex_f1_hist_session_1",
-        1,
-        "pk",
-        0
-      ]
-    ],
     "table_info": [
       [
         0,
@@ -599,8 +582,64 @@
         1,
         null,
         0
+      ],
+      [
+        8,
+        "metadata_json",
+        "TEXT",
+        0,
+        null,
+        0
+      ],
+      [
+        9,
+        "source_type",
+        "VARCHAR(40)",
+        0,
+        null,
+        0
+      ],
+      [
+        10,
+        "verification",
+        "VARCHAR(20)",
+        0,
+        null,
+        0
+      ],
+      [
+        11,
+        "file_hash",
+        "VARCHAR(64)",
+        0,
+        null,
+        0
       ]
-    ]
+    ],
+    "index_list": [
+      [
+        0,
+        "ix_f1_hist_session_status",
+        0,
+        "c",
+        0
+      ],
+      [
+        1,
+        "ix_f1_hist_session_file_hash",
+        0,
+        "c",
+        0
+      ],
+      [
+        2,
+        "sqlite_autoindex_f1_hist_session_1",
+        1,
+        "pk",
+        0
+      ]
+    ],
+    "foreign_key_list": []
   },
   "f1_hist_telemetry": {
     "foreign_key_list": [

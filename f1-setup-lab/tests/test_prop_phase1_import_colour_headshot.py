@@ -81,7 +81,7 @@ def test_generated_driver_rows_clean_or_none(pairs):
 
 def test_old_format_manifest_returns_none_for_both(tmp_path):
     svc = _service(tmp_path)
-    manifest = {"session_id": "old", "provider": "openf1", "year": 2024, "event": "Italian Grand Prix", "session_type": "Q",
+    manifest = {"session_id": "old", "provider": "openf1", "source_type": "external_provider", "verification": "verified", "year": 2024, "event": "Italian Grand Prix", "session_type": "Q",
                 "drivers": [{"code": "VER", "number": "1", "name": "Max Verstappen", "team": "Red Bull"}], "channels": {}}
     svc.repo.save_session("old", manifest, pd.DataFrame({"driver": ["VER"], "lap_number": [1], "lap_time_s": [80.0]}),
                           pd.DataFrame(), {}, {})

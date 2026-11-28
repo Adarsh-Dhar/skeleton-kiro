@@ -59,7 +59,7 @@ def api(tmp_path):
     app = create_app(str(tmp_path / "trialforge.db"))
     with TestClient(app) as c:
         svc = app.state.historical
-        manifest = {"session_id": "s1", "provider": "openf1", "year": 2026, "event": "Test GP", "session_type": "R",
+        manifest = {"session_id": "s1", "provider": "openf1", "source_type": "external_provider", "verification": "verified", "year": 2026, "event": "Test GP", "session_type": "R",
                     "session_date": "2026-11-22", "drivers": [{"code": "VER", "number": "1", "team": "RB"}], "channels": {},
                     "coverage": {"endpoints": {
                         "drivers_championship": {"endpoint": "drivers_championship", "rows": 0, "status": "empty"},

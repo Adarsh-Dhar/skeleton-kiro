@@ -6,20 +6,26 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from f1lab.api.schemas import CsvImportOptions
+
 SESSION_TYPES = ("FP1", "FP2", "FP3", "Q", "SQ", "S", "R")
 
 IMPORT_STATES = ("QUEUED", "DOWNLOADING", "PROCESSING", "SAVING", "COMPLETED", "FAILED", "CANCELLED")
 
 
-Provider = Literal["openf1"]
+Provider = Literal["openf1", "csv_upload"]
 OPENF1_MIN_YEAR = 2023
 
 
 class HistoricalImportRequest(BaseModel):
     provider: Provider = Field("openf1", description="Historical data source: OpenF1 (free, no account, 2023 onwards)")
-    year: int = Field(ge=OPENF1_MIN_YEAR, le=2100, description="Season year; OpenF1 historical data is available from 2023 onwards")
-    event: str = Field(min_length=1, max_length=120, description="Grand Prix name or circuit location, e.g. 'Monza' or 'Italian Grand Prix'")
-    session: str = Field(min_length=1, max_length=40, description="Session type code (FP1, FP2, FP3, Q, S, R) or session name")
+    year: int | None = Field(None, ge=OPENF1_MIN_YEAR, le=2100, description="Season year; OpenF1 historical data is available from 2023 onwards "
+                             "(required for openf1; csv_upload takes it from csv.metadata)")
+    event: str | None = Field(None, min_length=1, max_length=120, description="Grand Prix name or circuit location, e.g. 'Monza' or "
+                              "'Italian Grand Prix' (required for openf1)")
+    session: str | None = Field(None, min_length=1, max_length=40, description="Session type code (FP1, FP2, FP3, Q, S, R) or session name "
+                                "(required for openf1)")
+    csv: CsvImportOptions | None = Field(None, description="csv_upload only: staged file hash, Column_Mapping, units, policies and Session_Metadata")
     drivers: list[str] = Field(default_factory=list, max_length=30, description="Driver codes to import; empty means all drivers in the session")
     include_telemetry: bool = True
     include_position: bool = True
@@ -29,6 +35,19 @@ class HistoricalImportRequest(BaseModel):
                                             "(race_position, session_result, starting_grid, intervals, overtakes, team_radio, drivers_championship, "
                                             "teams_championship, stints, pit, race_control); omitted means all")
     refresh_cache: bool = Field(False, description="OpenF1 only: ignore cached answers and download everything again")
+
+    @model_validator(mode="after")
+    def _provider_fields(self):
+        if self.provider == "csv_upload":
+            if self.csv is None:
+                raise ValueError("csv is required for provider csv_upload: give the file_hash returned by the preview endpoint")
+        else:
+            missing = [n for n in ("year", "event", "session") if getattr(self, n) is None]
+            if missing:
+                raise ValueError(f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} required for provider {self.provider}")
+            if self.csv is not None:
+                raise ValueError("csv is only valid for provider csv_upload")
+        return self
 
     @model_validator(mode="after")
     def _datasets_known(self):

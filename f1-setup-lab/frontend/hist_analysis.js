@@ -558,8 +558,121 @@ const HistAnalysis = (() => {
     sync();
   };
 
+  /* ------------------------------------------------------------------ provenance, session list and shared trace charts (unified import)
+     One code path for every provider: the Imported Sessions page and the analysis view both call these, so a CSV session and an
+     OpenF1 session are rendered by the same functions (Req 17.4, 17.8) and show the identical Provenance_Status label (Req 13.10). */
+  const LAP_SUMMARIES = 'Lap summaries';
+  const PROVIDER_LABELS = { openf1: 'OpenF1', csv_upload: 'CSV Upload' };
+  const providerLabel = (s) => PROVIDER_LABELS[s && s.provider] || String((s && s.provider) || 'unknown');
+  const dataTypeLabel = (s) => String((s && s.data_type_label) || 'unknown');
+  const provenanceLabel = (s) => String((s && s.provenance_status) || 'PROVENANCE UNKNOWN');
+  const isLapSummaries = (s) => !!s && s.data_type_label === LAP_SUMMARIES;
+
+  /* The badge text is exactly the stored Provenance_Status; the class only picks a colour. */
+  const provenanceBadge = (s) => {
+    const label = provenanceLabel(s);
+    const cls = /^SYNTHETIC/.test(label) ? 'synthetic' : /^USER/.test(label) ? 'imported' : 'external';
+    return `<span class="chip ${cls} provenance-badge" data-provenance="${esc(label)}" title="where this data came from">${esc(label)}</span>`;
+  };
+
+  const sessionRow = (s) => `<tr data-session="${esc(s.session_id)}"><td><b>${esc(s.event)}</b><div class="dim mono">${esc(s.session)} &middot; ${esc(s.session_id)}</div></td>`
+    + `<td class="provider-label">${esc(providerLabel(s))}</td><td class="data-type-label">${esc(dataTypeLabel(s))}</td><td>${provenanceBadge(s)}</td>`
+    + `<td class="num">${esc(s.year)}</td><td>${esc(s.circuit || s.location || '\u2014')}</td>`
+    + `<td class="num">${(s.drivers || []).length}</td><td class="dim mono">${esc((s.imported_at || '').slice(0, 10))}</td>`
+    + `<td><a class="btn small" href="#/hist/${esc(s.session_id)}">Open</a></td></tr>`;
+
+  /* An empty list gives the empty-state message and no rows (Req 17.2). */
+  const sessionsTable = (list) => (list && list.length
+    ? `<table><thead><tr><th>Session</th><th>Provider</th><th>Data type</th><th>Provenance</th><th>Season</th><th>Circuit</th><th class="num">Drivers</th><th>Imported</th><th></th></tr></thead><tbody>${list.map(sessionRow).join('')}</tbody></table>`
+    : '<div class="empty">No sessions imported yet. <a href="#/hist">Import one</a>.</div>');
+
+  /* Loads the list into `el`. A failure shows "loading failed" with a retry button that loads again (Req 17.3). */
+  async function loadSessionList(el, deps = {}) {
+    const apiFn = deps.api || (typeof api === 'function' ? api : null);
+    el.innerHTML = '<div class="dim">Loading&hellip;</div>';
+    try {
+      el.innerHTML = sessionsTable(await apiFn('GET', '/api/historical/sessions'));
+    } catch (e) {
+      el.innerHTML = `<div class="errors" role="alert" id="sessions-error"><b>Loading the imported sessions failed.</b> ${esc((e && e.message) || e)}</div>`
+        + '<button class="btn" id="sessions-retry" type="button">Retry</button>';
+      const btn = el.querySelector('#sessions-retry');
+      if (btn) btn.addEventListener('click', () => loadSessionList(el, deps));
+    }
+  }
+
+  /* The "Use telemetry in Setup Experiment" action, rendered with the session header so it is present as soon as the view loads (Req 15.1). */
+  const setupAction = (id) => `<a class="btn primary" id="use-telemetry-setup" href="#/setup-link/${encodeURIComponent(id)}">Use telemetry in Setup Experiment</a>`;
+
+  /* Session facts shown in the analysis header: provider, data type and the same Provenance_Status badge as the list. */
+  const sessionFacts = (m) => `<span class="chip">${esc(providerLabel(m))}</span> <span class="chip" id="data-type-chip">${esc(dataTypeLabel(m))}</span> ${provenanceBadge(m)}`;
+
+  /* ---- telemetry channels. A channel is available when at least one sample carries a finite value for it. */
+  const TRACE_CHANNELS = ['distance_m', 'speed_kph', 'throttle_pct', 'brake_applied', 'brake_pct', 'rpm', 'gear', 'drs'];
+  const TRACK_CHANNELS = ['x_m', 'y_m'];
+  const hasChannel = (rows, ch) => Array.isArray(rows) && rows.some((p) => p && num(p[ch]) !== null);
+  const BRAKE = ['brake_applied', 'brake_pct'];  // either one satisfies a brake need
+  const TRACE_DEFS = [
+    { key: 'speed', title: 'Speed', needs: ['distance_m', 'speed_kph'], yLabel: 'km/h', lines: [{ ch: 'speed_kph', name: 'speed', color: '#e10600' }] },
+    { key: 'throttle_brake', title: 'Throttle & brake', needs: ['distance_m', 'throttle_pct', BRAKE], yLabel: '%', lines: [{ ch: 'throttle_pct', name: 'throttle', color: '#2ecc71' }, { ch: BRAKE, name: 'brake', color: '#e10600' }] },
+    { key: 'rpm', title: 'RPM', needs: ['distance_m', 'rpm'], yLabel: 'rpm', lines: [{ ch: 'rpm', name: 'rpm', color: '#ffb400' }] },
+    { key: 'gear', title: 'Gear', needs: ['distance_m', 'gear'], yLabel: 'gear', lines: [{ ch: 'gear', name: 'gear', color: '#c99bff' }] },
+    { key: 'drs', title: 'DRS state', needs: ['distance_m', 'drs'], yLabel: 'raw DRS code', stepped: true,
+      lines: [{ ch: 'drs', name: 'drs state code', color: '#00cec9' }],
+      hint: 'Raw state codes, not a 0/1 flag: 0 and 1 = off, 8 = detected (eligible in the activation zone), 10, 12 and 14 = on. Codes 2, 3 and 9 are undocumented.' },
+  ];
+  const needName = (n) => (Array.isArray(n) ? n.join(' or ') : n);
+  const needMet = (rows, n) => (Array.isArray(n) ? n.some((c) => hasChannel(rows, c)) : hasChannel(rows, n));
+  const pickChannel = (rows, ch) => (Array.isArray(ch) ? (ch.find((c) => hasChannel(rows, c)) || ch[0]) : ch);
+  /* Names of every channel this chart needs and the samples lack. */
+  const missingChannels = (rows, needs) => needs.filter((n) => !needMet(rows, n)).map(needName);
+
+  const unavailableChart = (title, missing, key) => `<div class="panel chart-unavailable" data-chart="${esc(key)}"><h2>${esc(title)}</h2>`
+    + `<div class="empty"><b>Chart unavailable.</b> Missing channels: <span class="mono missing-channels">${esc(missing.join(', '))}</span></div></div>`;
+
+  /* Speed, throttle and brake, RPM, gear and DRS against distance. A chart whose channels are not all present is shown as unavailable
+     with every missing channel named; the other charts stay. `opts.downsample` thins long traces (identity when absent). */
+  const traceCharts = (samples, opts = {}) => {
+    const rows = Array.isArray(samples) ? samples : [];
+    const thin = opts.downsample || ((p) => p);
+    const panels = TRACE_DEFS.map((d) => {
+      const missing = missingChannels(rows, d.needs);
+      if (missing.length) return unavailableChart(d.title, missing, d.key);
+      const series = d.lines.map((l) => {
+        const ch = pickChannel(rows, l.ch);
+        const name = d.key === 'throttle_brake' && l.name === 'brake' && ch === 'brake_applied' ? 'brake applied' : l.name;
+        return { name, color: l.color, pts: thin(rows.map((p) => ({ x: num(p.distance_m), y: num(p[ch]) })).filter((p) => p.x !== null && p.y !== null)) };
+      });
+      const extra = d.stepped ? { stepped: true, noDots: true, ymin: -0.5, ymax: 14.5 } : {};
+      const chart = Charts.lines({ series, xLabel: 'distance (m)', yLabel: d.yLabel, ...extra });
+      return `<div class="panel" data-chart="${esc(d.key)}"><h2>${esc(d.title)}</h2>${chart}${d.hint ? `<p class="hint">${esc(d.hint)}</p>` : ''}</div>`;
+    });
+    return `<div class="grid g2">${panels.join('')}</div>`;
+  };
+
+  /* Every channel listed as unavailable: shown for a `Lap summaries` session, which holds no sampled telemetry (Req 17.5). */
+  const channelsUnavailable = (channels = [...TRACE_CHANNELS, ...TRACK_CHANNELS]) => `<div class="panel" id="channels-unavailable"><h2>Telemetry channels</h2>`
+    + `<div class="note info">This session holds lap and sector summaries only, so every telemetry channel is unavailable.</div>`
+    + `<table><thead><tr><th>Channel</th><th>Status</th></tr></thead><tbody>${channels.map((c) => `<tr data-channel="${esc(c)}"><td class="mono">${esc(c)}</td><td class="dim">unavailable</td></tr>`).join('')}</tbody></table></div>`;
+
+  /* Lap table and sector table from the laps route (lap_number, lap_time_s, sector_N_s). Missing values show a dash, never 0. */
+  const lapSectorTables = (laps) => {
+    const rows = Array.isArray(laps) ? laps : [];
+    if (!rows.length) return '<div class="empty">No laps are stored for this driver.</div>';
+    const t = (v) => (num(v) === null ? '<span class="dim">&mdash;</span>' : esc(r3(v).toFixed(3)));
+    return `<div class="grid g2"><div class="panel"><h2>Laps</h2><div style="overflow:auto;max-height:420px"><table id="lap-table"><thead><tr><th>Lap</th><th class="num">Lap time (s)</th></tr></thead><tbody>`
+      + rows.map((l) => `<tr><td class="mono">${esc(l.lap_number)}</td><td class="num"><b>${t(l.lap_time_s)}</b></td></tr>`).join('')
+      + `</tbody></table></div></div><div class="panel"><h2>Sectors</h2><div style="overflow:auto;max-height:420px"><table id="sector-table"><thead><tr><th>Lap</th><th class="num">S1 (s)</th><th class="num">S2 (s)</th><th class="num">S3 (s)</th></tr></thead><tbody>`
+      + rows.map((l) => `<tr><td class="mono">${esc(l.lap_number)}</td><td class="num">${t(l.sector_1_s)}</td><td class="num">${t(l.sector_2_s)}</td><td class="num">${t(l.sector_3_s)}</td></tr>`).join('')
+      + '</tbody></table></div></div></div>';
+  };
+
+  /* Track map: unavailable (naming x_m / y_m) when the points carry no position; otherwise the caller draws it. */
+  const trackMissing = (points) => TRACK_CHANNELS.filter((c) => !hasChannel(points, c));
+
   const exported = { compass, teamColour, distinguish, avatar, PALETTE, viewStandings, windDirection, miniSectorsTab, tyresTab,
-    viewSeason, compareChart, exportButtons, bindExport };
+    viewSeason, compareChart, exportButtons, bindExport,
+    LAP_SUMMARIES, providerLabel, dataTypeLabel, provenanceLabel, isLapSummaries, provenanceBadge, sessionsTable, loadSessionList,
+    setupAction, sessionFacts, hasChannel, missingChannels, traceCharts, channelsUnavailable, lapSectorTables, trackMissing, unavailableChart };
   if (typeof module !== 'undefined' && module.exports) module.exports = exported;
   return exported;
 })();

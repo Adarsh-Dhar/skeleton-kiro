@@ -93,3 +93,5 @@ nav{flex-wrap:wrap;row-gap:6px;align-items:stretch}
 /* page header row: title left, action right */
 .page-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:6px}
 .filters{margin-bottom:12px}.filters input[type=search]{min-width:240px}
+
+.chip.external{color:#d5b3ff;border-color:#5b3a8a}

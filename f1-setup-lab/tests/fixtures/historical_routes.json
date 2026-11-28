@@ -103,6 +103,9 @@
           "import_id": [
             "str"
           ],
+          "processed_rows": [
+            "int"
+          ],
           "request": [
             "dict"
           ],
@@ -114,6 +117,9 @@
           ],
           "state": [
             "str"
+          ],
+          "total_rows": [
+            "int"
           ],
           "updated_at": [
             "str"
@@ -135,10 +141,12 @@
           "error_code": "null",
           "finished_at": "str",
           "import_id": "str",
+          "processed_rows": "int",
           "request": "dict",
           "retry_of": "null",
           "session_id": "str",
           "state": "str",
+          "total_rows": "int",
           "updated_at": "str"
         },
         "kind": "object",
@@ -164,6 +172,9 @@
           "circuit": [
             "str"
           ],
+          "data_type_label": [
+            "str"
+          ],
           "drivers": [
             "list"
           ],
@@ -171,6 +182,12 @@
             "str"
           ],
           "imported_at": [
+            "str"
+          ],
+          "metadata": [
+            "null"
+          ],
+          "provenance_status": [
             "str"
           ],
           "provider": [
@@ -186,6 +203,12 @@
             "str"
           ],
           "session_type": [
+            "str"
+          ],
+          "source_type": [
+            "str"
+          ],
+          "verification": [
             "str"
           ],
           "year": [
@@ -206,6 +229,7 @@
           "circuit": "str",
           "corners": "list",
           "coverage": "dict",
+          "data_type_label": "str",
           "datasets": "dict",
           "derived": "list",
           "drivers": "list",
@@ -215,9 +239,11 @@
           "import_status": "str",
           "imported_at": "str",
           "location": "str",
+          "metadata": "null",
           "not_provided": "list",
           "partial": "bool",
           "pit_stops": "list",
+          "provenance_status": "str",
           "provider": "str",
           "race_control": "list",
           "race_data_included": "bool",
@@ -229,8 +255,10 @@
           "session_type": "str",
           "session_url": "null",
           "source_label": "str",
+          "source_type": "str",
           "units": "dict",
           "upstream": "dict",
+          "verification": "str",
           "warnings": "list",
           "year": "int"
         },
@@ -604,6 +632,9 @@
           "import_id": [
             "str"
           ],
+          "processed_rows": [
+            "int"
+          ],
           "request": [
             "dict"
           ],
@@ -615,6 +646,9 @@
           ],
           "state": [
             "str"
+          ],
+          "total_rows": [
+            "int"
           ],
           "updated_at": [
             "str"
@@ -636,10 +670,12 @@
           "error_code": "null",
           "finished_at": "str",
           "import_id": "str",
+          "processed_rows": "int",
           "request": "dict",
           "retry_of": "null",
           "session_id": "str",
           "state": "str",
+          "total_rows": "int",
           "updated_at": "str"
         },
         "kind": "object",
@@ -665,6 +701,9 @@
           "circuit": [
             "str"
           ],
+          "data_type_label": [
+            "str"
+          ],
           "drivers": [
             "list"
           ],
@@ -672,6 +711,12 @@
             "str"
           ],
           "imported_at": [
+            "str"
+          ],
+          "metadata": [
+            "null"
+          ],
+          "provenance_status": [
             "str"
           ],
           "provider": [
@@ -687,6 +732,12 @@
             "str"
           ],
           "session_type": [
+            "str"
+          ],
+          "source_type": [
+            "str"
+          ],
+          "verification": [
             "str"
           ],
           "year": [
@@ -707,6 +758,7 @@
           "circuit": "str",
           "corners": "list",
           "coverage": "dict",
+          "data_type_label": "str",
           "datasets": "dict",
           "derived": "list",
           "drivers": "list",
@@ -716,9 +768,11 @@
           "import_status": "str",
           "imported_at": "str",
           "location": "str",
+          "metadata": "null",
           "not_provided": "list",
           "partial": "bool",
           "pit_stops": "list",
+          "provenance_status": "str",
           "provider": "str",
           "race_control": "list",
           "race_data_included": "bool",
@@ -730,8 +784,10 @@
           "session_type": "str",
           "session_url": "null",
           "source_label": "str",
+          "source_type": "str",
           "units": "dict",
           "upstream": "dict",
+          "verification": "str",
           "warnings": "list",
           "year": "int"
         },
@@ -1106,6 +1162,9 @@
           "import_id": [
             "str"
           ],
+          "processed_rows": [
+            "int"
+          ],
           "request": [
             "dict"
           ],
@@ -1117,6 +1176,9 @@
           ],
           "state": [
             "str"
+          ],
+          "total_rows": [
+            "int"
           ],
           "updated_at": [
             "str"
@@ -1138,10 +1200,12 @@
           "error_code": "null",
           "finished_at": "str",
           "import_id": "str",
+          "processed_rows": "int",
           "request": "dict",
           "retry_of": "null",
           "session_id": "str",
           "state": "str",
+          "total_rows": "int",
           "updated_at": "str"
         },
         "kind": "object",
@@ -1167,6 +1231,9 @@
           "circuit": [
             "str"
           ],
+          "data_type_label": [
+            "str"
+          ],
           "drivers": [
             "list"
           ],
@@ -1174,6 +1241,12 @@
             "str"
           ],
           "imported_at": [
+            "str"
+          ],
+          "metadata": [
+            "null"
+          ],
+          "provenance_status": [
             "str"
           ],
           "provider": [
@@ -1189,6 +1262,12 @@
             "str"
           ],
           "session_type": [
+            "str"
+          ],
+          "source_type": [
+            "str"
+          ],
+          "verification": [
             "str"
           ],
           "year": [
@@ -1209,6 +1288,7 @@
           "circuit": "str",
           "corners": "list",
           "coverage": "dict",
+          "data_type_label": "str",
           "datasets": "dict",
           "derived": "list",
           "drivers": "list",
@@ -1218,9 +1298,11 @@
           "import_status": "str",
           "imported_at": "str",
           "location": "str",
+          "metadata": "null",
           "not_provided": "list",
           "partial": "bool",
           "pit_stops": "list",
+          "provenance_status": "str",
           "provider": "str",
           "race_control": "list",
           "race_data_included": "bool",
@@ -1232,8 +1314,10 @@
           "session_type": "str",
           "session_url": "null",
           "source_label": "str",
+          "source_type": "str",
           "units": "dict",
           "upstream": "dict",
+          "verification": "str",
           "warnings": "list",
           "year": "int"
         },
@@ -1606,6 +1690,9 @@
           "import_id": [
             "str"
           ],
+          "processed_rows": [
+            "int"
+          ],
           "request": [
             "dict"
           ],
@@ -1617,6 +1704,9 @@
           ],
           "state": [
             "str"
+          ],
+          "total_rows": [
+            "int"
           ],
           "updated_at": [
             "str"
@@ -1638,10 +1728,12 @@
           "error_code": "null",
           "finished_at": "str",
           "import_id": "str",
+          "processed_rows": "int",
           "request": "dict",
           "retry_of": "null",
           "session_id": "str",
           "state": "str",
+          "total_rows": "int",
           "updated_at": "str"
         },
         "kind": "object",
@@ -1667,6 +1759,9 @@
           "circuit": [
             "str"
           ],
+          "data_type_label": [
+            "str"
+          ],
           "drivers": [
             "list"
           ],
@@ -1674,6 +1769,12 @@
             "str"
           ],
           "imported_at": [
+            "str"
+          ],
+          "metadata": [
+            "null"
+          ],
+          "provenance_status": [
             "str"
           ],
           "provider": [
@@ -1689,6 +1790,12 @@
             "str"
           ],
           "session_type": [
+            "str"
+          ],
+          "source_type": [
+            "str"
+          ],
+          "verification": [
             "str"
           ],
           "year": [
@@ -1709,6 +1816,7 @@
           "circuit": "str",
           "corners": "list",
           "coverage": "dict",
+          "data_type_label": "str",
           "datasets": "dict",
           "derived": "list",
           "drivers": "list",
@@ -1718,9 +1826,11 @@
           "import_status": "str",
           "imported_at": "str",
           "location": "str",
+          "metadata": "null",
           "not_provided": "list",
           "partial": "bool",
           "pit_stops": "list",
+          "provenance_status": "str",
           "provider": "str",
           "race_control": "list",
           "race_data_included": "bool",
@@ -1732,8 +1842,10 @@
           "session_type": "str",
           "session_url": "null",
           "source_label": "str",
+          "source_type": "str",
           "units": "dict",
           "upstream": "dict",
+          "verification": "str",
           "warnings": "list",
           "year": "int"
         },
@@ -2107,6 +2219,9 @@
           "import_id": [
             "str"
           ],
+          "processed_rows": [
+            "int"
+          ],
           "request": [
             "dict"
           ],
@@ -2118,6 +2233,9 @@
           ],
           "state": [
             "str"
+          ],
+          "total_rows": [
+            "int"
           ],
           "updated_at": [
             "str"
@@ -2139,10 +2257,12 @@
           "error_code": "null",
           "finished_at": "str",
           "import_id": "str",
+          "processed_rows": "int",
           "request": "dict",
           "retry_of": "null",
           "session_id": "str",
           "state": "str",
+          "total_rows": "int",
           "updated_at": "str"
         },
         "kind": "object",
@@ -2168,6 +2288,9 @@
           "circuit": [
             "str"
           ],
+          "data_type_label": [
+            "str"
+          ],
           "drivers": [
             "list"
           ],
@@ -2175,6 +2298,12 @@
             "str"
           ],
           "imported_at": [
+            "str"
+          ],
+          "metadata": [
+            "null"
+          ],
+          "provenance_status": [
             "str"
           ],
           "provider": [
@@ -2190,6 +2319,12 @@
             "str"
           ],
           "session_type": [
+            "str"
+          ],
+          "source_type": [
+            "str"
+          ],
+          "verification": [
             "str"
           ],
           "year": [
@@ -2210,6 +2345,7 @@
           "circuit": "str",
           "corners": "list",
           "coverage": "dict",
+          "data_type_label": "str",
           "datasets": "dict",
           "derived": "list",
           "drivers": "list",
@@ -2219,9 +2355,11 @@
           "import_status": "str",
           "imported_at": "str",
           "location": "str",
+          "metadata": "null",
           "not_provided": "list",
           "partial": "bool",
           "pit_stops": "list",
+          "provenance_status": "str",
           "provider": "str",
           "race_control": "list",
           "race_data_included": "bool",
@@ -2233,8 +2371,10 @@
           "session_type": "str",
           "session_url": "null",
           "source_label": "str",
+          "source_type": "str",
           "units": "dict",
           "upstream": "dict",
+          "verification": "str",
           "warnings": "list",
           "year": "int"
         },
@@ -2599,6 +2739,556 @@
       }
     },
     {
+      "method": "POST",
+      "path": "/api/historical/csv/preview",
+      "request": {
+        "body": null,
+        "parameters": []
+      },
+      "response": {
+        "200": {
+          "properties": {
+            "column_count": {
+              "type": "integer"
+            },
+            "columns": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "data_type_choices": {
+              "items": {
+                "enum": [
+                  "lap_summary",
+                  "sampled_telemetry"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "detected_type": {
+              "enum": [
+                "lap_summary",
+                "sampled_telemetry",
+                "ambiguous",
+                "unrecognized"
+              ],
+              "type": "string"
+            },
+            "file_hash": {
+              "type": "string"
+            },
+            "original_filename": {
+              "type": "string"
+            },
+            "row_count": {
+              "type": "integer"
+            },
+            "sample_rows": {
+              "items": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": "array"
+            },
+            "size_bytes": {
+              "type": "integer"
+            },
+            "suggested_mapping": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "validation_report": {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          },
+          "required": [
+            "file_hash",
+            "original_filename",
+            "size_bytes",
+            "columns",
+            "column_count",
+            "row_count",
+            "sample_rows",
+            "suggested_mapping",
+            "detected_type",
+            "data_type_choices",
+            "validation_report"
+          ],
+          "type": "object"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/historical/csv/session-exists",
+      "request": {
+        "body": null,
+        "parameters": [
+          {
+            "in": "query",
+            "name": "driver",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 400,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "event",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 400,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "file_hash",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-fA-F]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "provider",
+            "required": false,
+            "schema": {
+              "const": "csv_upload",
+              "default": "csv_upload",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "session_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 400,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "year",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 2100,
+                  "minimum": 1950,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "response": {
+        "200": {
+          "properties": {
+            "exists": {
+              "type": "boolean"
+            },
+            "matched_by": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "file_hash",
+                    "session_key"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "session_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "exists"
+          ],
+          "type": "object"
+        },
+        "422": {
+          "properties": {
+            "detail": {
+              "items": {
+                "properties": {
+                  "ctx": {
+                    "type": "object"
+                  },
+                  "input": {},
+                  "loc": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  "msg": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "loc",
+                  "msg",
+                  "type"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/historical/csv/validate",
+      "request": {
+        "body": {
+          "description": "Validate an uploaded file against a mapping, units, policies and metadata without importing it.",
+          "properties": {
+            "data_type": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "lap_summary",
+                    "sampled_telemetry"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "duplicate_policy": {
+              "default": "reject",
+              "enum": [
+                "drop_exact_duplicates",
+                "reject"
+              ],
+              "type": "string"
+            },
+            "file_hash": {
+              "description": "SHA-256 returned by the preview endpoint",
+              "pattern": "^[0-9a-fA-F]{64}$",
+              "type": "string"
+            },
+            "mapping": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "description": "Column_Mapping: ``{standard_field: csv_column}``. Blank names are rejected; 1:1 and existence are checked against the file.",
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "metadata": {
+              "description": "Session_Metadata supplied by the user. An item that is not supplied must be named in ``unavailable``.",
+              "properties": {
+                "circuit": {
+                  "anyOf": [
+                    {
+                      "maxLength": 400,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "distance_unit": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "driver": {
+                  "anyOf": [
+                    {
+                      "maxLength": 400,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "event": {
+                  "anyOf": [
+                    {
+                      "maxLength": 400,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "original_filename": {
+                  "anyOf": [
+                    {
+                      "maxLength": 1000,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "session_date": {
+                  "anyOf": [
+                    {
+                      "maxLength": 40,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "ISO 8601 YYYY-MM-DD"
+                },
+                "session_type": {
+                  "anyOf": [
+                    {
+                      "maxLength": 400,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "time_unit": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "timezone": {
+                  "anyOf": [
+                    {
+                      "maxLength": 80,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "IANA timezone name"
+                },
+                "unavailable": {
+                  "description": "items explicitly marked unavailable",
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 20,
+                  "type": "array"
+                },
+                "year": {
+                  "anyOf": [
+                    {
+                      "type": "integer"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "order_policy": {
+              "default": "reject",
+              "enum": [
+                "sort",
+                "reject"
+              ],
+              "type": "string"
+            },
+            "tz_offset": {
+              "anyOf": [
+                {
+                  "maxLength": 10,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "units": {
+              "description": "Units of the file's time, speed and distance columns; omitted means seconds, kph and metres.",
+              "properties": {
+                "distance": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "m | km | ft"
+                },
+                "speed": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "kph | mph | m/s"
+                },
+                "time": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "s | ms (or seconds | milliseconds)"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "required": [
+            "file_hash"
+          ],
+          "type": "object"
+        },
+        "parameters": []
+      },
+      "response": {
+        "200": null,
+        "422": {
+          "properties": {
+            "detail": {
+              "items": {
+                "properties": {
+                  "ctx": {
+                    "type": "object"
+                  },
+                  "input": {},
+                  "loc": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  "msg": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "loc",
+                  "msg",
+                  "type"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
       "method": "GET",
       "path": "/api/historical/drivers",
       "request": {
@@ -2820,6 +3510,253 @@
       "request": {
         "body": {
           "properties": {
+            "csv": {
+              "anyOf": [
+                {
+                  "description": "The ``csv`` sub-object of a ``provider: \"csv_upload\"`` import request.",
+                  "properties": {
+                    "data_type": {
+                      "anyOf": [
+                        {
+                          "enum": [
+                            "lap_summary",
+                            "sampled_telemetry"
+                          ],
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "required when the file could be either type"
+                    },
+                    "duplicate_policy": {
+                      "default": "reject",
+                      "enum": [
+                        "drop_exact_duplicates",
+                        "reject"
+                      ],
+                      "type": "string"
+                    },
+                    "file_hash": {
+                      "description": "SHA-256 returned by the preview endpoint",
+                      "pattern": "^[0-9a-fA-F]{64}$",
+                      "type": "string"
+                    },
+                    "mapping": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": {
+                            "type": "string"
+                          },
+                          "description": "Column_Mapping: ``{standard_field: csv_column}``. Blank names are rejected; 1:1 and existence are checked against the file.",
+                          "type": "object"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "omitted: the suggested mapping is used"
+                    },
+                    "metadata": {
+                      "description": "Session_Metadata supplied by the user. An item that is not supplied must be named in ``unavailable``.",
+                      "properties": {
+                        "circuit": {
+                          "anyOf": [
+                            {
+                              "maxLength": 400,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "distance_unit": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "driver": {
+                          "anyOf": [
+                            {
+                              "maxLength": 400,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "event": {
+                          "anyOf": [
+                            {
+                              "maxLength": 400,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "original_filename": {
+                          "anyOf": [
+                            {
+                              "maxLength": 1000,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "session_date": {
+                          "anyOf": [
+                            {
+                              "maxLength": 40,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "ISO 8601 YYYY-MM-DD"
+                        },
+                        "session_type": {
+                          "anyOf": [
+                            {
+                              "maxLength": 400,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "time_unit": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "timezone": {
+                          "anyOf": [
+                            {
+                              "maxLength": 80,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "IANA timezone name"
+                        },
+                        "unavailable": {
+                          "description": "items explicitly marked unavailable",
+                          "items": {
+                            "type": "string"
+                          },
+                          "maxItems": 20,
+                          "type": "array"
+                        },
+                        "year": {
+                          "anyOf": [
+                            {
+                              "type": "integer"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "order_policy": {
+                      "default": "reject",
+                      "enum": [
+                        "sort",
+                        "reject"
+                      ],
+                      "type": "string"
+                    },
+                    "replace_existing": {
+                      "default": false,
+                      "description": "replace a stored session with the same provider, event, session type, driver and year",
+                      "type": "boolean"
+                    },
+                    "tz_offset": {
+                      "anyOf": [
+                        {
+                          "maxLength": 10,
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "UTC offset for timestamps that carry none, e.g. +02:00"
+                    },
+                    "units": {
+                      "description": "Units of the file's time, speed and distance columns; omitted means seconds, kph and metres.",
+                      "properties": {
+                        "distance": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "m | km | ft"
+                        },
+                        "speed": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "kph | mph | m/s"
+                        },
+                        "time": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "description": "s | ms (or seconds | milliseconds)"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "file_hash"
+                  ],
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "csv_upload only: staged file hash, Column_Mapping, units, policies and Session_Metadata"
+            },
             "drivers": {
               "description": "Driver codes to import; empty means all drivers in the session",
               "items": {
@@ -2829,10 +3766,17 @@
               "type": "array"
             },
             "event": {
-              "description": "Grand Prix name or circuit location, e.g. 'Monza' or 'Italian Grand Prix'",
-              "maxLength": 120,
-              "minLength": 1,
-              "type": "string"
+              "anyOf": [
+                {
+                  "maxLength": 120,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Grand Prix name or circuit location, e.g. 'Monza' or 'Italian Grand Prix' (required for openf1)"
             },
             "include_position": {
               "default": true,
@@ -2852,9 +3796,12 @@
               "type": "boolean"
             },
             "provider": {
-              "const": "openf1",
               "default": "openf1",
               "description": "Historical data source: OpenF1 (free, no account, 2023 onwards)",
+              "enum": [
+                "openf1",
+                "csv_upload"
+              ],
               "type": "string"
             },
             "race_datasets": {
@@ -2878,23 +3825,32 @@
               "type": "boolean"
             },
             "session": {
-              "description": "Session type code (FP1, FP2, FP3, Q, S, R) or session name",
-              "maxLength": 40,
-              "minLength": 1,
-              "type": "string"
+              "anyOf": [
+                {
+                  "maxLength": 40,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Session type code (FP1, FP2, FP3, Q, S, R) or session name (required for openf1)"
             },
             "year": {
-              "description": "Season year; OpenF1 historical data is available from 2023 onwards",
-              "maximum": 2100.0,
-              "minimum": 2023.0,
-              "type": "integer"
+              "anyOf": [
+                {
+                  "maximum": 2100.0,
+                  "minimum": 2023.0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Season year; OpenF1 historical data is available from 2023 onwards (required for openf1; csv_upload takes it from csv.metadata)"
             }
           },
-          "required": [
-            "year",
-            "event",
-            "session"
-          ],
           "type": "object"
         },
         "parameters": [
@@ -3091,6 +4047,79 @@
             "name": "import_id",
             "required": true,
             "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "response": {
+        "200": null,
+        "422": {
+          "properties": {
+            "detail": {
+              "items": {
+                "properties": {
+                  "ctx": {
+                    "type": "object"
+                  },
+                  "input": {},
+                  "loc": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  "msg": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "loc",
+                  "msg",
+                  "type"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/historical/imports/{import_id}/decision",
+      "request": {
+        "body": null,
+        "parameters": [
+          {
+            "in": "path",
+            "name": "import_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "choice",
+            "required": true,
+            "schema": {
+              "enum": [
+                "replace",
+                "cancel"
+              ],
               "type": "string"
             }
           }
@@ -4056,6 +5085,228 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          }
+        ]
+      },
+      "response": {
+        "200": null,
+        "422": {
+          "properties": {
+            "detail": {
+              "items": {
+                "properties": {
+                  "ctx": {
+                    "type": "object"
+                  },
+                  "input": {},
+                  "loc": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  "msg": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "loc",
+                  "msg",
+                  "type"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/historical/sessions/{session_id}/setup-link",
+      "request": {
+        "body": {
+          "description": "Selection and Setup_Configuration of a Setup_Link submission (validated by LabService.setup_link, which names every problem).",
+          "properties": {
+            "driver": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "experiment_id": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "factors": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "laps": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "metrics": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "new_experiment": {
+              "anyOf": [
+                {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "response": {
+        "201": null,
+        "422": {
+          "properties": {
+            "detail": {
+              "items": {
+                "properties": {
+                  "ctx": {
+                    "type": "object"
+                  },
+                  "input": {},
+                  "loc": {
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer"
+                        }
+                      ]
+                    },
+                    "type": "array"
+                  },
+                  "msg": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "loc",
+                  "msg",
+                  "type"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "type": "object"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/api/historical/sessions/{session_id}/setup-link/options",
+      "request": {
+        "body": null,
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "driver",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "laps",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "integer"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         ]

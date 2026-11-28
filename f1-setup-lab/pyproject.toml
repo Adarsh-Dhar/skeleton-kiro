@@ -11,6 +11,7 @@ dependencies = [
   "trialforge-core>=0.2.0,<0.3",   # TRIALFORGE SDK (installed from the SDK wheel)
   "fastapi>=0.110",
   "uvicorn>=0.29",
+  "python-multipart>=0.0.9",       # multipart upload for the CSV import endpoints
   "sqlalchemy>=2",
   "pandas>=2",
   "numpy>=1.26",
@@ -28,6 +29,7 @@ where = ["backend"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = ["slow: long-running tests (CSV lifecycle)"]
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 

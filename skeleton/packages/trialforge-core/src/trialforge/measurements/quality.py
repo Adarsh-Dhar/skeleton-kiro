@@ -27,6 +27,7 @@ INVALID_FLAGS = frozenset(
         "unexpected_time_series",
         "missing_sample_index",
         "invalid_timestamp",
+        "unverified_setup",
     }
 )
 OUTLIER_FLAGS = frozenset({"statistical_outlier"})

@@ -176,7 +176,8 @@ def test_a_finished_import_does_not_pull_the_user_away_from_another_page(page):
 def test_changing_a_selection_resets_the_dependent_controls(page):
     ready(page, "#/hist")
     page.wait_for_selector(".hdrv")
-    assert page.is_disabled("#hprov") and page.eval_on_selector_all("#hprov option", "os => os.map(o => o.value)") == ["openf1"]
+    assert page.is_enabled("#hprov") and page.eval_on_selector_all("#hprov option", "os => os.map(o => o.innerText)") == ["OpenF1", "CSV Upload"]
+    assert page.is_hidden("#hcsv")
     assert page.is_enabled("#dsgrid") and page.is_enabled("#dsgaps")
     page.select_option("#hsession", "Q")  # qualifying: race-only datasets switch off and the roster reloads
     page.wait_for_function("document.querySelector('#hdrivers').querySelectorAll('.hdrv').length === 2")
@@ -263,4 +264,35 @@ def test_import_the_whole_field_and_every_analysis_tab(page):
     page.click(".tabs a:has-text('Telemetry')")
     page.wait_for_selector("#htrkout svg")
     assert "raw state codes" in page.inner_text("#htrkout").lower() and "estimate" in page.inner_text("#htrkout").lower()
+    assert page.errors == []
+
+
+def test_csv_upload_workflow_runs_all_six_steps_and_opens_the_imported_session(page, tmp_path):
+    ready(page, "#/hist")
+    page.select_option("#hprov", "csv_upload")
+    assert page.is_hidden("#hopenf1") and page.is_visible("#hcstepper")
+    csv = tmp_path / "run.csv"
+    csv.write_text("session_time_s,speed_kph,throttle_pct,lap_number\n" + "\n".join(f"{i * 0.5},{200 + i},{50 + i},1" for i in range(20)) + "\n")
+    assert page.is_disabled("#hcnext")  # nothing uploaded yet
+    page.set_input_files("#hcfile", str(csv))
+    page.wait_for_function("!document.querySelector('#hcnext').disabled")
+    page.click("#hcnext")  # mapping
+    page.click("#hcnext")  # units
+    page.select_option("#hcu-speed", "mph")
+    page.click("#hcnext")  # metadata
+    assert page.is_disabled("#hcnext")
+    for k, v in {"year": "2025", "event": "Test GP", "circuit": "Test", "session_type": "R", "driver": "VER", "session_date": "2025-03-01", "timezone": "UTC"}.items():
+        page.fill(f"#hcm-{k}", v)
+    page.click("#hcnext")  # validation and preview
+    page.wait_for_selector("#hcgraphs svg", timeout=3000)
+    page.wait_for_function("!document.querySelector('#hcnext').disabled")
+    page.click("#hcback")
+    page.click("#hcback")  # back to units: the choice is retained
+    assert page.input_value("#hcu-speed") == "mph"
+    page.click("#hcnext")
+    page.click("#hcnext")
+    page.wait_for_function("!document.querySelector('#hcnext').disabled")
+    page.click("#hcnext")
+    page.click("#hcstart")
+    page.wait_for_function("location.hash.startsWith('#/hist/') && location.hash.endsWith('/overview')", timeout=30000)
     assert page.errors == []

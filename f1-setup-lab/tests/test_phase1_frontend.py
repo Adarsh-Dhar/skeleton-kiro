@@ -81,7 +81,7 @@ def stack(tmp_path_factory):
     app = create_app(str(root / "trialforge.db"), openf1_client_factory=lambda: fake_client(root / "openf1-cache", fake)[0])
     import pandas as pd
     app.state.historical.repo.save_session(
-        "exp1", {"session_id": "exp1", "provider": "openf1", "year": 2024, "event": "Export GP", "session": "Race", "session_type": "R",
+        "exp1", {"session_id": "exp1", "provider": "openf1", "source_type": "external_provider", "verification": "verified", "year": 2024, "event": "Export GP", "session": "Race", "session_type": "R",
                  "session_date": "2024-03-01", "drivers": [{"code": "VER", "number": "1", "name": "Max VERSTAPPEN", "team": "RB"}], "channels": {}},
         pd.DataFrame({"driver": ["VER", "VER"], "lap_number": [1, 2], "lap_time_s": [90.0, 89.0]}), None, {}, {})
     s = socket.socket()

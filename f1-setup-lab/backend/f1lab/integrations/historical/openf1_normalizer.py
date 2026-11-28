@@ -449,7 +449,8 @@ def teams_championship(rows: list[dict]) -> list[dict]:
 
 def build_manifest(info: dict, drivers: list[dict], channels: dict, session_slug: str) -> dict:
     return {
-        "provider": PROVIDER, "source_label": SOURCE_LABEL, "session_id": session_slug, "year": info["year"],
+        "provider": PROVIDER, "source_type": "external_provider", "verification": "verified",
+        "source_label": SOURCE_LABEL, "session_id": session_slug, "year": info["year"],
         "event": info["event"], "event_official": info.get("event_official"), "location": info.get("location"),
         "round": info.get("round"), "circuit": info.get("circuit"), "session": info["session_name"],
         "session_type": info["session_type"], "session_date": info.get("session_date"), "session_url": info.get("session_url"),

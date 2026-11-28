@@ -402,3 +402,118 @@ async function viewReport(id) {
   } catch (e) { $('#rep').innerHTML = errorsBox(e); }
 }
 
+/* ------------------------------------------------------------------ Setup_Link (Req 13.10, 14.1, 15.2-15.4, 15.9, 15.10)
+   Sends selected imported measurements to an experiment. Opened from #/setup-link/{session_id}. The pure helpers below
+   (no DOM) are exported on SetupLinkUI for tests. */
+const SETUP_LINK_METRIC_LABELS = { lap_time: 'Lap time', sector_1: 'Sector 1', sector_2: 'Sector 2', sector_3: 'Sector 3', top_speed: 'Top speed' };
+/* Provenance badge of the session: the shared HistAnalysis helper (chip class external/imported/synthetic). */
+const setupLinkBadge = (s) => (typeof HistAnalysis !== 'undefined' ? HistAnalysis.provenanceBadge(s)
+  : `<span class="chip external provenance-badge">${esc((s && s.provenance_status) || 'PROVENANCE UNKNOWN')}</span>`);
+/* Metric checkboxes: an unavailable metric is disabled and never selectable. */
+function setupLinkMetricsHtml(metrics, selected) {
+  return (metrics || []).map((m) => {
+    const ok = m.available !== false, on = ok && (selected || []).includes(m.metric);
+    return `<label class="check${ok ? '' : ' dim'}"><input type="checkbox" name="sl-metric" value="${esc(m.metric)}"${ok ? '' : ' disabled'}${on ? ' checked' : ''}> ${esc(SETUP_LINK_METRIC_LABELS[m.metric] || m.metric)}`
+      + ` <span class="mono dim">${esc(m.unit || '')}</span>${ok ? '' : ' <em class="unavailable">unavailable for this selection</em>'}</label>`;
+  }).join('');
+}
+/* One row per experiment factor: a value and a verified/unverified statement. */
+function setupLinkFactorsHtml(factors, values) {
+  values = values || {};
+  return `<table><thead><tr><th>Factor</th><th class="num">Value</th><th>Setup statement</th><th></th></tr></thead><tbody>${factors.map((f) => {
+    const v = values[f.name] || {};
+    return `<tr data-factor="${esc(f.name)}"><td>${esc(f.label || f.name)}${f.unit ? ` <span class="dim mono">${esc(f.unit)}</span>` : ''}</td>`
+      + `<td class="num"><input type="text" class="sl-value" inputmode="decimal" value="${esc(v.value ?? '')}"></td>`
+      + `<td><select class="sl-verified"><option value=""${v.verified == null ? ' selected' : ''}>Select&hellip;</option><option value="true"${v.verified === true ? ' selected' : ''}>Verified</option>`
+      + `<option value="false"${v.verified === false ? ' selected' : ''}>Unverified</option></select></td><td class="sl-ferr badc"></td></tr>`;
+  }).join('')}</tbody></table>`;
+}
+/* Factors that lack a value or a verified/unverified statement: one error per factor. */
+function setupLinkMissingFactors(factors, values) {
+  return factors.filter((f) => {
+    const v = (values || {})[f.name] || {};
+    return v.value == null || String(v.value).trim() === '' || typeof v.verified !== 'boolean';
+  }).map((f) => f.name);
+}
+/* Success message and the link to the analysis view of the target experiment. */
+function setupLinkSuccessHtml(r) {
+  return `<div class="note ok" id="sl-success" role="status"><b>${esc(r.measurements_created)} measurement${r.measurements_created === 1 ? '' : 's'} created</b> in experiment <span class="mono">${esc(r.experiment_id)}</span>`
+    + `${r.verified ? '' : ' (unverified setup: kept but excluded from analysis and training)'}. <a id="sl-analysis-link" href="#/e/${encodeURIComponent(r.experiment_id)}/analysis">Open the analysis view</a></div>`;
+}
+/* Failure: the reason is shown and nothing is cleared, so the user's entries stay in the form. */
+const setupLinkFailureHtml = (e) => `<div class="errors" id="sl-failure" role="alert"><b>Nothing was sent. Your entries are kept.</b>${errorsBox(e)}</div>`;
+const SetupLinkUI = { setupLinkMetricsHtml, setupLinkFactorsHtml, setupLinkMissingFactors, setupLinkSuccessHtml, setupLinkFailureHtml, setupLinkBadge };
+if (typeof module !== 'undefined' && module.exports) module.exports = SetupLinkUI;
+
+async function viewSetupLink(sid) {
+  const base = `/api/historical/sessions/${encodeURIComponent(sid)}`;
+  view().innerHTML = '<div class="dim">Loading&hellip;</div>';
+  const [session, drivers, exps] = await Promise.all([api('GET', base), api('GET', `${base}/drivers`), api('GET', '/api/experiments')]);
+  const st = { driver: '', laps: [], allLaps: [], metrics: [], metricList: [], target: exps[0] ? exps[0].id : '__new__', factors: [], values: {} };
+  const sel = (id) => $(id);
+  view().innerHTML = `<div class="row"><div><h1>Use telemetry in Setup Experiment</h1><p class="sub">${esc(session.event || sid)} &middot; ${esc(session.session || '')} &middot; ${setupLinkBadge(session)}</p></div>
+    <div class="spacer"></div><a class="btn" href="#/hist/${encodeURIComponent(sid)}">Back to the session</a></div>
+    <div class="panel"><h2>1. Driver, laps and metrics</h2><div class="row"><label>Driver <select id="sl-driver"><option value="">Select&hellip;</option>
+      ${drivers.map((d) => `<option value="${esc(d.code)}">${esc(d.code)}${d.name ? ' ' + esc(d.name) : ''}</option>`).join('')}</select></label></div>
+      <div id="sl-laps" class="dim">Select a driver to list laps.</div><div id="sl-metrics"></div></div>
+    <div class="panel"><h2>2. Target experiment</h2><div class="row"><label>Experiment <select id="sl-target">${exps.map((e) => `<option value="${esc(e.id)}">${esc(e.name)} (${esc(e.id)})</option>`).join('')}
+      <option value="__new__">New experiment&hellip;</option></select></label><label id="sl-newname-wrap" hidden>Name <input id="sl-newname" type="text" maxlength="80"></label></div></div>
+    <div class="panel"><h2>3. Setup the car had in these laps</h2><div id="sl-factors" class="dim">Loading&hellip;</div>
+      <p class="hint">Mark each value Verified or Unverified. An unverified setup is kept but excluded from analysis and training.</p></div>
+    <div id="sl-msg"></div><div class="row"><button class="btn primary" id="sl-send">Send to experiment</button></div>`;
+  const readFactors = () => {
+    document.querySelectorAll('#sl-factors tr[data-factor]').forEach((tr) => {
+      const v = tr.querySelector('.sl-verified').value;
+      st.values[tr.dataset.factor] = { value: tr.querySelector('.sl-value').value, verified: v === '' ? null : v === 'true' };
+    });
+  };
+  const drawFactors = () => {
+    sel('#sl-factors').innerHTML = st.factors.length ? setupLinkFactorsHtml(st.factors, st.values) : '<span class="dim">No factors.</span>';
+    sel('#sl-factors').classList.remove('dim');
+  };
+  const loadFactors = async () => {
+    readFactors();
+    sel('#sl-newname-wrap').hidden = st.target !== '__new__';
+    if (st.target === '__new__') st.factors = Object.keys(META.factors).map((n) => ({ name: n, label: META.factors[n].label, unit: META.factors[n].unit }));
+    else st.factors = (await api('GET', `/api/experiments/${encodeURIComponent(st.target)}`)).factors;
+    drawFactors();
+  };
+  const loadOptions = async () => {
+    if (!st.driver) { sel('#sl-laps').innerHTML = 'Select a driver to list laps.'; sel('#sl-metrics').innerHTML = ''; return; }
+    const q = `driver=${encodeURIComponent(st.driver)}` + st.laps.map((l) => `&laps=${l}`).join('');
+    const o = await api('GET', `${base}/setup-link/options?${q}`);
+    st.allLaps = o.laps; st.metricList = o.metrics;
+    st.metrics = st.metrics.filter((m) => o.metrics.some((x) => x.metric === m && x.available));
+    sel('#sl-laps').innerHTML = o.laps.length ? o.laps.map((l) => `<label class="check"><input type="checkbox" name="sl-lap" value="${l}"${st.laps.includes(l) ? ' checked' : ''}> ${l}</label>`).join(' ') : 'No laps stored for this driver.';
+    sel('#sl-metrics').innerHTML = setupLinkMetricsHtml(o.metrics, st.metrics);
+  };
+  sel('#sl-driver').addEventListener('change', async (ev) => { st.driver = ev.target.value; st.laps = []; st.metrics = []; try { await loadOptions(); } catch (e) { sel('#sl-msg').innerHTML = errorsBox(e); } });
+  sel('#sl-laps').addEventListener('change', async () => {
+    st.laps = [...document.querySelectorAll('input[name=sl-lap]:checked')].map((i) => Number(i.value));
+    st.metrics = [...document.querySelectorAll('input[name=sl-metric]:checked')].map((i) => i.value);
+    try { await loadOptions(); } catch (e) { sel('#sl-msg').innerHTML = errorsBox(e); }
+  });
+  sel('#sl-metrics').addEventListener('change', () => { st.metrics = [...document.querySelectorAll('input[name=sl-metric]:checked')].map((i) => i.value); });
+  sel('#sl-target').addEventListener('change', async (ev) => { st.target = ev.target.value; try { await loadFactors(); } catch (e) { sel('#sl-msg').innerHTML = errorsBox(e); } });
+  sel('#sl-send').addEventListener('click', async () => {
+    readFactors();
+    const msg = sel('#sl-msg'); msg.innerHTML = '';
+    document.querySelectorAll('.sl-ferr').forEach((c) => (c.textContent = ''));
+    const missing = setupLinkMissingFactors(st.factors, st.values);
+    if (missing.length) {
+      missing.forEach((n) => { const c = document.querySelector(`tr[data-factor="${CSS.escape(n)}"] .sl-ferr`); if (c) c.textContent = 'needs a value and a verified/unverified statement'; });
+      msg.innerHTML = setupLinkFailureHtml(new ApiError(422, missing.map((n) => ({ field: n, message: 'needs a value and a verified/unverified statement' }))));
+      return;
+    }
+    const factors = {};
+    st.factors.forEach((f) => { factors[f.name] = { value: st.values[f.name].value, verified: st.values[f.name].verified }; });
+    const body = { driver: st.driver, laps: st.laps, metrics: st.metrics, factors };
+    if (st.target === '__new__') body.new_experiment = { name: sel('#sl-newname').value.trim() || `Telemetry ${sid}`.slice(0, 80) };
+    else body.experiment_id = st.target;
+    const btn = sel('#sl-send'); btn.disabled = true;
+    try { msg.innerHTML = setupLinkSuccessHtml(await api('POST', `${base}/setup-link`, body)); }
+    catch (e) { msg.innerHTML = setupLinkFailureHtml(e); }  // entries stay in the form
+    finally { btn.disabled = false; }
+  });
+  await loadFactors();
+}

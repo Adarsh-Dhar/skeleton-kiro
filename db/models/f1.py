@@ -52,6 +52,31 @@ class HistSession(Base):
     session_type: Mapped[str | None] = mapped_column(String(10), nullable=True)
     manifest_json: Mapped[str] = mapped_column(Text)
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # Session_Metadata incl. unavailable markers
+    source_type: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    verification: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    file_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+
+class HistColumnMapping(Base):
+    """Confirmed column mapping, units and policies of a CSV-uploaded session. Deleted with its session."""
+
+    __tablename__ = "f1_hist_column_mapping"
+    session_id: Mapped[str] = mapped_column(String(200), ForeignKey("f1_hist_session.session_id", ondelete="CASCADE"), primary_key=True)
+    mapping_json: Mapped[str] = mapped_column(Text)
+    units_json: Mapped[str] = mapped_column(Text)
+    duplicate_policy: Mapped[str] = mapped_column(String(30))
+    order_policy: Mapped[str] = mapped_column(String(30))
+
+
+class CsvUpload(Base):
+    """A staged CSV upload, keyed by the SHA-256 of its bytes. Exists before any session does."""
+
+    __tablename__ = "f1_csv_upload"
+    file_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    original_filename: Mapped[str] = mapped_column(String(255))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
 class HistFrame(Base):

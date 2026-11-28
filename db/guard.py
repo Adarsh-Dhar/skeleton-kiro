@@ -47,6 +47,8 @@ HISTORICAL_TABLES: frozenset[str] = frozenset(
         "f1_hist_weather",
         "f1_hist_telemetry",
         "f1_hist_position",
+        "f1_hist_column_mapping",
+        "f1_csv_upload",
         "f1_import_job",
     }
 )

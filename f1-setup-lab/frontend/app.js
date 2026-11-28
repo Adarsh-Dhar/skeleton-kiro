@@ -75,6 +75,12 @@ async function route() {
       if (fn) { setNav('experiments'); showNotice('synthetic'); return await fn(parts[1]); }
     }
     if (head === 'hist') { setNav(parts[1] ? 'sessions' : 'hist'); showNotice('historical'); return parts[1] ? await viewHistSession(parts[1], parts[2] || 'overview') : await viewHist(); }
+    if (head === 'setup-link' && parts[1]) {  // opened by the "Use telemetry in Setup Experiment" action; the form is viewSetupLink in setup_lab.js
+      setNav('sessions'); showNotice('historical');
+      if (typeof viewSetupLink === 'function') return await viewSetupLink(decodeURIComponent(parts[1]));
+      view().innerHTML = `<div class="empty"><h2>Setup Experiment form unavailable</h2><p>This build has no form for sending telemetry to an experiment.</p><a href="#/hist/${esc(parts[1])}">Back to the session</a></div>`;
+      return;
+    }
     if (head === 'sessions') { setNav('sessions'); showNotice('historical'); return await viewSessions(); }
     if (head === 'standings') { setNav('standings'); showNotice('historical'); return await HistAnalysis.viewStandings(parts[1] ? decodeURIComponent(parts[1]) : undefined); }
     if (head === 'season') { setNav('season'); showNotice('historical'); return await HistAnalysis.viewSeason(); }
@@ -98,10 +104,7 @@ const histSwatch = (drivers, code, fb) => `<span style="color:${histColour(drive
 const histChipFor = (m) => `<span class="chip hist">${esc(m.source_label || 'HISTORICAL F1 · OPENF1')}</span>`;
 /* OpenF1 brake data is an on/off flag stored as brake_applied (0/100); brake_pct is a fallback. */
 const brakeOf = (pts) => (pts.some((p) => p.brake_applied != null) ? 'brake_applied' : 'brake_pct');
-const sessionsTable = (list) => (list.length ? `<table><thead><tr><th>Session</th><th>Season</th><th>Circuit</th><th class="num">Drivers</th><th>Imported</th><th></th></tr></thead><tbody>
-  ${list.map((s) => `<tr><td><b>${esc(s.event)}</b><div class="dim mono">${esc(s.session)} &middot; ${esc(s.session_id)}</div></td><td class="num">${esc(s.year)}</td><td>${esc(s.circuit || s.location || '&mdash;')}</td>
-  <td class="num">${(s.drivers || []).length}</td><td class="dim mono">${esc((s.imported_at || '').slice(0, 10))}</td><td><a class="btn small" href="#/hist/${esc(s.session_id)}">Open</a></td></tr>`).join('')}</tbody></table>`
-  : '<div class="empty">No sessions imported yet. <a href="#/hist">Import one</a>.</div>');
+const sessionsTable = (list) => HistAnalysis.sessionsTable(list);
 
 /* Import page (landing page): choose a session, import it, and the analysis opens when the import finishes. */
 async function viewHist() {
@@ -124,7 +127,7 @@ async function viewHist() {
     } catch (e) { $('#hist-jobs').innerHTML = errorsBox(e); }
   };
   const loadLibrary = async () => {
-    try { $('#hist-lib').innerHTML = sessionsTable(await api('GET', '/api/historical/sessions')); } catch (e) { $('#hist-lib').innerHTML = errorsBox(e); }
+    await HistAnalysis.loadSessionList($('#hist-lib'), { api });
   };
   await loadLibrary();
   await loadJobs();
@@ -132,15 +135,15 @@ async function viewHist() {
 
 /* Library of imported sessions. */
 async function viewSessions() {
-  view().innerHTML = `<div class="row"><div><h1>Imported sessions</h1><p class="sub">Real Formula 1 sessions imported from OpenF1, stored in the local database.</p></div><div class="spacer"></div><a class="btn primary" href="#/hist">Import a session</a></div>
+  view().innerHTML = `<div class="row"><div><h1>Imported sessions</h1><p class="sub">Sessions imported from OpenF1 or a CSV file, stored in the local database. Each row shows its provider, data type and where the data came from.</p></div><div class="spacer"></div><a class="btn primary" href="#/hist">Import a session</a></div>
     <div class="panel" id="hist-lib"><div class="dim">Loading&hellip;</div></div>`;
-  $('#hist-lib').innerHTML = sessionsTable(await api('GET', '/api/historical/sessions'));
+  await HistAnalysis.loadSessionList($('#hist-lib'), { api });
 }
 
 async function viewHistSession(id, tab) {
   const m = await api('GET', `/api/historical/sessions/${id}`);
   view().innerHTML = `<div class="row"><div><h1>${esc(m.event)} ${m.round ? `<span class="dim">&middot; Round ${esc(m.round)}</span>` : ''}</h1>
-    <p class="sub">${esc(m.circuit || '')} &middot; ${esc(m.session)} (${esc(m.session_type)}) &middot; ${esc(m.session_date || '')} &middot; ${histChipFor(m)}</p></div><div class="spacer"></div><a class="btn" href="#/sessions">All sessions</a></div>
+    <p class="sub">${esc(m.circuit || '')} &middot; ${esc(m.session)} (${esc(m.session_type)}) &middot; ${esc(m.session_date || '')} &middot; ${m.provider === 'openf1' || !m.provider ? histChipFor(m) + ' ' : ''}${HistAnalysis.sessionFacts(m)}</p></div><div class="spacer"></div>${HistAnalysis.setupAction(id)} <a class="btn" href="#/sessions">All sessions</a></div>
     <div id="hist-export"></div>
     <div class="tabs">${histTabs().map(([k, n]) => `<a href="#/hist/${esc(id)}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div><div id="hist-body"><div class="dim">Loading&hellip;</div></div>`;
   const body = $('#hist-body');
@@ -199,10 +202,14 @@ async function viewHistSession(id, tab) {
     const show = async () => {
       const code = $('#htrkdrv').value, lap = $('#htrklap').value ? +$('#htrklap').value : null;
       if (tab === 'telemetry') {
+        if (HistAnalysis.isLapSummaries(m)) { $('#htrkout').innerHTML = HistAnalysis.channelsUnavailable() + HistAnalysis.lapSectorTables(await lapsFor(code)); return; }
         const r = await api('GET', `/api/historical/sessions/${id}/telemetry?driver=${encodeURIComponent(code)}${lap ? `&lap=${lap}` : ''}&limit=1500`);
-        $('#htrkout').innerHTML = r.samples.length ? histTraceCharts(r.samples) + `<p class="hint">${r.count} samples${lap ? ` on lap ${lap}` : ''} &middot; distance on the x-axis (an estimate: speed integrated within the lap) &middot; throttle is a percentage; brake is an on/off flag (the timing feed publishes no brake pressure); DRS is a raw state code.</p>` : '<div class="empty">No telemetry stored for this driver/lap.</div>';
+        $('#htrkout').innerHTML = histTraceCharts(r.samples) + (r.samples.length ? `<p class="hint">${r.count} samples${lap ? ` on lap ${lap}` : ''} &middot; distance on the x-axis (an estimate: speed integrated within the lap) &middot; throttle is a percentage; brake is an on/off flag (the timing feed publishes no brake pressure); DRS is a raw state code.</p>` : '');
       } else {
+        if (HistAnalysis.isLapSummaries(m)) { $('#htrkout').innerHTML = HistAnalysis.unavailableChart('Track map', HistAnalysis.trackMissing([]), 'track'); return; }
         const r = await api('GET', `/api/historical/sessions/${id}/track-map?driver=${encodeURIComponent(code)}${lap ? `&lap=${lap}` : ''}`);
+        const noPos = HistAnalysis.trackMissing(r.points || []);
+        if (noPos.length) { $('#htrkout').innerHTML = HistAnalysis.unavailableChart('Track map', noPos, 'track'); return; }
         $('#htrkout').innerHTML = `<div class="panel"><div class="mono">${histSwatch(drivers, $('#htrkdrv').value, '#94a3b8')}<b>${esc($('#htrkdrv').value)}</b></div>${Charts.trackMap({ points: r.points || [], corners: r.corners || [] })}</div><p class="hint">Actual X/Y location from the timing feed${lap ? `, lap ${lap}` : ', fastest available lap stream'}. OpenF1 coordinates are approximate, in OpenF1's own units with an arbitrary origin (not verified as metres); no corner markers are available. Running order (P1, P2, ...) is a different dataset: see the Race tab.</p>`;
       }
     };
@@ -210,6 +217,7 @@ async function viewHistSession(id, tab) {
     $('#htrklap').addEventListener('change', show);
     await fillLaps(); show();
   } else if (tab === 'compare') {
+    if (HistAnalysis.isLapSummaries(m)) { body.innerHTML = '<div class="note info">Driver comparison needs sampled telemetry, which this session does not hold.</div>' + HistAnalysis.channelsUnavailable(); return; }
     const [a, b] = drivers.length >= 2 ? [drivers[0].code, drivers[1].code] : [drivers[0]?.code, drivers[0]?.code];
     body.innerHTML = `<div class="panel"><div class="grid g3">
       <div class="field"><label>Driver A</label><select id="hcmpa">${drvOpts(a)}</select></div>
@@ -272,18 +280,7 @@ async function viewHistSession(id, tab) {
 /* Speed/throttle/brake/RPM/gear/DRS traces vs distance for a historical lap.
    OpenF1's brake channel is an on/off 'brake pressed' flag, stored as brake_applied (0/100);
    brake_pct only exists if a source ever provides a real percentage. */
-function histTraceCharts(samples) {
-  const s = (key, name, color, scale = 1) => ({ name, color, pts: downsample(samples.map((p) => ({ x: p.distance_m, y: p[key] == null ? null : p[key] * scale })).filter((p) => p.y !== null && !Number.isNaN(p.y))) });
-  const brakeKey = samples.some((p) => p.brake_applied != null) ? 'brake_applied' : 'brake_pct';
-  const brakeName = brakeKey === 'brake_applied' ? 'brake applied' : 'brake';
-  return `<div class="grid g2">
-    <div class="panel"><h2>Speed</h2>${Charts.lines({ series: [s('speed_kph', 'speed', '#e10600')], xLabel: 'distance (m)', yLabel: 'km/h' })}</div>
-    <div class="panel"><h2>Throttle &amp; brake</h2>${Charts.lines({ series: [s('throttle_pct', 'throttle', '#2ecc71'), s(brakeKey, brakeName, '#e10600')], xLabel: 'distance (m)', yLabel: '%' })}</div>
-    <div class="panel"><h2>RPM</h2>${Charts.lines({ series: [s('rpm', 'rpm', '#ffb400')], xLabel: 'distance (m)', yLabel: 'rpm' })}</div>
-    <div class="panel"><h2>Gear</h2>${Charts.lines({ series: [s('gear', 'gear', '#c99bff')], xLabel: 'distance (m)', yLabel: 'gear' })}</div>
-    <div class="panel"><h2>DRS state</h2>${Charts.lines({ series: [s('drs', 'drs state code', '#00cec9')], stepped: true, noDots: true, xLabel: 'distance (m)', yLabel: 'raw DRS code', ymin: -0.5, ymax: 14.5 })}
-      <p class="hint">Raw state codes, not a 0/1 flag: 0 and 1 = off, 8 = detected (eligible in the activation zone), 10, 12 and 14 = on. Codes 2, 3 and 9 are undocumented.</p></div></div>`;
-}
+function histTraceCharts(samples) { return HistAnalysis.traceCharts(samples, { downsample }); }
 
 /* -------------------------------------------------------------------- boot */
 (async () => {

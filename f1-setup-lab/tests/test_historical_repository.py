@@ -21,7 +21,7 @@ def _repo(tmp_path):
 
 
 def _manifest(sid, drivers=("VER",)):
-    return {"session_id": sid, "provider": "openf1", "year": 2024, "event": "Italian Grand Prix", "session_type": "Q",
+    return {"session_id": sid, "provider": "openf1", "source_type": "external_provider", "verification": "verified", "year": 2024, "event": "Italian Grand Prix", "session_type": "Q",
             "drivers": [{"code": d, "number": str(i + 1)} for i, d in enumerate(drivers)], "channels": {}}
 
 

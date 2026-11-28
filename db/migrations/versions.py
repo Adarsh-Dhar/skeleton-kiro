@@ -160,6 +160,31 @@ def _m012_ww_source_evidence(conn: Connection) -> None:
 def _m013_ww_bill_reconciliation(conn: Connection) -> None:
     """Bill reconciliations: a billing period priced from meter readings vs the real bill. Additive only."""
     create_tables(conn, "ww_bill_reconciliation")
+
+
+def _m014_f1_csv_upload(conn: Connection) -> None:
+    """Registry of staged CSV uploads (hash, file name, size). Additive only."""
+    create_tables(conn, "f1_csv_upload")
+
+
+def _m015_f1_hist_csv_metadata(conn: Connection) -> None:
+    """Add ``metadata_json``, ``source_type``, ``verification`` and ``file_hash`` to ``f1_hist_session`` (each only if missing,
+    because migration 2 builds the table from the current models), backfill existing OpenF1 rows, and create the column-mapping
+    table. Additive only: no existing row is removed or changed except the NULL backfill columns of OpenF1 sessions."""
+    from sqlalchemy import text
+
+    existing = {r[1] for r in conn.execute(text('PRAGMA table_info("f1_hist_session")'))}
+    for name, ddl in (("metadata_json", "TEXT"), ("source_type", "VARCHAR(40)"), ("verification", "VARCHAR(20)"), ("file_hash", "VARCHAR(64)")):
+        if name not in existing:
+            conn.execute(text(f'ALTER TABLE f1_hist_session ADD COLUMN {name} {ddl}'))
+    conn.execute(text("CREATE INDEX IF NOT EXISTS ix_f1_hist_session_file_hash ON f1_hist_session (file_hash)"))
+    conn.execute(text(
+        "UPDATE f1_hist_session SET source_type = 'external_provider' WHERE provider = 'openf1' AND source_type IS NULL"
+    ))
+    conn.execute(text("UPDATE f1_hist_session SET verification = 'verified' WHERE provider = 'openf1' AND verification IS NULL"))
+    create_tables(conn, "f1_hist_column_mapping")
+
+
 MIGRATIONS: list[Migration] = [
     Migration(1, "experiment owner table", _m001_owner),
     Migration(2, "f1 historical sessions", _m002_f1_historical),
@@ -174,4 +199,6 @@ MIGRATIONS: list[Migration] = [
     Migration(11, "wattwise meter provenance and solar export", _m011_ww_provenance_and_export),
     Migration(12, "wattwise source evidence archive", _m012_ww_source_evidence),
     Migration(13, "wattwise bill reconciliation", _m013_ww_bill_reconciliation),
+    Migration(14, "f1 csv upload registry", _m014_f1_csv_upload),
+    Migration(15, "f1 historical csv metadata columns and column mapping", _m015_f1_hist_csv_metadata),
 ]

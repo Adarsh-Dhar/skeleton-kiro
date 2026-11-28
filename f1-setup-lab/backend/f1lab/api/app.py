@@ -9,6 +9,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated, Literal
 
 import trialforge
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -35,18 +36,25 @@ from f1lab.adapters.vehicle_model import FACTORS
 from f1lab.api.schemas import (
     METHODS,
     AnalysisRequest,
+    CsvPreviewResponse,
+    CsvSessionExistsQuery,
+    CsvSessionExistsResponse,
+    CsvValidateRequest,
     ExperimentRequest,
     OptimiseRequest,
+    SetupLinkRequest,
     TelemetryRequest,
     default_factors,
 )
+from f1lab.integrations.historical import csv_importer
 from f1lab.integrations.historical.openf1_client import MIN_YEAR, OpenF1Error
 from f1lab.integrations.historical.schemas import HistoricalCompareRequest, HistoricalImportRequest, SeasonCompareRequest
-from f1lab.integrations.historical.service import HistoricalService
+from f1lab.integrations.historical.service import HistoricalService, StorageError
 from f1lab.services import lab as lab_module
 from f1lab.services.lab import DESIGN_CONTROLS, LabService
 
 log = logging.getLogger("f1lab.api")
+CSV_MULTIPART_SLACK = 64 * 1024  # multipart framing around the file bytes in a Content-Length
 
 DEFAULT_FRONTEND = Path(__file__).resolve().parents[3] / "frontend"
 METHOD_INFO = {
@@ -94,6 +102,8 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
     if lab_engine is not None and lab_engine is not engine:
         install_guard(lab_engine, "setup")
     hist = HistoricalService(engine, data_dir / "openf1-cache", openf1_client_factory=openf1_client_factory)
+    if hasattr(lab, "linked_experiments"):
+        hist.set_experiment_link_lookup(lab.linked_experiments)  # deletion warns about linked sessions (Req 10.9)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -126,6 +136,17 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
     @app.exception_handler(DesignError)
     async def _design(_: Request, exc: Exception):
         return JSONResponse({"detail": [_issue("design", str(exc))]}, status_code=422)
+
+    @app.exception_handler(csv_importer.CsvLimitError)
+    async def _csv_limit(_: Request, exc: csv_importer.CsvLimitError):
+        # an upload over the size limit is 413 and is not stored; a file over the row limit cannot be read, so it is 422
+        status = 413 if exc.code == csv_importer.CsvLimitError.FILE_TOO_LARGE else 422
+        return JSONResponse({"detail": [_issue("file", str(exc))], "code": exc.code, "limit": exc.limit, "limit_name": exc.limit_name},
+                            status_code=status)
+
+    @app.exception_handler(StorageError)
+    async def _storage(_: Request, exc: StorageError):
+        return JSONResponse({"detail": [_issue("storage", str(exc))]}, status_code=500)
 
     @app.exception_handler(ValueError)
     async def _val(_: Request, exc: ValueError):
@@ -249,6 +270,33 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
     async def hist_import(req: HistoricalImportRequest, force: bool = Query(False, description="re-download even if this session is already stored")):
         return await hist.start_import(req, force=force)
 
+    @app.post("/api/historical/csv/preview", response_model=CsvPreviewResponse,
+              openapi_extra={"requestBody": {"required": True, "content": {"multipart/form-data": {"schema": {
+                  "type": "object", "required": ["file"], "properties": {"file": {"type": "string", "format": "binary"}}}}}}})
+    async def hist_csv_preview(request: Request):
+        """Stage an uploaded CSV (content-addressed, streamed to disk) and inspect it. Creates no session and no import job."""
+        limit = csv_importer.CSV_MAX_UPLOAD_BYTES
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > limit + CSV_MULTIPART_SLACK:  # refuse before reading the body
+            raise csv_importer.CsvLimitError(csv_importer.CsvLimitError.FILE_TOO_LARGE, "maximum file size (bytes)", limit, int(declared))
+        form = await request.form()
+        try:
+            upload = form.get("file")
+            if upload is None or not hasattr(upload, "read"):
+                return JSONResponse({"detail": [_issue("file", "a CSV file is required in the multipart field 'file'")]}, status_code=422)
+            return await hist.csv_preview(upload, getattr(upload, "filename", None))
+        finally:
+            await form.close()
+
+    @app.post("/api/historical/csv/validate")
+    async def hist_csv_validate(req: CsvValidateRequest):
+        """Check a staged file against a mapping, units, policies and Session_Metadata. Imports nothing."""
+        return await asyncio.to_thread(hist.csv_validate, req)
+
+    @app.get("/api/historical/csv/session-exists", response_model=CsvSessionExistsResponse)
+    def hist_csv_session_exists(q: Annotated[CsvSessionExistsQuery, Query()]):
+        return hist.csv_session_exists(q)
+
     @app.get("/api/historical/imports")
     def hist_imports(limit: int = Query(50, ge=1, le=500)):
         return hist.list_imports(limit)
@@ -265,9 +313,17 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
     async def hist_import_retry(import_id: str):
         return await hist.retry_import(import_id)
 
+    @app.post("/api/historical/imports/{import_id}/decision")
+    async def hist_import_decision(import_id: str, choice: Literal["replace", "cancel"] = Query(...)):
+        """Answer an import paused on a duplicate session key: ``replace`` the stored session or ``cancel`` (expires after 5 minutes)."""
+        return hist.decide_duplicate(import_id, choice)
+
     @app.delete("/api/historical/sessions/{session_id}")
-    def hist_delete_session(session_id: str):
-        return hist.delete_session(session_id)
+    def hist_delete_session(session_id: str, request: Request):
+        """409 while an import for the session is running, or while it is linked to a TRIALFORGE experiment and the query
+        parameter ``confirm_linked=true`` is absent (read from the request so the route's published contract is unchanged)."""
+        confirm = request.query_params.get("confirm_linked", "").strip().lower() in ("1", "true", "yes")
+        return hist.delete_session(session_id, confirm)
 
     @app.get("/api/historical/sessions")
     def hist_list_sessions():
@@ -288,6 +344,15 @@ def create_app(db_path: str | None = None, frontend_dir: str | None = None, open
     @app.get("/api/historical/sessions/{session_id}/telemetry")
     def hist_telemetry(session_id: str, driver: str = Query(..., min_length=1), lap: int | None = None, limit: int = Query(1500, ge=1, le=5000)):
         return hist.telemetry(session_id, driver, lap, limit)
+
+    @app.get("/api/historical/sessions/{session_id}/setup-link/options")
+    def setup_link_options(session_id: str, driver: str = Query(..., min_length=1), laps: Annotated[list[int] | None, Query()] = None):
+        hist.get_session(session_id)
+        return lab.setup_link_options(hist, session_id, driver, laps)
+
+    @app.post("/api/historical/sessions/{session_id}/setup-link", status_code=201)
+    async def setup_link(session_id: str, req: SetupLinkRequest):
+        return await lab.setup_link(hist, session_id, req.model_dump())
 
     @app.get("/api/historical/sessions/{session_id}/position")
     def hist_position(session_id: str, driver: str = Query(..., min_length=1), lap: int | None = None, limit: int = Query(3000, ge=1, le=10000)):

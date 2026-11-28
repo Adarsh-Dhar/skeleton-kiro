@@ -65,7 +65,7 @@ def synth(tmp_path):
     with TestClient(app) as c:
         repo = app.state.historical.repo
         def store(sid, laps=None, telemetry=None, datasets=None, drivers=None):
-            manifest = {"session_id": sid, "provider": "openf1", "year": 2024, "event": sid, "session_type": "R",
+            manifest = {"session_id": sid, "provider": "openf1", "source_type": "external_provider", "verification": "verified", "year": 2024, "event": sid, "session_type": "R",
                         "session_date": "2024-03-01", "drivers": drivers or [{"code": "VER", "number": "1", "team": "RB"}], "channels": {}}
             repo.save_session(sid, manifest, laps if laps is not None else pd.DataFrame(), pd.DataFrame(), telemetry or {}, {}, datasets)
         c.store = store
