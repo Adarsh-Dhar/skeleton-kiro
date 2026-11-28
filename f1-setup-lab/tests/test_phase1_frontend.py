@@ -35,15 +35,15 @@ def test_every_script_passes_node_check(script):
     assert r.returncode == 0, r.stderr
 
 
-def test_nav_has_seven_entries_in_two_groups():
+def test_nav_is_dashboard_experiments_historical_dropdown_and_telemetry_import():
     html = (FRONTEND / "index.html").read_text()
-    nav = re.search(r'<nav id="nav">(.*?)</nav>', html, re.S).group(1)
-    groups = re.split(r'<div class="nav-group">', nav)[1:]
-    assert [re.search(r"<h2[^>]*>(.*?)</h2>", g).group(1) for g in groups] == ["Setup Engineering", "Historical F1"]
-    assert [len(re.findall(r"<a ", g)) for g in groups] == [3, 4]
-    assert re.findall(r'data-nav="(\w+)"', nav) == ["dashboard", "experiments", "telemetry", "hist", "sessions", "standings", "season"]
-
-
+    nav = re.search(r'<nav id="nav"[^>]*>(.*?)</nav>', html, re.S).group(1)
+    groups = re.findall(r'<div class="nav-group">(.*?)</div></div>', nav, re.S)
+    assert len(groups) == 1 and re.sub(r"<[^>]+>", "", re.search(r"<h2[^>]*>(.*?)</h2>", groups[0], re.S).group(1)) == "Historical F1"
+    assert len(re.findall(r"<a ", groups[0])) == 4
+    flat = re.sub(r'<div class="nav-group">.*?</div></div>', "<GROUP>", nav, flags=re.S)
+    assert re.findall(r'data-nav="(\w+)"|(<GROUP>)', flat) == [("dashboard", ""), ("experiments", ""), ("", "<GROUP>"), ("telemetry", "")]
+    assert re.findall(r'data-nav="(\w+)"', nav) == ["dashboard", "experiments", "hist", "sessions", "standings", "season", "telemetry"]
 def test_scripts_load_in_dependency_order():
     order = re.findall(r'<script src="([^"]+)"', (FRONTEND / "index.html").read_text())
     assert order.index("charts.js") < order.index("hist_analysis.js") < order.index("app.js")

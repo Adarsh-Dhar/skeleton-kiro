@@ -9,6 +9,7 @@ import time
 
 import pytest
 import uvicorn
+from nav_helpers import nav_click
 from openf1_fakes import FakeOpenF1, fake_client
 
 from f1lab.api.app import create_app
@@ -66,9 +67,9 @@ def test_the_app_has_seven_nav_entries_and_historical_f1_shows_only_its_own_noti
     page.goto(page.base + "/#/hist")
     page.wait_for_selector("#hprov")
     assert "HISTORICAL F1 DATA" in page.inner_text("#banner").upper() and "SYNTHETIC" not in page.inner_text("#banner").upper()
-    assert [a.inner_text().lower() for a in page.locator("#nav a").all()] == [
-        "dashboard", "experiments", "telemetry import", "import from openf1", "imported sessions", "standings", "season comparison"]  # upper-cased by CSS
-    assert [h.inner_text().lower() for h in page.locator("#nav .nav-head").all()] == ["setup engineering", "historical f1"]
+    assert [a.text_content().strip().lower() for a in page.locator("#nav a").all()] == [
+        "dashboard", "experiments", "import from openf1", "imported sessions", "standings", "season comparison", "telemetry import"]  # upper-cased by CSS
+    assert [h.inner_text().lower() for h in page.locator("#nav .nav-head").all()] == ["historical f1"]
     body = page.inner_text("body").lower()
     for gone in ("fastf1", "wind direction"):
         assert gone not in body, gone
@@ -79,7 +80,7 @@ def test_the_app_has_seven_nav_entries_and_historical_f1_shows_only_its_own_noti
         assert "page not found" in page.inner_text("#view").lower(), old
     page.click("#view a:has-text('Import a session')")
     page.wait_for_selector("#hprov")
-    page.click("#nav a[data-nav=hist]")
+    nav_click(page, "hist")
     page.wait_for_selector("#hprov")
     # the app's own files are not served from a stale browser cache
     assert page.evaluate("fetch('/app.js').then(r => r.headers.get('cache-control'))") == "no-cache"
@@ -95,7 +96,7 @@ def test_a_tab_opened_before_an_update_reloads_itself_on_the_next_click(page):
     page.goto(page.base + "/#/sessions")
     page.wait_for_selector("text=No sessions imported yet")
     page.evaluate("window.__marker = 'tab-before-update'")
-    page.click("#nav a[data-nav=hist]")  # the fingerprint differs now: the tab reloads instead of running old code
+    nav_click(page, "hist")  # the fingerprint differs now: the tab reloads instead of running old code
     page.wait_for_selector("#hprov")
     assert page.evaluate("window.__marker === undefined")  # a real reload happened
     assert page.url.endswith("#/hist")
@@ -157,8 +158,8 @@ def test_a_finished_import_does_not_pull_the_user_away_from_another_page(page):
     try:
         page.click("#himport")
         page.wait_for_function("document.querySelector('#hprog')?.textContent.match(/DOWNLOADING|PROCESSING|QUEUED/)", timeout=15000)
-        page.click("#nav a[data-nav=sessions]")  # leave while the import is still running
-        page.wait_for_selector("text=Imported sessions")
+        nav_click(page, "sessions")  # leave while the import is still running
+        page.wait_for_selector("#view-body >> text=Imported sessions")
         jid = page.evaluate("fetch('/api/historical/imports?limit=1').then(r => r.json())")[0]["import_id"]
         end = time.time() + 60
         while page.evaluate(f"fetch('/api/historical/imports/{jid}').then(r => r.json())")["state"] != "COMPLETED":
@@ -221,7 +222,7 @@ def test_import_the_whole_field_and_every_analysis_tab(page):
     page.wait_for_function("document.querySelector('#hprog')?.textContent.includes('COMPLETED')", timeout=30000)
     assert "OpenF1 cache" in page.inner_text("#hprog")
     page.wait_for_url(f"**/#/hist/{SID}/overview", timeout=10000)  # the analysis opens when the import finishes
-    page.click("#nav a[data-nav=sessions]")
+    nav_click(page, "sessions")
     page.wait_for_selector("#hist-lib a.btn")
     assert SID in page.inner_text("#hist-lib")
     page.click("#hist-lib a.btn")

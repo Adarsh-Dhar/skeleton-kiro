@@ -26,7 +26,51 @@ function toast(msg, ok = false) {
 const errorsBox = (e) => e instanceof ApiError
   ? `<div class="errors" role="alert"><b>Request rejected</b><ul>${e.issues.map((i) => `<li><code>${esc(i.field)}</code> ${esc(i.message)}</li>`).join('')}</ul></div>`
   : `<div class="errors" role="alert">${esc(e.message || e)}</div>`;
-function setNav(key) { document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === key)); }
+function setNav(key) {
+  document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.nav === key));
+  document.querySelectorAll('#nav .nav-group').forEach((g) => g.classList.toggle('on', !!g.querySelector('a.on')));
+}
+/* Accessible dropdown menus: click/Enter/Space or ArrowDown opens; Escape, outside click and choosing a link close. */
+function initNavMenus() {
+  const groups = [...document.querySelectorAll('#nav .nav-group')];
+  const parts = (g) => ({ btn: g.querySelector('.nav-head button'), list: g.querySelector('.nav-dropdown'), items: [...g.querySelectorAll('.nav-dropdown a')] });
+  const close = (g, refocus) => {
+    const { btn, list } = parts(g);
+    list.hidden = true; list.classList.remove('right'); g.classList.remove('open'); btn.setAttribute('aria-expanded', 'false');
+    if (refocus) btn.focus();
+  };
+  const closeAll = (except) => groups.forEach((g) => { if (g !== except) close(g, false); });
+  const open = (g, focusIdx) => {
+    closeAll(g);
+    const { btn, list, items } = parts(g);
+    list.hidden = false; g.classList.add('open'); btn.setAttribute('aria-expanded', 'true');
+    if (list.getBoundingClientRect().right > window.innerWidth - 4) list.classList.add('right');  // never clip at the viewport edge
+    if (focusIdx !== undefined && items.length) items.at(focusIdx === -1 ? -1 : focusIdx).focus();
+  };
+  groups.forEach((g) => {
+    const { btn, list, items } = parts(g);
+    btn.addEventListener('click', () => (list.hidden ? open(g) : close(g, false)));
+    btn.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); open(g, 0); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); open(g, -1); }
+    });
+    list.addEventListener('keydown', (e) => {
+      const i = items.indexOf(document.activeElement);
+      if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+      else if (e.key === 'Home') { e.preventDefault(); items[0].focus(); }
+      else if (e.key === 'End') { e.preventDefault(); items.at(-1).focus(); }
+      else if (e.key === 'Tab') close(g, false);
+    });
+    items.forEach((a) => a.addEventListener('click', () => close(g, false)));
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('#nav .nav-group')) closeAll(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const g = groups.find((x) => !parts(x).list.hidden);
+    if (g) { e.preventDefault(); close(g, true); }
+  });
+}
 function setLed(state, text) { const a = $('#api-status'); a.innerHTML = `<i class="led ${state}"></i><span>${esc(text)}</span>`; }
 /* Bucket downsampling that keeps each bucket's min and max y so peaks (brake/throttle transitions) survive. */
 function downsample(pts, max = 300) {
@@ -283,6 +327,7 @@ async function viewHistSession(id, tab) {
 function histTraceCharts(samples) { return HistAnalysis.traceCharts(samples, { downsample }); }
 
 /* -------------------------------------------------------------------- boot */
+initNavMenus();
 (async () => {
   try { await api('GET', '/api/health'); setLed('ok', 'online'); } catch (_) { setLed('bad', 'backend offline'); }
   route();

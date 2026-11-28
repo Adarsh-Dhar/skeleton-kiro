@@ -11,16 +11,16 @@
 <div class="fixed-head">
 <header class="top">
   <a class="brand" href="#/dashboard"><span class="logo">F1</span><span class="brand-text"><b>SETUP LAB</b><small>setup engineering and race analysis</small></span></a>
-  <nav id="nav">
-    <div class="nav-group"><h2 class="nav-head">Setup Engineering</h2>
-      <a href="#/dashboard" data-nav="dashboard">Dashboard</a>
-      <a href="#/experiments" data-nav="experiments">Experiments</a>
-      <a href="#/telemetry" data-nav="telemetry">Telemetry import</a></div>
-    <div class="nav-group"><h2 class="nav-head">Historical F1</h2>
-      <a href="#/hist" data-nav="hist">Import from OpenF1</a>
-      <a href="#/sessions" data-nav="sessions">Imported sessions</a>
-      <a href="#/standings" data-nav="standings">Standings</a>
-      <a href="#/season" data-nav="season">Season comparison</a></div>
+  <nav id="nav" aria-label="Main">
+    <a href="#/dashboard" data-nav="dashboard">Dashboard</a>
+    <a href="#/experiments" data-nav="experiments">Experiments</a>
+    <div class="nav-group"><h2 class="nav-head"><button type="button" id="menu-hist" aria-haspopup="true" aria-expanded="false" aria-controls="menu-hist-list">Historical F1</button></h2>
+      <div class="nav-dropdown" id="menu-hist-list" role="menu" aria-labelledby="menu-hist" hidden>
+      <a href="#/hist" data-nav="hist" role="menuitem">Import from OpenF1</a>
+      <a href="#/sessions" data-nav="sessions" role="menuitem">Imported sessions</a>
+      <a href="#/standings" data-nav="standings" role="menuitem">Standings</a>
+      <a href="#/season" data-nav="season" role="menuitem">Season comparison</a></div></div>
+    <a href="#/telemetry" data-nav="telemetry">Telemetry import</a>
   </nav>
   <div class="api" id="api-status" title="backend status"><i class="led"></i><span>connecting</span></div>
 </header>

@@ -81,17 +81,29 @@ nav{gap:18px}.nav-group{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .bar-track{display:inline-block;width:120px;height:8px;background:var(--panel2);border-radius:2px;vertical-align:middle}
 .note.bad{background:#2d1010;border-color:#7a2020;color:#ff9b9b}
 
-/* navigation: one label per entry, groups separated and wrapping on narrow screens */
-.top{flex-wrap:wrap;row-gap:8px}
-nav{flex-wrap:wrap;row-gap:6px;align-items:stretch}
-.nav-group{padding-left:18px;border-left:1px solid var(--line)}
-.nav-group:first-child{padding-left:0;border-left:0}
-.nav-head{padding-left:0;margin-bottom:2px}
-.nav-group a{padding:6px 12px;white-space:nowrap}
-.brand-text small{white-space:nowrap}
-
-/* page header row: title left, action right */
-.page-head{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:6px}
-.filters{margin-bottom:12px}.filters input[type=search]{min-width:240px}
-
-.chip.external{color:#d5b3ff;border-color:#5b3a8a}
+/* slim header: one 44px row (brand | grouped nav | status); wraps only on narrow screens */
+.stripe{height:3px}
+.top{display:flex;align-items:center;flex-wrap:wrap;gap:6px 20px;padding:0 20px;min-height:44px;background:#0e1115}
+.brand{gap:8px}
+.logo{font-size:15px;padding:1px 7px;letter-spacing:-1px}
+.brand-text{flex-direction:row;align-items:baseline;gap:8px;line-height:1}
+.brand-text b{font-size:13px;letter-spacing:.16em}
+.brand-text small{display:none}
+nav{flex:1;display:flex;align-items:center;gap:4px;min-width:0}
+.nav-group{position:relative;padding:0;border:0}
+.nav-head{margin:0;font-size:inherit;font-weight:inherit}
+.nav-head button{display:flex;align-items:center;gap:6px;background:none;border:0;border-radius:3px;color:var(--dim);cursor:pointer;font:600 11.5px var(--sans);letter-spacing:.06em;text-transform:uppercase;padding:6px 10px}
+.nav-head button::after{content:"";width:5px;height:5px;border:solid currentColor;border-width:0 1.5px 1.5px 0;transform:translateY(-2px) rotate(45deg);transition:transform .12s}
+.nav-head button:hover,.nav-group.open .nav-head button{color:var(--text);background:var(--panel)}
+.nav-group.open .nav-head button::after{transform:translateY(1px) rotate(225deg)}
+.nav-group.on .nav-head button{color:#fff;box-shadow:inset 0 -2px var(--red)}
+.nav-head button:focus-visible,.nav-dropdown a:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.nav-dropdown{position:absolute;top:calc(100% + 2px);left:0;z-index:60;min-width:180px;max-width:calc(100vw - 16px);padding:4px;background:#12161c;border:1px solid var(--line);border-radius:5px;box-shadow:0 8px 20px #0009}
+.nav-dropdown.right{left:auto;right:0}
+.nav-dropdown a{display:block;padding:7px 10px;font-size:11.5px;letter-spacing:.05em;white-space:nowrap;border-radius:3px}
+.nav-dropdown a.on{box-shadow:inset 2px 0 var(--red)}
+.api{font-size:11px;gap:6px;white-space:nowrap}
+.led{width:8px;height:8px}
+.banner{padding:3px 20px;font-size:11px}
+@media(max-width:900px){.top{padding:4px 12px;gap:2px 12px}.api{margin-left:auto}}
+@media(max-width:560px){nav{order:3;flex-basis:100%;gap:0;justify-content:space-between}nav>a,.nav-head button{padding:5px 4px;font-size:10px;letter-spacing:0;white-space:nowrap}.nav-head button{gap:3px}}

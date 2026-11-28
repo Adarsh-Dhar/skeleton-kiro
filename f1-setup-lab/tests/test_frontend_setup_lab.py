@@ -15,13 +15,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
+from nav_helpers import nav_click
 
 from f1lab import NOTICES
 
 FRONTEND = Path(__file__).resolve().parents[1] / "frontend"
 SCRIPTS = ["charts.js", "hist_race.js", "hist_picker.js", "setup_lab.js", "hist_analysis.js", "app.js"]
-NAV = [("Setup Engineering", ["Dashboard", "Experiments", "Telemetry import"]),
-       ("Historical F1", ["Import from OpenF1", "Imported sessions", "Standings", "Season comparison"])]
 
 
 # ------------------------------------------------------------------------------------------------ static checks
@@ -70,17 +69,14 @@ class _Nav(HTMLParser):
             self.entries[-1] = (h, label + data, d)
 
 
-def test_index_html_has_seven_entries_under_two_headings():
+def test_index_html_header_is_dashboard_experiments_historical_dropdown_telemetry_import():
     p = _Nav()
     p.feed((FRONTEND / "index.html").read_text())
-    assert [h.strip() for h in p.headings] == [h for h, _ in NAV]
-    got: dict[str, list[str]] = {}
-    for heading, label, _ in p.entries:
-        got.setdefault(heading.strip(), []).append(label.strip())
-    assert got == dict(NAV)
-    assert len(p.entries) == 7 and len({e[1] for e in p.entries}) == 7  # each entry under exactly one heading
-
-
+    assert [h.strip() for h in p.headings] == ["Historical F1"]
+    assert [(d, label.strip()) for _, label, d in p.entries] == [
+        ("dashboard", "Dashboard"), ("experiments", "Experiments"), ("hist", "Import from OpenF1"), ("sessions", "Imported sessions"),
+        ("standings", "Standings"), ("season", "Season comparison"), ("telemetry", "Telemetry import")]
+    assert len({e[2] for e in p.entries}) == 7
 def test_index_html_loads_scripts_in_order():
     html = (FRONTEND / "index.html").read_text()
     assert re.findall(r'<script src="([^"]+)"', html) == SCRIPTS
@@ -159,7 +155,7 @@ def test_each_nav_entry_renders_its_view_within_one_second(page):
     _heading_shown(page, "Dashboard")
     for key, title in ENTRIES[1:] + ENTRIES[:1]:
         t0 = time.perf_counter()
-        page.click(f"#nav a[data-nav={key}]")
+        nav_click(page, key)
         _heading_shown(page, title)
         assert time.perf_counter() - t0 < 1.0, key
         assert "on" in page.get_attribute(f"#nav a[data-nav={key}]", "class").split()
@@ -173,7 +169,7 @@ def test_historical_views_keep_their_content_and_controls(page):
         assert page.locator(sel).count() == 1, sel
     assert page.input_value("#hprov") == "openf1"
     assert page.inner_text("#banner") == NOTICES["historical"]
-    page.click("#nav a[data-nav=sessions]")
+    nav_click(page, "sessions")
     _heading_shown(page, "Imported sessions")
     assert page.locator("#view a:has-text('Import a session')").count() == 1
     assert page.inner_text("#banner") == NOTICES["historical"]
@@ -202,17 +198,17 @@ def test_api_failure_shows_the_backend_message_and_keeps_navigation_usable(page)
     page.goto(page.base + "/#/new")
     _heading_shown(page, "Create experiment")
     page.route("**/api/experiments", lambda r: r.fulfill(status=500, content_type="application/json", body=json.dumps({"detail": "backend exploded"})))
-    page.click("#nav a[data-nav=dashboard]")
+    nav_click(page, "dashboard")
     page.wait_for_function("document.querySelector('#view-error')?.textContent.includes('backend exploded') || document.querySelector('#dash')?.textContent.includes('backend exploded')", timeout=1500)
-    page.click("#nav a[data-nav=sessions]")  # navigation still works
+    nav_click(page, "sessions")  # navigation still works
     _heading_shown(page, "Imported sessions")
     assert "backend exploded" not in page.inner_text("#view-error")
     page.unroute("**/api/experiments")
     # an unreachable backend (or a response with no message) reads "request failed"
     page.route("**/api/experiments", lambda r: r.abort())
-    page.click("#nav a[data-nav=dashboard]")
+    nav_click(page, "dashboard")
     page.wait_for_function("(document.querySelector('#view-error')?.textContent + (document.querySelector('#dash')?.textContent || '')).includes('request failed')", timeout=1500)
-    page.click("#nav a[data-nav=experiments]")
+    nav_click(page, "experiments")
     _heading_shown(page, "Experiments")
     page.unroute("**/api/experiments")
 
@@ -281,3 +277,83 @@ def test_experiments_page_lists_api_created_experiments_filters_and_opens_rows(p
     assert "on" in page.get_attribute("#nav a[data-nav=experiments]", "class").split()
     assert page.locator("#nav a.on").count() == 1
     assert page.errors == []
+# ------------------------------------------------------------------------------------------------ dropdown navigation
+MENU = "#nav .nav-group"
+BTN = f"{MENU} .nav-head button"
+def _open(page):
+    return page.locator(f"{MENU} .nav-dropdown").is_visible()
+def test_dropdown_opens_and_closes(page):
+    page.goto(page.base + "/#/dashboard")
+    _heading_shown(page, "Dashboard")
+    assert not _open(page) and page.get_attribute(BTN, "aria-expanded") == "false"
+    page.click(BTN)
+    assert _open(page) and page.get_attribute(BTN, "aria-expanded") == "true"
+    page.click(BTN)  # clicking the button again closes it
+    assert not _open(page)
+    page.click(BTN)
+    page.click("#nav a[data-nav=sessions]")  # choosing a destination closes the menu and navigates
+    page.wait_for_selector("#view-body h1")
+    assert not _open(page) and page.evaluate("location.hash") == "#/sessions"
+    assert page.errors == []
+def test_flat_links_are_always_visible_and_need_no_menu(page):
+    page.goto(page.base + "/#/dashboard")
+    _heading_shown(page, "Dashboard")
+    for key in ("dashboard", "experiments", "telemetry"):
+        assert page.is_visible(f"#nav a[data-nav={key}]")
+    assert [a.text_content().strip() for a in page.locator("#nav > a, #nav > .nav-group > .nav-head button").all()] == [
+        "Dashboard", "Experiments", "Historical F1", "Telemetry import"]
+def test_dropdown_closes_on_escape_and_outside_click_and_supports_arrow_keys(page):
+    page.goto(page.base + "/#/dashboard")
+    _heading_shown(page, "Dashboard")
+    page.focus(BTN)
+    page.keyboard.press("ArrowDown")  # opens and focuses the first item
+    assert _open(page) and page.evaluate("document.activeElement.dataset.nav") == "hist"
+    page.keyboard.press("ArrowDown")
+    assert page.evaluate("document.activeElement.dataset.nav") == "sessions"
+    page.keyboard.press("End")
+    assert page.evaluate("document.activeElement.dataset.nav") == "season"
+    page.keyboard.press("ArrowDown")  # wraps
+    assert page.evaluate("document.activeElement.dataset.nav") == "hist"
+    page.keyboard.press("Escape")
+    assert not _open(page)
+    assert page.evaluate("document.activeElement.textContent.trim()") == "Historical F1"
+    page.click(BTN)
+    page.click("#view-body")  # outside click
+    assert not _open(page)
+    page.focus(BTN)
+    page.keyboard.press("Enter")
+    assert _open(page)
+    page.keyboard.press("Escape")
+    assert page.errors == []
+def test_active_item_is_highlighted_for_nested_routes(page):
+    for route, key, in_menu in [("#/dashboard", "dashboard", False), ("#/experiments", "experiments", False), ("#/telemetry", "telemetry", False),
+                                ("#/sessions", "sessions", True), ("#/standings", "standings", True), ("#/season", "season", True), ("#/hist", "hist", True)]:
+        page.goto(page.base + "/" + route)
+        page.wait_for_selector(f"#nav a.on[data-nav={key}]", state="attached")
+        assert page.evaluate("document.querySelector('#nav .nav-group').classList.contains('on')") is in_menu, route
+        assert page.locator("#nav a.on").count() == 1
+@pytest.mark.parametrize("name,width,height", [("desktop", 1440, 900), ("tablet", 820, 1000), ("mobile", 390, 800)])
+def test_header_is_slim_has_no_overflow_and_dropdown_stays_in_viewport(stack, name, width, height):
+    import os
+
+    from playwright.sync_api import sync_playwright
+    out = Path(os.environ.get("F1_TEST_RESULTS_DIR", Path(__file__).resolve().parents[1] / "test-results"))
+    out.mkdir(parents=True, exist_ok=True)
+    with sync_playwright() as p:
+        browser = p.chromium.launch()
+        pg = browser.new_page(viewport={"width": width, "height": height})
+        errors = []
+        pg.on("console", lambda m: errors.append(m.text) if m.type == "error" and not m.text.startswith("Failed to load resource") else None)
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(stack + "/#/dashboard")
+        _heading_shown(pg, "Dashboard")
+        assert pg.evaluate("document.querySelector('header.top').getBoundingClientRect().height") <= (64 if width > 560 else 76)  # phones use two slim rows
+        pg.screenshot(path=str(out / f"header_closed_{name}.png"), clip={"x": 0, "y": 0, "width": width, "height": 120})
+        pg.click(BTN)
+        box = pg.evaluate("(() => { const r = document.querySelector('#nav .nav-dropdown').getBoundingClientRect(); return [r.left, r.right]; })()")
+        assert box[0] >= 0 and box[1] <= width, (name, box)
+        pg.screenshot(path=str(out / f"header_menu_{name}.png"), clip={"x": 0, "y": 0, "width": width, "height": 260})
+        pg.keyboard.press("Escape")
+        assert not pg.evaluate("[...document.querySelectorAll('.fixed-head *')].some(e => e.getBoundingClientRect().right > innerWidth + 1)")  # the header never overflows
+        assert errors == []
+        browser.close()
